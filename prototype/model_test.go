@@ -40,7 +40,7 @@ func TestRestoreSelectionBeyondFirstPage(t *testing.T) {
 func TestReleaseCancelsAllReads(t *testing.T) {
 	tab := newTab(1, "/tmp/repo")
 	var contexts []context.Context
-	for _, slot := range []*context.CancelFunc{&tab.historyCancel, &tab.refsCancel, &tab.detailCancel, &tab.diffCancel} {
+	for _, slot := range []*context.CancelFunc{&tab.historyCancel, &tab.refsCancel, &tab.detailCancel, &tab.diffCancel, &tab.navCancel} {
 		ctx, cancel := context.WithCancel(context.Background())
 		*slot = cancel
 		contexts = append(contexts, ctx)

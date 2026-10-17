@@ -108,6 +108,78 @@ func importTestHistory(t *testing.T, dir string, n int) {
 	}
 }
 
+func TestBranchFilteringAndRefResolution(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("commit", "--allow-empty", "-m", "base")
+	git("checkout", "-b", "feature")
+	git("commit", "--allow-empty", "-m", "feature-only")
+	feature, err := resolveCommit(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git("checkout", "main")
+	git("commit", "--allow-empty", "-m", "main-only")
+	git("tag", "-a", "release", "-m", "release", "feature")
+	for _, ref := range []string{"feature", "release", shortHash(feature)} {
+		got, err := resolveCommit(context.Background(), dir, ref)
+		if err != nil || got != feature {
+			t.Fatalf("resolve %s: %x %v", ref, got, err)
+		}
+	}
+	for _, ref := range []string{"--all", "missing-ref", "HEAD^{tree}"} {
+		if _, err := resolveCommit(context.Background(), dir, ref); err == nil {
+			t.Fatalf("accepted non-commit ref %q", ref)
+		}
+	}
+	for _, tc := range []struct {
+		refs []string
+		want string
+		n    int
+	}{
+		{[]string{"HEAD"}, "main-only", 2},
+		{[]string{"refs/heads/feature"}, "feature-only", 2},
+		{[]string{"refs/heads/main", "refs/heads/feature"}, "", 3},
+	} {
+		var commits []commit
+		err := streamHistory(context.Background(), dir, 0, pageFirst, tc.refs, func(c commit) error {
+			commits = append(commits, c)
+			return nil
+		})
+		if err != nil || len(commits) != tc.n {
+			t.Fatalf("refs %v: commits=%v err=%v", tc.refs, commits, err)
+		}
+		if tc.want != "" && commits[0].subject != tc.want {
+			t.Fatalf("refs %v: newest %s", tc.refs, commits[0].subject)
+		}
+	}
+	if branch := strings.TrimSpace(string(git("symbolic-ref", "--short", "HEAD"))); branch != "main" {
+		t.Fatalf("filter checked out %s", branch)
+	}
+	git("checkout", "--orphan", "empty")
+	if err := streamHistory(context.Background(), dir, 0, 10, []string{"HEAD"}, func(commit) error {
+		t.Fatal("unborn current branch returned a commit")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompleteCommitInfo(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("commit", "--allow-empty", "--author", "Writer <writer@example.com>", "-m", "标题\n\n多行正文\n第二行")
+	hash, err := resolveCommit(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := loadCommitInfo(context.Background(), dir, hashHex(hash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.author != "Writer" || info.authorEmail != "writer@example.com" || info.committer != "Test" || info.committerEmail != "test@example.com" || info.authorDate == "" || info.committerDate == "" || info.message != "标题\n\n多行正文\n第二行" {
+		t.Fatalf("details: %+v", info)
+	}
+}
+
 func TestParseCommitRecord(t *testing.T) {
 	rec := "0123456789abcdef0123456789abcdef01234567\x1f\x1fAda\x1f1700000000\x1f初始"
 	c, err := parseCommitRecord(rec)

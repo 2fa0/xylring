@@ -33,7 +33,8 @@ var laneColors = []ui.Color{
 }
 
 type app struct {
-	win *mygo.Window
+	win      *mygo.Window
+	dispatch func(func())
 
 	tabs   []*repoTab
 	active int
@@ -43,9 +44,19 @@ type app struct {
 	split    float32
 	filePane float32
 
-	picking    bool
-	showRecent bool
-	banner     string
+	picking     bool
+	showRecent  bool
+	banner      string
+	showFilter  bool
+	filterRepo  string
+	filterErr   string
+	filterRows  []branchChoice
+	filterList  ui.ListState
+	showCompare bool
+	compareRepo string
+	compareFrom string
+	compareTo   string
+	compareErr  string
 
 	branching  bool
 	branchBusy bool
@@ -87,6 +98,8 @@ func (a *app) view(c *ui.Context) {
 	})
 	a.recentModal(c)
 	a.branchModal(c)
+	a.branchFilterModal(c)
+	a.comparisonModal(c)
 }
 
 func (a *app) tabBar(c *ui.Context) {
@@ -147,6 +160,26 @@ func (a *app) toolbar(c *ui.Context) {
 	}
 	ui.Row(c).Padding(6, 8).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, tab.branch).Bold().Shrink(0)
+		options := []string{"全部分支", "当前分支", "多选分支"}
+		if tab.scope == "指定 ref" {
+			options = append(options, "指定 ref")
+		}
+		if ui.Select(c.Key("history-scope"), &tab.scopeChoice, options).Width(130).Disabled(tab.loading).Changed() {
+			switch tab.scopeChoice {
+			case "全部分支":
+				a.setHistory(tab, "全部分支", nil, zeroHash)
+			case "当前分支":
+				a.setHistory(tab, "当前分支", []string{"HEAD"}, zeroHash)
+			case "多选分支":
+				a.beginBranchFilter(tab)
+				tab.scopeChoice = tab.scope
+			}
+		}
+		if tab.scope == "多选分支" {
+			if ui.Button(c.Key("edit-filter"), "选择分支…").Clicked() {
+				a.beginBranchFilter(tab)
+			}
+		}
 		if ui.Button(c.Key("refresh"), "刷新").Clicked() {
 			a.reload(tab)
 		}
@@ -156,15 +189,41 @@ func (a *app) toolbar(c *ui.Context) {
 		if ui.Button(c.Key("recent-open"), "最近").Clicked() {
 			a.showRecent = true
 		}
-		ui.TextInput(c.Key(fmt.Sprintf("find-%d", tab.id)), &tab.query).Placeholder("消息、作者或哈希").Width(220)
-		if ui.Button(c.Key("find-next"), "下一个").Clicked() || c.Shortcut(ui.Cmd, ui.KeyG) {
-			a.findNext(tab)
-		}
 		ui.Textf(c, "已加载 %d", len(tab.commits)).TextColor(t.TextMuted).Shrink(0)
 		if tab.hasMore {
 			ui.Text(c, "可继续").TextColor(t.TextMuted).Shrink(0)
 		}
 	})
+	ui.Row(c).Padding(0, 8, 6, 8).Gap(8).AlignItems(ui.Center).Children(func() {
+		input := ui.TextInput(c.Key(fmt.Sprintf("ref-%d", tab.id)), &tab.refInput).Placeholder("分支、标签或 SHA，例如 HEAD~3").Width(260)
+		if ui.Button(c.Key("open-ref"), "打开提交").Disabled(tab.refBusy).Clicked() || input.Submitted() {
+			a.openRef(tab, tab.refInput)
+		}
+		if tab.refBusy {
+			ui.Text(c, "正在定位…").TextColor(t.TextMuted)
+		}
+		ui.TextInput(c.Key(fmt.Sprintf("find-%d", tab.id)), &tab.query).Placeholder("消息、日期、作者、哈希或 ref").Grow(1).MinWidth(100)
+		if ui.Button(c.Key("find-next"), "下一个").Clicked() || c.Shortcut(ui.Cmd, ui.KeyG) {
+			a.findNext(tab)
+		}
+		if ui.Button(c.Key("compare"), "比较…").Clicked() {
+			a.showCompare, a.compareRepo = true, tab.path
+			a.compareFrom, a.compareTo, a.compareErr = "HEAD", tab.refInput, ""
+			if commit := tab.selectedCommit(); commit != nil {
+				a.compareTo = hashHex(commit.hash)
+			}
+		}
+	})
+	if tab.refErr != "" || tab.scope == "指定 ref" {
+		ui.Row(c).Padding(0, 8, 6, 8).Gap(8).Children(func() {
+			if tab.scope == "指定 ref" && len(tab.historyRefs) == 1 {
+				ui.Text(c, "历史起点 "+tab.historyRefs[0][:7]).TextColor(t.TextMuted)
+			}
+			if tab.refErr != "" {
+				ui.Text(c, tab.refErr).TextColor(t.Danger).SingleLine().Grow(1).MinWidth(0).Tooltip(tab.refErr)
+			}
+		})
+	}
 }
 
 func (a *app) commitPane(c *ui.Context) {
@@ -185,6 +244,7 @@ func (a *app) commitPane(c *ui.Context) {
 		a.loadMore(tab)
 	}
 	tab.list.Selected = &tab.selected
+	tab.list.Selection = &tab.selection
 	tab.list.Key = func(i int) any {
 		ci := tab.rowCommit(i)
 		if ci < 0 || ci >= len(tab.commits) {
@@ -216,7 +276,21 @@ func (a *app) commitPane(c *ui.Context) {
 	})
 	if tab.selected != tab.commitApplied {
 		tab.commitApplied = tab.selected
-		a.onCommitSelected(tab)
+		tab.comparison = nil
+		var from [20]byte
+		to := tab.selectedCommit()
+		if to != nil && tab.selection.Len() == 2 {
+			for key := range tab.selection.All() {
+				if hash, ok := key.([20]byte); ok && hash != to.hash {
+					from = hash
+				}
+			}
+		}
+		if from != zeroHash {
+			a.showComparison(tab, from, to.hash)
+		} else {
+			a.onCommitSelected(tab)
+		}
 	}
 }
 
@@ -281,7 +355,7 @@ func (a *app) detail(c *ui.Context) {
 		return
 	}
 	ui.Column(c).Fill().MinHeight(0).Children(func() {
-		if tab.selected < 0 || (tab.selectedCommit() == nil && !(tab.dirty > 0 && tab.selected == 0)) {
+		if tab.comparison == nil && (tab.selected < 0 || (tab.selectedCommit() == nil && !(tab.dirty > 0 && tab.selected == 0))) {
 			ui.Text(c, "单击一条提交查看改动").Padding(12).TextColor(t.TextMuted)
 			return
 		}
@@ -302,6 +376,16 @@ func (a *app) detail(c *ui.Context) {
 
 func (a *app) detailHeader(c *ui.Context, tab *repoTab) {
 	t := c.Theme()
+	if tab.comparison != nil {
+		ui.Row(c).Padding(8, 12).Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "比较 "+shortHash(tab.comparison.from)+" → "+shortHash(tab.comparison.to)).Bold().Grow(1)
+			if ui.Button(c.Key("close-comparison"), "关闭比较").Clicked() {
+				tab.comparison = nil
+				a.onCommitSelected(tab)
+			}
+		})
+		return
+	}
 	if tab.dirty > 0 && tab.selected == 0 {
 		ui.Column(c).Padding(8, 12).Gap(4).Shrink(0).Children(func() {
 			ui.Textf(c, "未提交更改（%d 个文件，不含未跟踪）", tab.dirty).Bold()
@@ -318,7 +402,17 @@ func (a *app) detailHeader(c *ui.Context, tab *repoTab) {
 		if subject == "" {
 			subject = "（无说明）"
 		}
-		ui.Text(c, subject).Bold()
+		if tab.info == nil {
+			ui.Text(c, subject).Bold()
+		} else {
+			ui.Scroll(c.Key("commit-info")).MaxHeight(140).Shrink(0).Children(func() {
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, tab.info.message).Selectable()
+					ui.Textf(c, "作者：%s <%s>  %s", tab.info.author, tab.info.authorEmail, tab.info.authorDate).FontSize(12).TextColor(t.TextMuted).Selectable()
+					ui.Textf(c, "提交者：%s <%s>  %s", tab.info.committer, tab.info.committerEmail, tab.info.committerDate).FontSize(12).TextColor(t.TextMuted).Selectable()
+				})
+			})
+		}
 		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, hashHex(commit.hash)).Font("monospace").FontSize(12).TextColor(t.TextMuted)
 			if ui.Button(c.Key("copy-hash"), "复制").Clicked() {
