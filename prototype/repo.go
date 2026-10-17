@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 )
 
@@ -141,6 +142,7 @@ func (a *app) closeTab(i int) {
 
 func (a *app) reload(t *repoTab) {
 	t.captureSelection()
+	t.cancelReads()
 	t.generation++
 	gen := t.generation
 	t.loading = true
@@ -164,14 +166,16 @@ func (a *app) reload(t *repoTab) {
 	t.fileSel = -1
 	t.fileApplied = -1
 	path := t.path
+	count := t.historyCount()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	t.historyCancel = cancel
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		meta, metaErr := loadMeta(ctx, path)
 		var commits []commit
 		var logErr error
 		if metaErr == nil {
-			logErr = streamCommits(ctx, path, 0, pageFirst, func(c commit) error {
+			logErr = streamCommits(ctx, path, 0, count, func(c commit) error {
 				commits = append(commits, c)
 				return nil
 			})
@@ -201,10 +205,13 @@ func (a *app) reload(t *repoTab) {
 				t.graph.add(&commits[i])
 			}
 			t.commits = commits
-			t.hasMore = len(commits) == pageFirst
+			t.hasMore = len(commits) == count
 			t.loaded = true
 			t.holdAuto = true
 			t.reselect()
+			if t.resumeRow >= 0 && t.rows() > 0 {
+				t.list.ScrollTo(min(t.resumeRow, t.rows()-1), ui.Start)
+			}
 			a.sampleNow()
 		})
 	}()
@@ -219,8 +226,9 @@ func (a *app) loadMore(t *repoTab) {
 	gen := t.generation
 	skip := len(t.commits)
 	path := t.path
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	t.historyCancel = cancel
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		var commits []commit
 		err := streamCommits(ctx, path, skip, pageMore, func(c commit) error {
@@ -249,10 +257,14 @@ func (a *app) loadMore(t *repoTab) {
 }
 
 func (a *app) refreshRefs(t *repoTab) {
+	if t.refsCancel != nil {
+		t.refsCancel()
+	}
 	gen := t.generation
 	path := t.path
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.refsCancel = cancel
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		meta, err := loadMeta(ctx, path)
 		a.post(func() {
@@ -269,6 +281,17 @@ func (a *app) refreshRefs(t *repoTab) {
 
 func (a *app) onCommitSelected(t *repoTab) {
 	key := t.selectionKey()
+	if key == t.shownKey && key != "" && (t.files != nil || t.detailLoading) {
+		return
+	}
+	if t.detailCancel != nil {
+		t.detailCancel()
+	}
+	if t.diffCancel != nil {
+		t.diffCancel()
+	}
+	t.detailGen++
+	t.diffLoading = false
 	if key == "" {
 		t.shownKey = ""
 		t.files = nil
@@ -278,9 +301,6 @@ func (a *app) onCommitSelected(t *repoTab) {
 		t.detailLoading = false
 		return
 	}
-	if key == t.shownKey && (t.files != nil || t.detailLoading) {
-		return
-	}
 	t.shownKey = key
 	t.files = nil
 	t.diff = nil
@@ -288,7 +308,6 @@ func (a *app) onCommitSelected(t *repoTab) {
 	t.detailNote = ""
 	t.fileSel = -1
 	t.fileApplied = -1
-	t.detailGen++
 	gen := t.detailGen
 	repoGen := t.generation
 	path := t.path
@@ -298,8 +317,9 @@ func (a *app) onCommitSelected(t *repoTab) {
 		hash = hashHex(c.hash)
 	}
 	t.detailLoading = true
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.detailCancel = cancel
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var files []fileChange
 		var err error
@@ -328,6 +348,10 @@ func (a *app) onCommitSelected(t *repoTab) {
 }
 
 func (a *app) onFileSelected(t *repoTab) {
+	if t.diffCancel != nil {
+		t.diffCancel()
+	}
+	t.diffGen++
 	if t.fileSel < 0 || t.fileSel >= len(t.files) {
 		t.diff = nil
 		t.detailNote = ""
@@ -335,7 +359,6 @@ func (a *app) onFileSelected(t *repoTab) {
 		return
 	}
 	file := t.files[t.fileSel]
-	t.diffGen++
 	gen := t.diffGen
 	repoGen := t.generation
 	detailGen := t.detailGen
@@ -352,8 +375,9 @@ func (a *app) onFileSelected(t *repoTab) {
 			parent = hashHex(c.parents[0])
 		}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.diffCancel = cancel
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		oldText, newText, note, err := loadSides(ctx, path, file, uncommitted, hash, parent)
 		a.post(func() {

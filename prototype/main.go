@@ -590,6 +590,11 @@ func main() {
 			StateKey:  "main",
 			Content:   ui.View(a.view),
 		})
+		a.win.OnClosed(func() {
+			for _, tab := range a.tabs {
+				tab.releaseHeavy()
+			}
+		})
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

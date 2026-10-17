@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -34,12 +35,19 @@ type repoTab struct {
 	path  string
 	title string
 
-	generation int
-	loading    bool
-	loaded     bool
-	released   bool
-	err        string
-	holdAuto   bool
+	generation  int
+	loading     bool
+	loaded      bool
+	released    bool
+	err         string
+	holdAuto    bool
+	resumeCount int
+	resumeRow   int
+
+	historyCancel context.CancelFunc
+	refsCancel    context.CancelFunc
+	detailCancel  context.CancelFunc
+	diffCancel    context.CancelFunc
 
 	branch  string
 	head    [20]byte
@@ -83,6 +91,7 @@ func newTab(id int, path string) *repoTab {
 		commitApplied: -1,
 		fileSel:       -1,
 		fileApplied:   -1,
+		resumeRow:     -1,
 		authors:       map[string]string{},
 		refs:          map[[20]byte][]refInfo{},
 	}
@@ -137,6 +146,13 @@ func (t *repoTab) commitRow(i int) int {
 }
 
 func (t *repoTab) captureSelection() {
+	if len(t.commits) > 0 {
+		t.resumeCount = len(t.commits)
+		t.resumeRow, _ = t.list.Visible()
+	}
+	if t.selected < 0 {
+		return
+	}
 	if t.dirty > 0 && t.selected == 0 {
 		t.wantDirty = true
 		t.wantHash = zeroHash
@@ -147,6 +163,19 @@ func (t *repoTab) captureSelection() {
 	if ci >= 0 && ci < len(t.commits) {
 		t.wantHash = t.commits[ci].hash
 	}
+}
+
+func (t *repoTab) historyCount() int {
+	return max(pageFirst, t.resumeCount)
+}
+
+func (t *repoTab) cancelReads() {
+	for _, cancel := range []context.CancelFunc{t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel} {
+		if cancel != nil {
+			cancel()
+		}
+	}
+	t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel = nil, nil, nil, nil
 }
 
 func (t *repoTab) reselect() {
@@ -213,6 +242,7 @@ func (t *repoTab) refText(h [20]byte) string {
 
 func (t *repoTab) releaseHeavy() {
 	t.captureSelection()
+	t.cancelReads()
 	t.generation++
 	t.loading = false
 	t.loaded = false
@@ -234,6 +264,8 @@ func (t *repoTab) releaseHeavy() {
 	t.commitApplied = -1
 	t.fileSel = -1
 	t.fileApplied = -1
+	t.list = ui.ListState{}
+	t.fileList = ui.ListState{}
 }
 
 func (t *repoTab) match(i int, q string) bool {

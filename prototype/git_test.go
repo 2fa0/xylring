@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,101 @@ import (
 	"testing"
 	"time"
 )
+
+func initTestRepo(t *testing.T) (string, func(...string) []byte) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	git := func(args ...string) []byte {
+		t.Helper()
+		out, err := runGit(context.Background(), dir, args...)
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return out
+	}
+	git("init", "-b", "main")
+	git("config", "user.email", "test@example.com")
+	git("config", "user.name", "Test")
+	git("config", "commit.gpgsign", "false")
+	git("config", "core.hooksPath", filepath.Join(dir, "no-hooks"))
+	return dir, git
+}
+
+func TestEmptyAndDetachedHistory(t *testing.T) {
+	dir, git := initTestRepo(t)
+	read := func() []commit {
+		t.Helper()
+		var commits []commit
+		err := streamCommits(context.Background(), dir, 0, pageFirst, func(c commit) error {
+			commits = append(commits, c)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return commits
+	}
+	if got := read(); len(got) != 0 {
+		t.Fatalf("empty repo has %d commits", len(got))
+	}
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new\n"), 0o600)
+	git("add", "new.txt")
+	if got := read(); len(got) != 0 {
+		t.Fatalf("unborn repo has %d commits", len(got))
+	}
+	git("commit", "-m", "initial")
+	git("checkout", "--orphan", "unborn")
+	if got := read(); len(got) != 1 || got[0].subject != "initial" {
+		t.Fatalf("other branch history lost: %+v", got)
+	}
+	git("checkout", "--detach", "main")
+	git("commit", "--allow-empty", "-m", "detached")
+	if got := read(); len(got) != 2 || got[0].subject != "detached" {
+		t.Fatalf("detached history lost: %+v", got)
+	}
+}
+
+func TestGitQueueCancellation(t *testing.T) {
+	for i := 0; i < cap(gitSlots); i++ {
+		if err := acquireGit(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { <-gitSlots }()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := runGit(ctx, t.TempDir(), "status")
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("queued command: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued command did not cancel")
+	}
+}
+
+func importTestHistory(t *testing.T, dir string, n int) {
+	t.Helper()
+	var input strings.Builder
+	for i := 0; i < n; i++ {
+		msg := fmt.Sprintf("commit %d", i)
+		fmt.Fprintf(&input, "commit refs/heads/main\ncommitter Test <test@example.com> %d +0000\ndata %d\n%s\n\n", 1700000000+i, len(msg), msg)
+	}
+	cmd := exec.Command("git", "fast-import", "--quiet")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(input.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fast-import: %v\n%s", err, out)
+	}
+}
 
 func TestParseCommitRecord(t *testing.T) {
 	rec := "0123456789abcdef0123456789abcdef01234567\x1f\x1fAda\x1f1700000000\x1f初始"

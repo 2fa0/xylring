@@ -27,10 +27,24 @@ const (
 var zeroHash [20]byte
 
 var (
-	gitOnce sync.Once
-	gitBin  string
-	gitLook error
+	gitOnce  sync.Once
+	gitBin   string
+	gitLook  error
+	gitSlots = make(chan struct{}, 4)
 )
+
+func acquireGit(ctx context.Context) error {
+	select {
+	case gitSlots <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-gitSlots
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 func gitPath() (string, error) {
 	gitOnce.Do(func() {
@@ -72,6 +86,10 @@ func gitArgs(args ...string) []string {
 
 // runGit 在 dir 里执行 git。失败时错误文本是 git 的 stderr。
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	if err := acquireGit(ctx); err != nil {
+		return nil, err
+	}
+	defer func() { <-gitSlots }()
 	bin, err := gitPath()
 	if err != nil {
 		return nil, err
@@ -84,7 +102,7 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 	if ctx.Err() != nil {
-		return stdout.Bytes(), errors.New("git 超时或已取消")
+		return stdout.Bytes(), fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
@@ -118,17 +136,30 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 
 // streamCommits 边读边解析 git log，不把整段输出收成一个字符串。
 func streamCommits(ctx context.Context, dir string, skip, n int, fn func(commit) error) error {
+	// --revs-only 在 unborn HEAD 上返回空输出，同时保留 detached HEAD 的提交。
+	head, err := runGit(ctx, dir, "rev-parse", "--revs-only", "HEAD")
+	if err != nil {
+		return err
+	}
+	if err := acquireGit(ctx); err != nil {
+		return err
+	}
+	defer func() { <-gitSlots }()
 	bin, err := gitPath()
 	if err != nil {
 		return err
 	}
 	args := gitArgs(
-		"log", "--date-order", "HEAD", "--branches", "--remotes", "--tags",
+		"log", "--date-order", "--branches", "--remotes", "--tags",
 		"--no-color",
 		"--skip="+strconv.Itoa(skip),
 		"--max-count="+strconv.Itoa(n),
 		"--format="+commitFormat,
 	)
+	if h := strings.TrimSpace(string(head)); h != "" {
+		args = append(args, h)
+	}
+	args = append(args, "--")
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
@@ -171,13 +202,10 @@ func streamCommits(ctx context.Context, dir string, skip, n int, fn func(commit)
 		return parseErr
 	}
 	if ctx.Err() != nil {
-		return errors.New("git 超时或已取消")
+		return fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
 	if waitErr != nil {
 		msg := strings.TrimSpace(stderr.String())
-		if strings.Contains(msg, "does not have any commits") {
-			return nil
-		}
 		if msg == "" {
 			msg = waitErr.Error()
 		}
