@@ -136,10 +136,17 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 
 // streamCommits 边读边解析 git log，不把整段输出收成一个字符串。
 func streamCommits(ctx context.Context, dir string, skip, n int, fn func(commit) error) error {
+	return streamHistory(ctx, dir, skip, n, nil, fn)
+}
+
+func streamHistory(ctx context.Context, dir string, skip, n int, refs []string, fn func(commit) error) error {
 	// --revs-only 在 unborn HEAD 上返回空输出，同时保留 detached HEAD 的提交。
-	head, err := runGit(ctx, dir, "rev-parse", "--revs-only", "HEAD")
+	tips, err := historyTips(ctx, dir, refs)
 	if err != nil {
 		return err
+	}
+	if len(tips) == 0 {
+		return nil
 	}
 	if err := acquireGit(ctx); err != nil {
 		return err
@@ -150,15 +157,13 @@ func streamCommits(ctx context.Context, dir string, skip, n int, fn func(commit)
 		return err
 	}
 	args := gitArgs(
-		"log", "--date-order", "--branches", "--remotes", "--tags",
+		"log", "--date-order",
 		"--no-color",
 		"--skip="+strconv.Itoa(skip),
 		"--max-count="+strconv.Itoa(n),
 		"--format="+commitFormat,
 	)
-	if h := strings.TrimSpace(string(head)); h != "" {
-		args = append(args, h)
-	}
+	args = append(args, tips...)
 	args = append(args, "--")
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
@@ -212,6 +217,71 @@ func streamCommits(ctx context.Context, dir string, skip, n int, fn func(commit)
 		return errors.New(trimMsg(msg))
 	}
 	return nil
+}
+
+func historyTips(ctx context.Context, dir string, refs []string) ([]string, error) {
+	var tips []string
+	if len(refs) == 0 {
+		tips = []string{"--branches", "--remotes", "--tags"}
+		refs = []string{"HEAD"}
+	}
+	for _, ref := range refs {
+		if ref == "HEAD" {
+			head, err := runGit(ctx, dir, "rev-parse", "--revs-only", "HEAD")
+			if err != nil {
+				return nil, err
+			}
+			if h := strings.TrimSpace(string(head)); h != "" {
+				tips = append(tips, h)
+			}
+		} else {
+			// refs come from for-each-ref or resolveCommit, never raw user input.
+			tips = append(tips, ref)
+		}
+	}
+	return tips, nil
+}
+
+func resolveCommit(ctx context.Context, dir, ref string) ([20]byte, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return zeroHash, errors.New("请输入 ref 或 SHA")
+	}
+	out, err := runGit(ctx, dir, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+	if err != nil {
+		return zeroHash, err
+	}
+	return parseHash(string(out))
+}
+
+type commitInfo struct {
+	author, authorEmail, authorDate          string
+	committer, committerEmail, committerDate string
+	message                                  string
+}
+
+func loadCommitInfo(ctx context.Context, dir, hash string) (*commitInfo, error) {
+	out, err := runGit(ctx, dir, "show", "-s", "--no-color", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", hash, "--")
+	if err != nil {
+		return nil, err
+	}
+	f := strings.SplitN(string(out), "\x00", 7)
+	if len(f) != 7 {
+		return nil, errors.New("无法解析提交详情")
+	}
+	return &commitInfo{
+		author: f[0], authorEmail: f[1], authorDate: f[2],
+		committer: f[3], committerEmail: f[4], committerDate: f[5],
+		message: strings.TrimRight(f[6], "\n"),
+	}, nil
+}
+
+func compareFiles(ctx context.Context, dir, from, to string) ([]fileChange, error) {
+	out, err := runGit(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-M", "-z", from, to, "--")
+	if err != nil {
+		return nil, err
+	}
+	return parseNameStatusZ(out), nil
 }
 
 func splitByte(sep byte) bufio.SplitFunc {

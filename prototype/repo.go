@@ -10,6 +10,10 @@ import (
 )
 
 func (a *app) post(fn func()) {
+	if a.dispatch != nil {
+		a.dispatch(fn)
+		return
+	}
 	if a.win == nil {
 		fn()
 		return
@@ -155,6 +159,7 @@ func (a *app) reload(t *repoTab) {
 	t.authors = map[string]string{}
 	t.hasMore = false
 	t.files = nil
+	t.info = nil
 	t.diff = nil
 	t.detailLoading = false
 	t.detailErr = ""
@@ -163,10 +168,12 @@ func (a *app) reload(t *repoTab) {
 	t.shownKey = ""
 	t.selected = -1
 	t.commitApplied = -1
+	t.selection.Clear()
 	t.fileSel = -1
 	t.fileApplied = -1
 	path := t.path
 	count := t.historyCount()
+	refs := append([]string(nil), t.historyRefs...)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.historyCancel = cancel
 	go func() {
@@ -175,7 +182,7 @@ func (a *app) reload(t *repoTab) {
 		var commits []commit
 		var logErr error
 		if metaErr == nil {
-			logErr = streamCommits(ctx, path, 0, count, func(c commit) error {
+			logErr = streamHistory(ctx, path, 0, count, refs, func(c commit) error {
 				commits = append(commits, c)
 				return nil
 			})
@@ -212,6 +219,9 @@ func (a *app) reload(t *repoTab) {
 			if t.resumeRow >= 0 && t.rows() > 0 {
 				t.list.ScrollTo(min(t.resumeRow, t.rows()-1), ui.Start)
 			}
+			if t.comparison != nil {
+				a.onCommitSelected(t)
+			}
 			a.sampleNow()
 		})
 	}()
@@ -226,12 +236,13 @@ func (a *app) loadMore(t *repoTab) {
 	gen := t.generation
 	skip := len(t.commits)
 	path := t.path
+	refs := append([]string(nil), t.historyRefs...)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.historyCancel = cancel
 	go func() {
 		defer cancel()
 		var commits []commit
-		err := streamCommits(ctx, path, skip, pageMore, func(c commit) error {
+		err := streamHistory(ctx, path, skip, pageMore, refs, func(c commit) error {
 			commits = append(commits, c)
 			return nil
 		})
@@ -295,6 +306,7 @@ func (a *app) onCommitSelected(t *repoTab) {
 	if key == "" {
 		t.shownKey = ""
 		t.files = nil
+		t.info = nil
 		t.diff = nil
 		t.detailErr = ""
 		t.detailNote = ""
@@ -303,6 +315,7 @@ func (a *app) onCommitSelected(t *repoTab) {
 	}
 	t.shownKey = key
 	t.files = nil
+	t.info = nil
 	t.diff = nil
 	t.detailErr = ""
 	t.detailNote = ""
@@ -312,6 +325,7 @@ func (a *app) onCommitSelected(t *repoTab) {
 	repoGen := t.generation
 	path := t.path
 	uncommitted := key == "u"
+	comparison := t.comparison
 	var hash string
 	if c := t.selectedCommit(); c != nil {
 		hash = hashHex(c.hash)
@@ -322,11 +336,17 @@ func (a *app) onCommitSelected(t *repoTab) {
 	go func() {
 		defer cancel()
 		var files []fileChange
+		var info *commitInfo
 		var err error
-		if uncommitted {
+		if comparison != nil {
+			files, err = compareFiles(ctx, path, hashHex(comparison.from), hashHex(comparison.to))
+		} else if uncommitted {
 			files, err = uncommittedFiles(ctx, path)
 		} else {
-			files, err = commitFiles(ctx, path, hash)
+			info, err = loadCommitInfo(ctx, path, hash)
+			if err == nil {
+				files, err = commitFiles(ctx, path, hash)
+			}
 		}
 		a.post(func() {
 			if t.generation != repoGen || t.detailGen != gen {
@@ -338,6 +358,7 @@ func (a *app) onCommitSelected(t *repoTab) {
 				return
 			}
 			t.files = files
+			t.info = info
 			t.fileSel = -1
 			t.fileApplied = -1
 			if len(files) > 0 {
@@ -374,6 +395,9 @@ func (a *app) onFileSelected(t *repoTab) {
 		if len(c.parents) > 0 {
 			parent = hashHex(c.parents[0])
 		}
+	}
+	if t.comparison != nil {
+		parent, hash = hashHex(t.comparison.from), hashHex(t.comparison.to)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.diffCancel = cancel
@@ -486,7 +510,7 @@ func (a *app) jumpHash(t *repoTab, h [20]byte) {
 			return
 		}
 	}
-	a.setFlash("这个父提交还不在已加载的页里")
+	a.openRef(t, hashHex(h))
 }
 
 func (a *app) createBranch() {

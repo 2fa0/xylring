@@ -48,6 +48,15 @@ type repoTab struct {
 	refsCancel    context.CancelFunc
 	detailCancel  context.CancelFunc
 	diffCancel    context.CancelFunc
+	navCancel     context.CancelFunc
+	navGen        int
+
+	scope       string
+	scopeChoice string
+	historyRefs []string
+	refInput    string
+	refErr      string
+	refBusy     bool
 
 	branch  string
 	head    [20]byte
@@ -59,10 +68,12 @@ type repoTab struct {
 	authors map[string]string
 
 	list          ui.ListState
+	selection     ui.Selection[any]
 	selected      int
 	commitApplied int
 	wantHash      [20]byte
 	wantDirty     bool
+	comparison    *commitComparison
 
 	query string
 
@@ -71,6 +82,7 @@ type repoTab struct {
 	detailErr     string
 	shownKey      string
 	files         []fileChange
+	info          *commitInfo
 	fileList      ui.ListState
 	fileSel       int
 	fileApplied   int
@@ -92,6 +104,8 @@ func newTab(id int, path string) *repoTab {
 		fileSel:       -1,
 		fileApplied:   -1,
 		resumeRow:     -1,
+		scope:         "全部分支",
+		scopeChoice:   "全部分支",
 		authors:       map[string]string{},
 		refs:          map[[20]byte][]refInfo{},
 	}
@@ -170,12 +184,14 @@ func (t *repoTab) historyCount() int {
 }
 
 func (t *repoTab) cancelReads() {
-	for _, cancel := range []context.CancelFunc{t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel} {
+	for _, cancel := range []context.CancelFunc{t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel, t.navCancel} {
 		if cancel != nil {
 			cancel()
 		}
 	}
 	t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel = nil, nil, nil, nil
+	t.navCancel = nil
+	t.refBusy = false
 }
 
 func (t *repoTab) reselect() {
@@ -197,6 +213,9 @@ func (t *repoTab) reselect() {
 }
 
 func (t *repoTab) selectionKey() string {
+	if t.comparison != nil {
+		return "compare:" + hashHex(t.comparison.from) + ":" + hashHex(t.comparison.to)
+	}
 	if t.dirty > 0 && t.selected == 0 {
 		return "u"
 	}
@@ -254,6 +273,7 @@ func (t *repoTab) releaseHeavy() {
 	t.authors = nil
 	t.hasMore = false
 	t.files = nil
+	t.info = nil
 	t.diff = nil
 	t.detailLoading = false
 	t.detailErr = ""
@@ -266,6 +286,7 @@ func (t *repoTab) releaseHeavy() {
 	t.fileApplied = -1
 	t.list = ui.ListState{}
 	t.fileList = ui.ListState{}
+	t.selection = ui.Selection[any]{}
 }
 
 func (t *repoTab) match(i int, q string) bool {
@@ -273,7 +294,8 @@ func (t *repoTab) match(i int, q string) bool {
 	if strings.Contains(strings.ToLower(c.subject), q) || strings.Contains(strings.ToLower(c.author), q) {
 		return true
 	}
-	return strings.Contains(hashHex(c.hash), q)
+	return strings.Contains(hashHex(c.hash), q) ||
+		strings.Contains(c.whenText(), q) || strings.Contains(strings.ToLower(t.refText(c.hash)), q)
 }
 
 func validBranch(name string) string {
