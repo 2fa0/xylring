@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -45,7 +44,11 @@ func (a *app) remember(path string) {
 		}
 	}
 	a.recent = out
-	saveRecent(out)
+	if a.persist {
+		if err := saveRecent(out); err != nil {
+			a.banner = "保存最近仓库失败：" + err.Error()
+		}
+	}
 }
 
 func (a *app) pickRepo() {
@@ -103,6 +106,7 @@ func (a *app) openRoot(root string) {
 	a.banner = ""
 	a.remember(root)
 	a.reload(tab)
+	a.saveSession()
 }
 
 func (a *app) activate(i int) {
@@ -120,6 +124,7 @@ func (a *app) activate(i int) {
 	if !tab.loaded && !tab.loading {
 		a.reload(tab)
 	}
+	a.saveSession()
 }
 
 func (a *app) closeTab(i int) {
@@ -130,6 +135,7 @@ func (a *app) closeTab(i int) {
 	a.tabs = append(a.tabs[:i], a.tabs[i+1:]...)
 	if len(a.tabs) == 0 {
 		a.active = 0
+		a.saveSession()
 		return
 	}
 	if a.active > i {
@@ -142,11 +148,17 @@ func (a *app) closeTab(i int) {
 	if !tab.loaded && !tab.loading {
 		a.reload(tab)
 	}
+	a.saveSession()
 }
 
 func (a *app) reload(t *repoTab) {
 	t.captureSelection()
 	t.cancelReads()
+	t.options = a.options(t.path)
+	t.palette, _ = parsePalette(t.options.Colors)
+	if t.tableLayout.Widths == nil {
+		t.tableLayout = t.options.Layout
+	}
 	t.generation++
 	gen := t.generation
 	t.loading = true
@@ -156,6 +168,12 @@ func (a *app) reload(t *repoTab) {
 	t.commits = nil
 	t.graph = graph{}
 	t.refs = nil
+	t.refChoices = nil
+	t.stashes = nil
+	t.stashView = nil
+	t.viewer = nil
+	t.dirCache = nil
+	t.dirBusy = nil
 	t.authors = map[string]string{}
 	t.hasMore = false
 	t.files = nil
@@ -174,15 +192,17 @@ func (a *app) reload(t *repoTab) {
 	path := t.path
 	count := t.historyCount()
 	refs := append([]string(nil), t.historyRefs...)
+	options := t.options
+	historyPath, searchText := t.historyPath, t.searchText
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.historyCancel = cancel
 	go func() {
 		defer cancel()
-		meta, metaErr := loadMeta(ctx, path)
+		meta, metaErr := loadMeta(ctx, path, options.IncludeUntracked)
 		var commits []commit
 		var logErr error
 		if metaErr == nil {
-			logErr = streamHistory(ctx, path, 0, count, refs, func(c commit) error {
+			logErr = streamLog(ctx, path, 0, count, logOptions{Refs: refs, Path: historyPath, Query: searchText, Names: meta.refs}, func(c commit) error {
 				commits = append(commits, c)
 				return nil
 			})
@@ -206,20 +226,32 @@ func (a *app) reload(t *repoTab) {
 			t.head = meta.head
 			t.dirty = meta.dirty
 			t.refs = meta.refs
+			t.refChoices = nil
+			t.stashes = meta.stashes
 			t.graph = graph{}
+			t.layoutStashes()
 			for i := range commits {
 				commits[i].author = t.intern(commits[i].author)
-				t.graph.add(&commits[i])
+				if t.searchText == "" {
+					t.graph.add(&commits[i])
+				}
 			}
 			t.commits = commits
 			t.hasMore = len(commits) == count
 			t.loaded = true
 			t.holdAuto = true
 			t.reselect()
+			if !t.wantFirst && t.detailHidden && t.searchText != "" && t.selected >= 0 {
+				a.selectSearchResult(t, t.rowCommit(t.selected))
+			}
+			if t.wantFirst {
+				t.wantFirst = false
+				a.selectSearchResult(t, 0)
+			}
 			if t.resumeRow >= 0 && t.rows() > 0 {
 				t.list.ScrollTo(min(t.resumeRow, t.rows()-1), ui.Start)
 			}
-			if t.comparison != nil {
+			if t.comparison != nil || t.stashView != nil {
 				a.onCommitSelected(t)
 			}
 			a.sampleNow()
@@ -235,14 +267,16 @@ func (a *app) loadMore(t *repoTab) {
 	t.err = ""
 	gen := t.generation
 	skip := len(t.commits)
+	count := t.options.More
 	path := t.path
 	refs := append([]string(nil), t.historyRefs...)
+	queryOptions := logOptions{Refs: refs, Path: t.historyPath, Query: t.searchText, Names: t.refs}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.historyCancel = cancel
 	go func() {
 		defer cancel()
 		var commits []commit
-		err := streamHistory(ctx, path, skip, pageMore, refs, func(c commit) error {
+		err := streamLog(ctx, path, skip, count, queryOptions, func(c commit) error {
 			commits = append(commits, c)
 			return nil
 		})
@@ -257,10 +291,20 @@ func (a *app) loadMore(t *repoTab) {
 			}
 			for i := range commits {
 				commits[i].author = t.intern(commits[i].author)
-				t.graph.add(&commits[i])
+				if t.searchText == "" {
+					t.graph.add(&commits[i])
+				}
 			}
 			t.commits = append(t.commits, commits...)
-			t.hasMore = len(commits) == pageMore
+			t.hasMore = len(commits) == count
+			if t.wantNext {
+				t.wantNext = false
+				if len(commits) > 0 {
+					a.selectSearchResult(t, skip)
+				} else if len(t.commits) > 0 {
+					a.selectSearchResult(t, 0)
+				}
+			}
 			t.holdAuto = true
 			a.sampleNow()
 		})
@@ -273,16 +317,19 @@ func (a *app) refreshRefs(t *repoTab) {
 	}
 	gen := t.generation
 	path := t.path
+	includeUntracked := t.options.IncludeUntracked
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	t.refsCancel = cancel
 	go func() {
 		defer cancel()
-		meta, err := loadMeta(ctx, path)
+		meta, err := loadMeta(ctx, path, includeUntracked)
 		a.post(func() {
 			if err != nil || t.generation != gen {
 				return
 			}
 			t.refs = meta.refs
+			t.refChoices = nil
+			t.stashes = meta.stashes
 			t.branch = meta.branch
 			t.head = meta.head
 			t.dirty = meta.dirty
@@ -302,6 +349,8 @@ func (a *app) onCommitSelected(t *repoTab) {
 		t.diffCancel()
 	}
 	t.detailGen++
+	t.viewer = nil
+	t.fileMode = "diff"
 	t.diffLoading = false
 	if key == "" {
 		t.shownKey = ""
@@ -325,10 +374,15 @@ func (a *app) onCommitSelected(t *repoTab) {
 	repoGen := t.generation
 	path := t.path
 	uncommitted := key == "u"
+	includeUntracked := t.options.IncludeUntracked
 	comparison := t.comparison
 	var hash string
+	historyPath := ""
+	stash := false
 	if c := t.selectedCommit(); c != nil {
 		hash = hashHex(c.hash)
+		stash = c.stash != ""
+		historyPath = c.historyPath
 	}
 	t.detailLoading = true
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -341,11 +395,24 @@ func (a *app) onCommitSelected(t *repoTab) {
 		if comparison != nil {
 			files, err = compareFiles(ctx, path, hashHex(comparison.from), hashHex(comparison.to))
 		} else if uncommitted {
-			files, err = uncommittedFiles(ctx, path)
+			files, err = statusFiles(ctx, path, includeUntracked)
 		} else {
 			info, err = loadCommitInfo(ctx, path, hash)
 			if err == nil {
-				files, err = commitFiles(ctx, path, hash)
+				if stash {
+					files, err = stashFiles(ctx, path, hash)
+				} else {
+					files, err = commitFiles(ctx, path, hash)
+				}
+				if historyPath != "" {
+					filtered := files[:0]
+					for _, f := range files {
+						if f.path == historyPath || f.oldPath == historyPath {
+							filtered = append(filtered, f)
+						}
+					}
+					files = filtered
+				}
 			}
 		}
 		a.post(func() {
@@ -379,7 +446,9 @@ func (a *app) onFileSelected(t *repoTab) {
 		t.diffLoading = false
 		return
 	}
+	t.viewer = nil
 	file := t.files[t.fileSel]
+	mode := t.fileMode
 	gen := t.diffGen
 	repoGen := t.generation
 	detailGen := t.detailGen
@@ -396,6 +465,12 @@ func (a *app) onFileSelected(t *repoTab) {
 			parent = hashHex(c.parents[0])
 		}
 	}
+	if file.oldRev != "" {
+		parent = file.oldRev
+	}
+	if file.newRev != "" {
+		hash = file.newRev
+	}
 	if t.comparison != nil {
 		parent, hash = hashHex(t.comparison.from), hashHex(t.comparison.to)
 	}
@@ -403,7 +478,13 @@ func (a *app) onFileSelected(t *repoTab) {
 	t.diffCancel = cancel
 	go func() {
 		defer cancel()
-		oldText, newText, note, err := loadSides(ctx, path, file, uncommitted, hash, parent)
+		var oldText, newText, note string
+		var err error
+		if mode == "worktree" {
+			oldText, newText, note, err = worktreeSides(ctx, path, hash, file.path)
+		} else {
+			oldText, newText, note, err = loadSides(ctx, path, file, uncommitted, hash, parent)
+		}
 		a.post(func() {
 			if t.generation != repoGen || t.detailGen != detailGen || t.diffGen != gen {
 				return
@@ -479,28 +560,7 @@ func loadSides(ctx context.Context, dir string, file fileChange, uncommitted boo
 	return string(oldb), string(newb), "", nil
 }
 
-func (a *app) findNext(t *repoTab) {
-	q := strings.ToLower(strings.TrimSpace(t.query))
-	if q == "" || len(t.commits) == 0 {
-		a.setFlash("先输入要查找的内容")
-		return
-	}
-	start := t.rowCommit(t.selected)
-	n := len(t.commits)
-	for k := 1; k <= n; k++ {
-		i := (start + k) % n
-		if i < 0 {
-			i += n
-		}
-		if t.match(i, q) {
-			t.selected = t.commitRow(i)
-			t.list.ScrollIntoView(t.selected)
-			a.setFlash("第 " + itoa(k) + " 个匹配，在已加载的 " + itoa(n) + " 条里")
-			return
-		}
-	}
-	a.setFlash("已加载的提交里没有匹配")
-}
+func (a *app) findNext(t *repoTab) { a.searchNext(t) }
 
 func (a *app) jumpHash(t *repoTab, h [20]byte) {
 	for i := range t.commits {
@@ -511,39 +571,6 @@ func (a *app) jumpHash(t *repoTab, h [20]byte) {
 		}
 	}
 	a.openRef(t, hashHex(h))
-}
-
-func (a *app) createBranch() {
-	if a.branchBusy {
-		return
-	}
-	name := strings.TrimSpace(a.branchName)
-	if msg := validBranch(name); msg != "" {
-		a.branchErr = msg
-		return
-	}
-	a.branchBusy = true
-	a.branchErr = ""
-	repo := a.branchRepo
-	hash := a.branchHash
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		_, err := runGit(ctx, repo, "branch", name, hash)
-		a.post(func() {
-			a.branchBusy = false
-			if err != nil {
-				a.branchErr = err.Error()
-				return
-			}
-			a.branching = false
-			a.branchName = ""
-			a.setFlash("已创建分支 " + name)
-			if t := a.tabByPath(repo); t != nil && t.loaded {
-				a.refreshRefs(t)
-			}
-		})
-	}()
 }
 
 func (a *app) setFlash(s string) {

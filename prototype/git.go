@@ -9,9 +9,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,10 +29,9 @@ const (
 var zeroHash [20]byte
 
 var (
-	gitOnce  sync.Once
-	gitBin   string
-	gitLook  error
-	gitSlots = make(chan struct{}, 4)
+	gitMu       sync.RWMutex
+	gitOverride string
+	gitSlots    = make(chan struct{}, 4)
 )
 
 func acquireGit(ctx context.Context) error {
@@ -47,13 +48,17 @@ func acquireGit(ctx context.Context) error {
 }
 
 func gitPath() (string, error) {
-	gitOnce.Do(func() {
-		gitBin, gitLook = exec.LookPath("git")
-		if gitLook != nil {
-			gitLook = errors.New("找不到 git，请先安装并加入 PATH")
-		}
-	})
-	return gitBin, gitLook
+	gitMu.RLock()
+	name := gitOverride
+	gitMu.RUnlock()
+	if name == "" {
+		name = "git"
+	}
+	bin, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("找不到 git，请先安装或在设置中指定路径：%w", err)
+	}
+	return bin, nil
 }
 
 func gitEnv() []string {
@@ -140,8 +145,18 @@ func streamCommits(ctx context.Context, dir string, skip, n int, fn func(commit)
 }
 
 func streamHistory(ctx context.Context, dir string, skip, n int, refs []string, fn func(commit) error) error {
+	return streamLog(ctx, dir, skip, n, logOptions{Refs: refs}, fn)
+}
+
+type logOptions struct {
+	Refs        []string
+	Path, Query string
+	Names       map[[20]byte][]refInfo
+}
+
+func streamLog(ctx context.Context, dir string, skip, n int, options logOptions, fn func(commit) error) error {
 	// --revs-only 在 unborn HEAD 上返回空输出，同时保留 detached HEAD 的提交。
-	tips, err := historyTips(ctx, dir, refs)
+	tips, err := historyTips(ctx, dir, options.Refs)
 	if err != nil {
 		return err
 	}
@@ -156,15 +171,25 @@ func streamHistory(ctx context.Context, dir string, skip, n int, refs []string, 
 	if err != nil {
 		return err
 	}
-	args := gitArgs(
-		"log", "--date-order",
-		"--no-color",
-		"--skip="+strconv.Itoa(skip),
-		"--max-count="+strconv.Itoa(n),
-		"--format="+commitFormat,
-	)
+	format := commitFormat
+	if options.Path != "" || options.Query != "" {
+		format += "%x00"
+	}
+	if options.Query != "" {
+		format += "%B%n%ae%n%ce%x00"
+	}
+	args := gitArgs("log", "--date-order", "--no-color", "--format="+format)
+	if options.Path == "" && options.Query == "" {
+		args = append(args, "--skip="+strconv.Itoa(skip), "--max-count="+strconv.Itoa(n))
+	}
+	if options.Path != "" {
+		args = append(args, "--follow", "--name-status", "-z")
+	}
 	args = append(args, tips...)
 	args = append(args, "--")
+	if options.Path != "" {
+		args = append(args, options.Path)
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = gitEnv()
@@ -181,25 +206,62 @@ func streamHistory(ctx context.Context, dir string, skip, n int, refs []string, 
 	sc.Buffer(make([]byte, 64*1024), 2<<20)
 	sc.Split(splitByte(0x1e))
 	var parseErr error
+	path := options.Path
+	seen, emitted := 0, 0
+	stopped := false
 	for sc.Scan() {
 		rec := strings.TrimRight(sc.Text(), "\r\n")
 		if rec == "" {
 			continue
 		}
-		c, err := parseCommitRecord(rec)
+		header, rest, _ := strings.Cut(rec, "\x00")
+		body := ""
+		if options.Query != "" {
+			body, rest, _ = strings.Cut(rest, "\x00")
+		}
+		c, err := parseCommitRecord(header)
 		if err != nil {
 			parseErr = err
 			break
 		}
+		if options.Path != "" {
+			c.historyPath = path
+			for _, change := range parseNameStatusZ([]byte(strings.TrimLeft(rest, "\x00\r\n"))) {
+				if change.status == "R" && change.path == path {
+					path = change.oldPath
+				}
+			}
+		}
+		if options.Query != "" {
+			q := strings.ToLower(options.Query)
+			text := strings.ToLower(body + "\n" + c.author + "\n" + c.whenText() + "\n" + hashHex(c.hash))
+			for _, ref := range options.Names[c.hash] {
+				text += "\n" + strings.ToLower(ref.name)
+			}
+			if !strings.Contains(text, q) {
+				continue
+			}
+		}
+		if options.Path != "" || options.Query != "" {
+			seen++
+			if seen <= skip {
+				continue
+			}
+		}
 		if err := fn(c); err != nil {
 			parseErr = err
+			break
+		}
+		emitted++
+		if (options.Path != "" || options.Query != "") && emitted >= n {
+			stopped = true
 			break
 		}
 	}
 	if parseErr == nil {
 		parseErr = sc.Err()
 	}
-	if parseErr != nil && cmd.Process != nil {
+	if (parseErr != nil || stopped) && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
@@ -208,6 +270,9 @@ func streamHistory(ctx context.Context, dir string, skip, n int, refs []string, 
 	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("git 超时或已取消：%w", ctx.Err())
+	}
+	if stopped {
+		return nil
 	}
 	if waitErr != nil {
 		msg := strings.TrimSpace(stderr.String())
@@ -359,13 +424,14 @@ type refInfo struct {
 }
 
 type repoMeta struct {
-	branch string
-	head   [20]byte
-	dirty  int
-	refs   map[[20]byte][]refInfo
+	stashes []commit
+	branch  string
+	head    [20]byte
+	dirty   int
+	refs    map[[20]byte][]refInfo
 }
 
-func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
+func loadMeta(ctx context.Context, dir string, includeUntracked ...bool) (repoMeta, error) {
 	var m repoMeta
 	m.refs = map[[20]byte][]refInfo{}
 	if branch, err := runGit(ctx, dir, "symbolic-ref", "-q", "--short", "HEAD"); err == nil {
@@ -380,17 +446,18 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 			m.head = h
 		}
 	}
-	status, err := runGit(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=no")
+	status, err := statusFiles(ctx, dir, len(includeUntracked) > 0 && includeUntracked[0])
 	if err != nil {
 		return m, err
 	}
-	m.dirty = len(parsePorcelainZ(status))
+	m.dirty = len(status)
 	rawRefs, err := runGit(ctx, dir, "for-each-ref", "--format=%(objectname) %(refname) %(*objectname)")
 	if err != nil {
 		return m, err
 	}
 	m.refs = parseRefs(rawRefs)
-	return m, nil
+	m.stashes, err = loadStashes(ctx, dir)
+	return m, err
 }
 
 func parseRefs(raw []byte) map[[20]byte][]refInfo {
@@ -431,14 +498,7 @@ func parseRefs(raw []byte) map[[20]byte][]refInfo {
 }
 
 func sortRefs(list []refInfo) {
-	// 分支、远程、标签，同类按名字。
-	for i := 1; i < len(list); i++ {
-		j := i
-		for j > 0 && refLess(list[j], list[j-1]) {
-			list[j], list[j-1] = list[j-1], list[j]
-			j--
-		}
-	}
+	sort.SliceStable(list, func(i, j int) bool { return refLess(list[i], list[j]) })
 }
 
 func refLess(a, b refInfo) bool {
@@ -449,9 +509,10 @@ func refLess(a, b refInfo) bool {
 }
 
 type fileChange struct {
-	status  string
-	path    string
-	oldPath string
+	layer, oldRev, newRev string
+	status                string
+	path                  string
+	oldPath               string
 }
 
 func commitFiles(ctx context.Context, dir, hash string) ([]fileChange, error) {
@@ -466,7 +527,15 @@ func commitFiles(ctx context.Context, dir, hash string) ([]fileChange, error) {
 }
 
 func uncommittedFiles(ctx context.Context, dir string) ([]fileChange, error) {
-	out, err := runGit(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=no")
+	return statusFiles(ctx, dir, false)
+}
+
+func statusFiles(ctx context.Context, dir string, untracked bool) ([]fileChange, error) {
+	flag := "--untracked-files=no"
+	if untracked {
+		flag = "--untracked-files=all"
+	}
+	out, err := runGit(ctx, dir, "status", "--porcelain=v1", "-z", flag)
 	if err != nil {
 		return nil, err
 	}
@@ -520,6 +589,9 @@ func parsePorcelainZ(b []byte) []fileChange {
 		}
 		xy := string(p[:2])
 		ch := fileChange{status: statusLetter(xy), path: string(p[3:])}
+		if xy == "??" {
+			ch.layer = "未跟踪"
+		}
 		if strings.ContainsAny(xy, "RC") {
 			if i < len(parts) {
 				ch.oldPath = string(parts[i])
@@ -532,6 +604,10 @@ func parsePorcelainZ(b []byte) []fileChange {
 }
 
 func statusLetter(st string) string {
+	switch st {
+	case "DD", "AU", "UD", "UA", "DU", "AA", "UU":
+		return "U"
+	}
 	for _, r := range st {
 		if r != ' ' && r != '.' {
 			return string(r)
@@ -541,10 +617,14 @@ func statusLetter(st string) string {
 }
 
 func (f fileChange) label() string {
-	if f.oldPath != "" && f.oldPath != f.path {
-		return f.status + "  " + f.oldPath + " → " + f.path
+	prefix := ""
+	if f.layer != "" {
+		prefix = "[" + f.layer + "] "
 	}
-	return f.status + "  " + f.path
+	if f.oldPath != "" && f.oldPath != f.path {
+		return prefix + f.status + "  " + f.oldPath + " → " + f.path
+	}
+	return prefix + f.status + "  " + f.path
 }
 
 // readBlob 读取 rev:path。文件不存在时返回空内容。过大或二进制时 note 非空。
@@ -582,22 +662,34 @@ func readWorktree(dir, rel string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	st, err := os.Stat(full)
+	st, err := os.Lstat(full)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, "", nil
 		}
 		return nil, "", err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(full)
+		return []byte(target), "", err
 	}
 	if st.Size() > maxDiffBytes {
 		return nil, fmt.Sprintf("文件过大（%d 字节），未载入", st.Size()), nil
 	}
-	data, err := os.ReadFile(full)
+	f, err := os.Open(full)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxDiffBytes+1))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, "", nil
 		}
 		return nil, "", err
+	}
+	if len(data) > maxDiffBytes {
+		return nil, "文件读取过程中超过大小限制，未载入", nil
 	}
 	if bytes.IndexByte(data, 0) >= 0 {
 		return nil, fmt.Sprintf("二进制文件（%d 字节）", len(data)), nil

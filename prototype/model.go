@@ -14,13 +14,15 @@ import (
 
 // commit 只保留列表和图谱要用的字段。正文、文件列表和 diff 在打开时再取。
 type commit struct {
-	hash    [20]byte
-	parents [][20]byte
-	author  string
-	when    int64
-	subject string
-	nodeCol int
-	segs    []seg
+	hash        [20]byte
+	parents     [][20]byte
+	author      string
+	when        int64
+	subject     string
+	historyPath string
+	stash       string
+	nodeCol     int
+	segs        []seg
 }
 
 func (c commit) whenText() string {
@@ -51,21 +53,46 @@ type repoTab struct {
 	navCancel     context.CancelFunc
 	navGen        int
 
-	scope       string
-	scopeChoice string
-	historyRefs []string
-	refInput    string
-	refErr      string
-	refBusy     bool
+	scope                                string
+	scopeChoice                          string
+	historyRefs                          []string
+	refInput                             string
+	refErr                               string
+	refBusy                              bool
+	historyPath                          string
+	searchText                           string
+	searchIndex                          int
+	searchScope                          string
+	wantFirst, wantNext                  bool
+	sidebarSection                       string
+	dirCache                             map[string][]browserEntry
+	dirBusy                              map[string]bool
+	browseCtx                            context.Context
+	browseCancel                         context.CancelFunc
+	treeOpen                             map[string]bool
+	browserErr                           string
+	browserList, refList, changeTreeList ui.ListState
+	viewer                               *fileViewer
+	fileMode                             string
+	fileTree                             bool
+	closedFolders                        map[string]bool
+	options                              viewSettings
+	palette                              []ui.Color
+	tableLayout                          ui.TableLayout
+	detailHidden                         bool
 
-	branch  string
-	head    [20]byte
-	dirty   int
-	refs    map[[20]byte][]refInfo
-	commits []commit
-	graph   graph
-	hasMore bool
-	authors map[string]string
+	stashes    []commit
+	stashView  *commit
+	stashList  ui.ListState
+	branch     string
+	head       [20]byte
+	dirty      int
+	refChoices []refInfo
+	refs       map[[20]byte][]refInfo
+	commits    []commit
+	graph      graph
+	hasMore    bool
+	authors    map[string]string
 
 	list          ui.ListState
 	selection     ui.Selection[any]
@@ -104,6 +131,7 @@ func newTab(id int, path string) *repoTab {
 		fileSel:       -1,
 		fileApplied:   -1,
 		resumeRow:     -1,
+		options:       defaultViewSettings(),
 		scope:         "全部分支",
 		scopeChoice:   "全部分支",
 		authors:       map[string]string{},
@@ -131,8 +159,15 @@ func (t *repoTab) intern(s string) string {
 	return s
 }
 
+func (t *repoTab) stashRows() int {
+	if t.historyPath != "" || t.searchText != "" || len(t.historyRefs) > 0 {
+		return 0
+	}
+	return len(t.stashes)
+}
+
 func (t *repoTab) rows() int {
-	n := len(t.commits)
+	n := len(t.commits) + t.stashRows()
 	if t.dirty > 0 {
 		n++
 	}
@@ -147,22 +182,27 @@ func (t *repoTab) rowCommit(row int) int {
 		if row == 0 {
 			return -1
 		}
-		return row - 1
+		return row - 1 - t.stashRows()
 	}
-	return row
+	return row - t.stashRows()
 }
 
 func (t *repoTab) commitRow(i int) int {
 	if t.dirty > 0 {
-		return i + 1
+		return i + 1 + t.stashRows()
 	}
-	return i
+	return i + t.stashRows()
 }
 
 func (t *repoTab) captureSelection() {
 	if len(t.commits) > 0 {
 		t.resumeCount = len(t.commits)
 		t.resumeRow, _ = t.list.Visible()
+	}
+	if t.stashView != nil {
+		t.wantHash = t.stashView.hash
+		t.wantDirty = false
+		return
 	}
 	if t.selected < 0 {
 		return
@@ -173,6 +213,10 @@ func (t *repoTab) captureSelection() {
 		return
 	}
 	t.wantDirty = false
+	if c := t.selectedCommit(); c != nil && c.stash != "" {
+		t.wantHash = c.hash
+		return
+	}
 	ci := t.rowCommit(t.selected)
 	if ci >= 0 && ci < len(t.commits) {
 		t.wantHash = t.commits[ci].hash
@@ -180,17 +224,19 @@ func (t *repoTab) captureSelection() {
 }
 
 func (t *repoTab) historyCount() int {
-	return max(pageFirst, t.resumeCount)
+	return max(t.options.First, t.resumeCount)
 }
 
 func (t *repoTab) cancelReads() {
-	for _, cancel := range []context.CancelFunc{t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel, t.navCancel} {
+	for _, cancel := range []context.CancelFunc{t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel, t.navCancel, t.browseCancel} {
 		if cancel != nil {
 			cancel()
 		}
 	}
 	t.historyCancel, t.refsCancel, t.detailCancel, t.diffCancel = nil, nil, nil, nil
 	t.navCancel = nil
+	t.browseCancel = nil
+	t.browseCtx = nil
 	t.refBusy = false
 }
 
@@ -198,6 +244,20 @@ func (t *repoTab) reselect() {
 	if t.wantDirty && t.dirty > 0 {
 		t.selected = 0
 		return
+	}
+	for i, s := range t.stashes {
+		if s.hash == t.wantHash {
+			if i >= t.stashRows() {
+				t.stashView = &t.stashes[i]
+				t.selected = -1
+				return
+			}
+			t.selected = i
+			if t.dirty > 0 {
+				t.selected++
+			}
+			return
+		}
 	}
 	if t.wantHash == zeroHash {
 		t.selected = -1
@@ -219,6 +279,9 @@ func (t *repoTab) selectionKey() string {
 	if t.dirty > 0 && t.selected == 0 {
 		return "u"
 	}
+	if c := t.selectedCommit(); c != nil && c.stash != "" {
+		return "stash:" + hashHex(c.hash)
+	}
 	ci := t.rowCommit(t.selected)
 	if ci < 0 || ci >= len(t.commits) {
 		return ""
@@ -226,12 +289,25 @@ func (t *repoTab) selectionKey() string {
 	return hashHex(t.commits[ci].hash)
 }
 
-func (t *repoTab) selectedCommit() *commit {
-	ci := t.rowCommit(t.selected)
+func (t *repoTab) rowData(row int) *commit {
+	i := row
+	if t.dirty > 0 {
+		i--
+	}
+	if i >= 0 && i < t.stashRows() {
+		return &t.stashes[i]
+	}
+	ci := t.rowCommit(row)
 	if ci < 0 || ci >= len(t.commits) {
 		return nil
 	}
 	return &t.commits[ci]
+}
+func (t *repoTab) selectedCommit() *commit {
+	if t.stashView != nil {
+		return t.stashView
+	}
+	return t.rowData(t.selected)
 }
 
 func (t *repoTab) refText(h [20]byte) string {
@@ -268,13 +344,23 @@ func (t *repoTab) releaseHeavy() {
 	t.released = true
 	t.err = ""
 	t.commits = nil
+	t.stashes = nil
+	t.stashView = nil
+	t.stashList = ui.ListState{}
 	t.graph = graph{}
 	t.refs = nil
+	t.refChoices = nil
 	t.authors = nil
 	t.hasMore = false
 	t.files = nil
 	t.info = nil
 	t.diff = nil
+	t.viewer = nil
+	t.dirCache = nil
+	t.dirBusy = nil
+	t.browserList = ui.ListState{}
+	t.refList = ui.ListState{}
+	t.changeTreeList = ui.ListState{}
 	t.detailLoading = false
 	t.detailErr = ""
 	t.detailNote = ""
@@ -312,17 +398,7 @@ func validBranch(name string) string {
 	return ""
 }
 
-func recentFile() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	dir = filepath.Join(dir, "GitClientPrototype")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "recent.json"), nil
-}
+func recentFile() (string, error) { return configFile("recent.json") }
 
 func loadRecent() []string {
 	path, err := recentFile()
@@ -340,14 +416,10 @@ func loadRecent() []string {
 	return paths
 }
 
-func saveRecent(paths []string) {
+func saveRecent(paths []string) error {
 	path, err := recentFile()
 	if err != nil {
-		return
+		return err
 	}
-	b, err := json.MarshalIndent(paths, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(path, b, 0o644)
+	return writeJSON(path, paths)
 }
