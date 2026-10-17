@@ -23,14 +23,16 @@ func (a *app) setHistory(t *repoTab, scope string, refs []string, target [20]byt
 	t.releaseHeavy()
 	t.scope, t.scopeChoice = scope, scope
 	t.historyRefs = append([]string(nil), refs...)
-	t.resumeCount, t.resumeRow = pageFirst, 0
+	t.resumeCount, t.resumeRow = t.options.First, 0
 	t.wantHash, t.wantDirty = target, false
 	t.comparison = nil
+	t.historyPath, t.searchText = "", ""
 	t.refErr = ""
 	a.reload(t)
 }
 
 func (a *app) showComparison(t *repoTab, from, to [20]byte) {
+	t.stashView = nil
 	t.comparison = &commitComparison{from: from, to: to}
 	t.selected, t.commitApplied = -1, -1
 	t.wantHash, t.wantDirty = zeroHash, false

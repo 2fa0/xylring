@@ -8,7 +8,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -32,17 +34,39 @@ var laneColors = []ui.Color{
 	ui.RGBA(188, 128, 189, 1),
 }
 
+type renderStats struct {
+	Frames         uint64
+	FrameAt        time.Time
+	Builds         uint64
+	Commits, TabID int
+	Diff           bool
+}
+
 type app struct {
-	win      *mygo.Window
-	dispatch func(func())
+	rendered      *renderStats
+	op            *operation
+	showOperation bool
+	writeBusy     map[string]bool
+	recentTag     string
+	credentials   []*credentialRequest
+	persist       bool
+	win           *mygo.Window
+	dispatch      func(func())
 
-	tabs   []*repoTab
-	active int
-	nextID int
-	recent []string
+	tabs                                                  []*repoTab
+	active                                                int
+	nextID                                                int
+	recent                                                []string
+	prefs                                                 settings
+	showSettings                                          bool
+	settingsRepo                                          string
+	settingsScope                                         string
+	settingsView                                          viewSettings
+	settingsFirst, settingsMore, settingsGit, settingsErr string
 
-	split    float32
-	filePane float32
+	sidebarWidth float32
+	split        float32
+	filePane     float32
 
 	picking     bool
 	showRecent  bool
@@ -58,12 +82,6 @@ type app struct {
 	compareTo   string
 	compareErr  string
 
-	branching  bool
-	branchBusy bool
-	branchName string
-	branchErr  string
-	branchRepo string
-	branchHash string
 	flash      string
 	flashUntil time.Time
 	heap       uint64
@@ -71,14 +89,44 @@ type app struct {
 }
 
 func newApp() *app {
-	return &app{
-		split:    64,
-		filePane: 300,
-		recent:   loadRecent(),
+	prefs, err := loadSettings()
+	gitMu.Lock()
+	gitOverride = prefs.GitPath
+	gitMu.Unlock()
+	a := &app{
+		sidebarWidth: 220,
+		split:        48,
+		filePane:     300,
+		recent:       loadRecent(),
+		prefs:        prefs,
 	}
+	if err != nil {
+		a.banner = err.Error()
+	}
+	a.persist = true
+	return a
 }
 
 func (a *app) view(c *ui.Context) {
+	if a.rendered != nil {
+		defer func() {
+			a.rendered.Builds++
+			if now := c.Now(); now != a.rendered.FrameAt {
+				a.rendered.FrameAt = now
+				a.rendered.Frames++
+			}
+			if t := a.activeTab(); t != nil {
+				a.rendered.Commits = len(t.commits)
+				a.rendered.TabID = t.id
+				a.rendered.Diff = t.diff != nil
+			} else {
+				a.rendered.Commits = 0
+				a.rendered.TabID = 0
+				a.rendered.Diff = false
+			}
+		}()
+	}
+	a.tabShortcuts(c)
 	a.sampleMem(c)
 	a.expireFlash(c)
 	t := c.Theme()
@@ -88,43 +136,65 @@ func (a *app) view(c *ui.Context) {
 			a.emptyState(c)
 		} else {
 			a.toolbar(c)
-			ui.SplitVerticalPercent(c, &a.split, func() {
-				a.commitPane(c)
-			}, func() {
-				a.detail(c)
+			if a.sidebarWidth == 0 {
+				a.sidebarWidth = 220
+			}
+			ui.Split(c.Key("main-sidebar"), &a.sidebarWidth, func() { a.sidebar(c) }, func() {
+				ui.SplitVerticalPercent(c, &a.split, func() {
+					a.commitPane(c)
+				}, func() {
+					a.detail(c)
+				}).Grow(1).MinHeight(0)
 			}).Grow(1).MinHeight(0)
 		}
 		a.statusBar(c)
 	})
 	a.recentModal(c)
-	a.branchModal(c)
 	a.branchFilterModal(c)
 	a.comparisonModal(c)
+	a.settingsModal(c)
+	a.operationModal(c)
+	a.credentialModal(c)
 }
 
 func (a *app) tabBar(c *ui.Context) {
 	t := c.Theme()
 	activateAt, closeAt := -1, -1
+	moveID, moveTo := -1, -1
 	ui.Row(c).Padding(6, 8).Gap(6).AlignItems(ui.Center).Background(t.Surface).Children(func() {
-		for i, tab := range a.tabs {
-			label := tab.title
-			if i == a.active && !tab.released {
-				label = "● " + label
-			}
-			if tab.released {
-				label = "○ " + label
-			}
-			if ui.Button(c.Key(fmt.Sprintf("tab-%d", tab.id)), label).Clicked() {
-				activateAt = i
-			}
-			if ui.Button(c.Key(fmt.Sprintf("tabx-%d", tab.id)), "×").Clicked() {
-				closeAt = i
-			}
-		}
+		ui.ScrollHorizontal(c.Key("tab-scroll")).Grow(1).MinWidth(0).Height(34).Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				for i, tab := range a.tabs {
+					label := tab.title
+					if i == a.active && !tab.released {
+						label = "● " + label
+					}
+					if tab.released {
+						label = "○ " + label
+					}
+					button := ui.Button(c.Key(fmt.Sprintf("tab-%d", tab.id)), label).Drag(tab.id)
+					if id, ok := ui.Drop[int](button); ok {
+						moveID, moveTo = id, i
+					}
+					if button.Clicked() {
+						activateAt = i
+					}
+					if ui.Button(c.Key(fmt.Sprintf("tabx-%d", tab.id)), "×").Clicked() {
+						closeAt = i
+					}
+				}
+			})
+		})
 		if ui.Button(c.Key("add-tab"), "+").Tooltip("打开仓库").Clicked() {
 			a.pickRepo()
 		}
+		if ui.Button(c.Key("settings-open"), "设置").Clicked() {
+			a.beginSettings()
+		}
 	})
+	if moveID >= 0 {
+		a.moveTab(moveID, moveTo)
+	}
 	if closeAt >= 0 {
 		a.closeTab(closeAt)
 	} else if activateAt >= 0 {
@@ -161,8 +231,8 @@ func (a *app) toolbar(c *ui.Context) {
 	ui.Row(c).Padding(6, 8).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, tab.branch).Bold().Shrink(0)
 		options := []string{"全部分支", "当前分支", "多选分支"}
-		if tab.scope == "指定 ref" {
-			options = append(options, "指定 ref")
+		if tab.scope == "指定 ref" || tab.scope == "文件历史" || tab.scope == "搜索结果" {
+			options = append(options, tab.scope)
 		}
 		if ui.Select(c.Key("history-scope"), &tab.scopeChoice, options).Width(130).Disabled(tab.loading).Changed() {
 			switch tab.scopeChoice {
@@ -180,6 +250,20 @@ func (a *app) toolbar(c *ui.Context) {
 				a.beginBranchFilter(tab)
 			}
 		}
+		if ui.Button(c.Key("toolbar-Fetch"), "Fetch…").Clicked() {
+			a.beginOperation(tab, "Fetch", "")
+		}
+		ui.Button(c.Key("repo-operations"), "操作 ▾").Menu(func(m *ui.Menu) {
+			for _, kind := range []string{"推送", "拉取", "新建 Stash", "中止合并", "中止 Cherry-pick", "中止 Revert", "外部合并工具"} {
+				if m.Item(kind + "…").Chosen() {
+					a.beginOperation(tab, kind, "")
+				}
+			}
+			if m.Item("在终端打开仓库").Chosen() {
+				a.openTerminal(tab.path)
+			}
+		})
+
 		if ui.Button(c.Key("refresh"), "刷新").Clicked() {
 			a.reload(tab)
 		}
@@ -202,9 +286,16 @@ func (a *app) toolbar(c *ui.Context) {
 		if tab.refBusy {
 			ui.Text(c, "正在定位…").TextColor(t.TextMuted)
 		}
-		ui.TextInput(c.Key(fmt.Sprintf("find-%d", tab.id)), &tab.query).Placeholder("消息、日期、作者、哈希或 ref").Grow(1).MinWidth(100)
+		find := ui.TextInput(c.Key(fmt.Sprintf("find-%d", tab.id)), &tab.query).Placeholder("消息、日期、作者、哈希或 ref").Grow(1).MinWidth(100)
 		if ui.Button(c.Key("find-next"), "下一个").Clicked() || c.Shortcut(ui.Cmd, ui.KeyG) {
 			a.findNext(tab)
+		}
+		if find.Submitted() {
+			a.findNext(tab)
+		}
+		if tab.searchText != "" && ui.Button(c.Key("clear-search"), "清除搜索").Clicked() {
+			tab.query = ""
+			a.searchHistory(tab, "")
 		}
 		if ui.Button(c.Key("compare"), "比较…").Clicked() {
 			a.showCompare, a.compareRepo = true, tab.path
@@ -246,35 +337,54 @@ func (a *app) commitPane(c *ui.Context) {
 	tab.list.Selected = &tab.selected
 	tab.list.Selection = &tab.selection
 	tab.list.Key = func(i int) any {
-		ci := tab.rowCommit(i)
-		if ci < 0 || ci >= len(tab.commits) {
-			return "dirty"
+		if commit := tab.rowData(i); commit != nil {
+			return commit.hash
 		}
-		return tab.commits[ci].hash
+		return "dirty"
 	}
 	tab.list.Label = func(i int) string {
-		if tab.dirty > 0 && i == 0 {
-			return "未提交更改"
+		if commit := tab.rowData(i); commit != nil {
+			return commit.subject
 		}
-		ci := tab.rowCommit(i)
-		if ci < 0 || ci >= len(tab.commits) {
-			return ""
-		}
-		return tab.commits[ci].subject
+		return "未提交更改"
 	}
-	width := graphWidth(tab.graph.lanes()) + 560
-	ui.List(c.Key(fmt.Sprintf("commits-%d", tab.id)), &tab.list, tab.rows(), func(i int) {
-		a.commitRow(c, tab, i)
-	}).Grow(1).MinHeight(0).RowWidth(width).Children(func() {
-		if tab.rows() == 0 && !tab.loading {
-			msg := "这个仓库还没有提交"
-			if tab.err != "" {
-				msg = tab.err
-			}
-			ui.Text(c, msg).Padding(12).TextColor(t.TextMuted)
+
+	columns := []ui.TableColumn{}
+	if !tab.options.HideGraph {
+		columns = append(columns, ui.TableColumn{ID: "graph", Title: "图谱", Width: graphWidth(tab.graph.lanes()) + 16, MinWidth: 40})
+	}
+	if !tab.options.HideSubject {
+		columns = append(columns, ui.TableColumn{ID: "subject", Title: "描述 / 引用", MinWidth: 200})
+	}
+	if !tab.options.HideDate {
+		columns = append(columns, ui.TableColumn{ID: "date", Title: "日期", Width: 150, MinWidth: 100})
+	}
+	if !tab.options.HideAuthor {
+		columns = append(columns, ui.TableColumn{ID: "author", Title: "作者", Width: 120, MinWidth: 60})
+	}
+	if !tab.options.HideHash {
+		columns = append(columns, ui.TableColumn{ID: "hash", Title: "哈希", Width: 85, MinWidth: 70})
+	}
+	tab.list.Columns = tab.tableLayout
+	table := ui.Table(c.Key(fmt.Sprintf("commits-%d", tab.id)), &tab.list, columns, tab.rows(), func(row, col int) {
+		a.commitCell(c, tab, row, columns[col].ID)
+	}).Grow(1).MinHeight(0)
+	if tab.detailHidden && table.Clicked() {
+		tab.detailHidden = false
+		a.onCommitSelected(tab)
+	}
+	tab.tableLayout = tab.list.Columns
+	if tab.rows() == 0 && !tab.loading {
+		msg := "这个仓库还没有提交"
+		if tab.err != "" {
+			msg = tab.err
 		}
-	})
+		ui.Text(c, msg).Padding(12).TextColor(t.TextMuted)
+	}
+
 	if tab.selected != tab.commitApplied {
+		tab.detailHidden = false
+		tab.stashView = nil
 		tab.commitApplied = tab.selected
 		tab.comparison = nil
 		var from [20]byte
@@ -294,58 +404,96 @@ func (a *app) commitPane(c *ui.Context) {
 	}
 }
 
-func (a *app) commitRow(c *ui.Context, tab *repoTab, i int) {
+func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string) {
 	t := c.Theme()
-	row := ui.Row(c).MinHeight(28).Padding(2, 8).Gap(8).AlignItems(ui.Center)
 	ci := tab.rowCommit(i)
-	if ci < 0 {
-		row.ContextMenu(func(m *ui.Menu) {
-			m.Item("未提交更改").Disabled(true)
-		})
-	} else {
-		commit := tab.commits[ci]
-		row.ContextMenu(func(m *ui.Menu) {
-			if m.Item("复制哈希").Chosen() {
-				c.WriteClipboard(hashHex(commit.hash))
-				a.setFlash("已复制 " + shortHash(commit.hash))
-			}
-			if m.Item("在此提交新建分支…").Chosen() {
-				a.branching = true
-				a.branchErr = ""
-				a.branchName = ""
-				a.branchRepo = tab.path
-				a.branchHash = hashHex(commit.hash)
-			}
-		})
-	}
+	item := tab.rowData(i)
+	row := ui.Row(c).Fill().MinHeight(28).Padding(2, 8).Gap(6).AlignItems(ui.Center)
+	row.ContextMenu(func(m *ui.Menu) { a.commitMenu(c, m, tab, i) })
 	row.Children(func() {
-		gw := graphWidth(tab.graph.lanes())
-		ui.Box(c).Width(gw).MinHeight(28).AlignSelf(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) {
-			if ci < 0 {
-				drawDirty(p, r, tab)
-				return
-			}
-			drawCommit(p, r, &tab.commits[ci], ci == 0 && tab.dirty > 0)
-		})
-		if ci < 0 {
-			ui.Textf(c, "未提交更改（%d）", tab.dirty).Grow(1).SingleLine()
+		if column == "graph" {
+			ui.Box(c).Grow(1).MinHeight(28).AlignSelf(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) {
+				if item == nil {
+					drawDirty(p, r, tab)
+					return
+				}
+
+				paintCommit(p, r, item, ci == 0 && tab.dirty > 0, tab.options.GraphStyle, tab.palette)
+			})
 			return
 		}
-		commit := tab.commits[ci]
-		ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
-			if pref := tab.refText(commit.hash); pref != "" {
-				ui.Text(c, pref).SingleLine().Shrink(0).TextColor(t.Success)
+		if item == nil {
+			if column == "subject" {
+				ui.Textf(c, "未提交更改（%d）", tab.dirty).SingleLine()
 			}
-			subject := commit.subject
-			if subject == "" {
-				subject = "（无说明）"
+			return
+		}
+		commit := *item
+		switch column {
+		case "subject":
+			if commit.hash == tab.head && tab.head != zeroHash {
+				ui.Text(c, "HEAD").TextColor(t.Success).Shrink(0)
 			}
-			ui.Text(c, subject).SingleLine().Grow(1).MinWidth(0)
-		})
-		ui.Text(c, commit.whenText()).Width(118).SingleLine().Shrink(0).TextColor(t.TextMuted)
-		ui.Text(c, commit.author).Width(120).SingleLine().Shrink(0).TextColor(t.TextMuted)
-		ui.Text(c, shortHash(commit.hash)).Width(64).SingleLine().Shrink(0).Font("monospace").TextColor(t.TextMuted)
+			for j, ref := range tab.refs[commit.hash] {
+				if j == 4 {
+					ui.Text(c, "…")
+					break
+				}
+				label := ref.name
+				if ref.kind == refTag {
+					label = "tag " + label
+				}
+				ui.Text(c, label).SingleLine().Shrink(0).TextColor(t.Success).ContextMenu(func(m *ui.Menu) { a.refMenu(c, m, tab, ref) })
+			}
+
+			text := commit.subject
+			if commit.stash != "" {
+				text = commit.stash + " " + text
+			}
+			if text == "" {
+				text = "（无说明）"
+			}
+			e := ui.Text(c, text).SingleLine().Grow(1).MinWidth(0)
+			if tab.searchText != "" || (tab.query != "" && ci >= 0 && tab.match(ci, strings.ToLower(tab.query))) {
+				e.Background(t.Surface).Bold()
+			}
+		case "date":
+			ui.Text(c, commit.whenText()).SingleLine().TextColor(t.TextMuted)
+		case "author":
+			ui.Text(c, commit.author).SingleLine().TextColor(t.TextMuted)
+		case "hash":
+			ui.Text(c, shortHash(commit.hash)).Font("monospace").SingleLine().TextColor(t.TextMuted)
+		}
 	})
+}
+
+func (a *app) commitMenu(c *ui.Context, m *ui.Menu, tab *repoTab, row int) {
+	item := tab.rowData(row)
+	if item == nil {
+		if m.Item("Stash 未提交更改…").Chosen() {
+			a.beginOperation(tab, "新建 Stash", "")
+		}
+		return
+	}
+	commit := *item
+	if m.Item("复制哈希").Chosen() {
+		c.WriteClipboard(hashHex(commit.hash))
+		a.setFlash("已复制 " + shortHash(commit.hash))
+	}
+	if m.Item("复制主题").Chosen() {
+		c.WriteClipboard(commit.subject)
+	}
+	if m.Item("在此提交新建分支…").Chosen() {
+		a.beginOperation(tab, "新建分支", hashHex(commit.hash))
+	}
+	for _, kind := range []string{"检出提交", "Cherry-pick", "Revert", "Reset", "添加标签", "合并"} {
+		if m.Item(kind + "…").Chosen() {
+			a.beginOperation(tab, kind, hashHex(commit.hash))
+		}
+	}
+	if commit.stash != "" {
+		a.stashMenu(m, tab, commit)
+	}
 }
 
 func (a *app) detail(c *ui.Context) {
@@ -354,11 +502,24 @@ func (a *app) detail(c *ui.Context) {
 	if tab == nil {
 		return
 	}
+	if tab.viewer != nil {
+		a.viewerPane(c, tab)
+		return
+	}
 	ui.Column(c).Fill().MinHeight(0).Children(func() {
-		if tab.comparison == nil && (tab.selected < 0 || (tab.selectedCommit() == nil && !(tab.dirty > 0 && tab.selected == 0))) {
+		if tab.detailHidden {
+			ui.Text(c, "已定位匹配提交，单击提交打开详情").Padding(12)
+			return
+		}
+		if tab.comparison == nil && tab.stashView == nil && (tab.selected < 0 || (tab.selectedCommit() == nil && !(tab.dirty > 0 && tab.selected == 0))) {
 			ui.Text(c, "单击一条提交查看改动").Padding(12).TextColor(t.TextMuted)
 			return
 		}
+		ui.Row(c).Padding(2, 8).Justify(ui.End).Children(func() {
+			if ui.Button(c.Key("close-details"), "关闭详情").Clicked() {
+				a.closeDetails(tab)
+			}
+		})
 		a.detailHeader(c, tab)
 		if tab.detailErr != "" {
 			ui.Text(c, tab.detailErr).Padding(8, 12).TextColor(t.Danger)
@@ -388,7 +549,10 @@ func (a *app) detailHeader(c *ui.Context, tab *repoTab) {
 	}
 	if tab.dirty > 0 && tab.selected == 0 {
 		ui.Column(c).Padding(8, 12).Gap(4).Shrink(0).Children(func() {
-			ui.Textf(c, "未提交更改（%d 个文件，不含未跟踪）", tab.dirty).Bold()
+			ui.Textf(c, "未提交更改（%d 个文件）", tab.dirty).Bold()
+			if ui.Button(c.Key("dirty-stash"), "Stash 未提交更改…").Clicked() {
+				a.beginOperation(tab, "新建 Stash", "")
+			}
 			ui.Text(c, "对比的是工作区相对 HEAD 的内容").FontSize(12).TextColor(t.TextMuted)
 		})
 		return
@@ -438,31 +602,59 @@ func (a *app) detailHeader(c *ui.Context, tab *repoTab) {
 }
 
 func (a *app) filePaneView(c *ui.Context, tab *repoTab) {
-	t := c.Theme()
-	tab.fileList.Selected = &tab.fileSel
-	tab.fileList.Key = func(i int) any {
-		if i < 0 || i >= len(tab.files) {
-			return i
+	ui.Column(c).Fill().Children(func() {
+		ui.Checkbox(c.Key("changed-tree"), &tab.fileTree, "树状目录")
+		if tab.fileTree {
+			rows := changedRows(tab.files, tab.closedFolders)
+			ui.List(c.Key("changed-tree-list"), &tab.changeTreeList, len(rows), func(i int) {
+				r := rows[i]
+				label := r.label
+				if r.dir {
+					label = "▾ " + label
+					if tab.closedFolders[r.path] {
+						label = "▸ " + r.label
+					}
+				} else {
+					label = tab.files[r.index].status + "  " + label
+					if tab.files[r.index].oldPath != "" {
+						label += " ← " + tab.files[r.index].oldPath
+					}
+				}
+				e := ui.Button(c.Key(r.path), label).Margin(0, 0, 0, float32(r.depth*12)).Tooltip(r.path)
+				if !r.dir {
+					e.ContextMenu(func(m *ui.Menu) { a.fileMenu(c, m, tab, r.index) })
+				}
+				if e.Clicked() {
+					if r.dir {
+						if tab.closedFolders == nil {
+							tab.closedFolders = map[string]bool{}
+						}
+						tab.closedFolders[r.path] = !tab.closedFolders[r.path]
+					} else {
+						tab.fileSel = r.index
+						tab.fileMode = "diff"
+						tab.fileApplied = tab.fileSel
+						a.onFileSelected(tab)
+					}
+				}
+			}).Grow(1).MinHeight(0)
+		} else {
+			tab.fileList.Selected = &tab.fileSel
+			tab.fileList.Key = func(i int) any { return tab.files[i].layer + ":" + tab.files[i].path }
+			tab.fileList.Label = func(i int) string { return tab.files[i].label() }
+			ui.List(c.Key(fmt.Sprintf("files-%d", tab.id)), &tab.fileList, len(tab.files), func(i int) {
+				ui.Text(c, tab.files[i].label()).Padding(4, 8).SingleLine().ContextMenu(func(m *ui.Menu) { a.fileMenu(c, m, tab, i) })
+			}).Grow(1).MinHeight(0)
 		}
-		return tab.files[i].path
-	}
-	tab.fileList.Label = func(i int) string {
-		if i < 0 || i >= len(tab.files) {
-			return ""
-		}
-		return tab.files[i].label()
-	}
-	ui.List(c.Key(fmt.Sprintf("files-%d", tab.id)), &tab.fileList, len(tab.files), func(i int) {
-		ui.Text(c, tab.files[i].label()).Padding(4, 8).SingleLine()
-	}).Grow(1).MinHeight(0).Children(func() {
 		if len(tab.files) == 0 && !tab.detailLoading {
-			ui.Text(c, "没有文件改动").Padding(12).TextColor(t.TextMuted)
+			ui.Text(c, "没有文件改动").Padding(12)
+		}
+		if tab.fileSel != tab.fileApplied {
+			tab.fileApplied = tab.fileSel
+			tab.fileMode = "diff"
+			a.onFileSelected(tab)
 		}
 	})
-	if tab.fileSel != tab.fileApplied {
-		tab.fileApplied = tab.fileSel
-		a.onFileSelected(tab)
-	}
 }
 
 func (a *app) diffPane(c *ui.Context, tab *repoTab) {
@@ -481,6 +673,14 @@ func (a *app) diffPane(c *ui.Context, tab *repoTab) {
 				}
 				if tab.diff != nil {
 					tab.diff.Layout = tab.layout
+				}
+			}
+			if tab.diff != nil {
+				if ui.Button(c.Key("expand-context"), "展开上下文").Clicked() {
+					tab.diff.ExpandAll()
+				}
+				if ui.Button(c.Key("collapse-context"), "折叠上下文").Clicked() {
+					tab.diff.CollapseAll()
 				}
 			}
 			if tab.fileSel >= 0 && tab.fileSel < len(tab.files) {
@@ -505,6 +705,12 @@ func (a *app) statusBar(c *ui.Context) {
 	ui.Row(c).Padding(4, 8).Gap(12).AlignItems(ui.Center).Background(t.Surface).Children(func() {
 		ui.Textf(c, "Go 堆 %.1f MB", float64(a.heap)/1024/1024).FontSize(12).TextColor(t.TextMuted)
 		ui.Text(c, "不含窗口和 GPU").FontSize(12).TextColor(t.TextMuted)
+		if a.op != nil && a.op.Busy {
+			ui.Text(c, a.op.Kind+"正在执行…").FontSize(12)
+			if ui.Button(c.Key("show-running-op"), "查看 / 取消").Clicked() {
+				a.showOperation = true
+			}
+		}
 		if n := a.releasedCount(); n > 0 {
 			ui.Textf(c, "后台标签已释放 %d", n).FontSize(12).TextColor(t.TextMuted)
 		}
@@ -537,10 +743,14 @@ func (a *app) recentModal(c *ui.Context) {
 	ui.Modal(c.Key("recent-modal"), &a.showRecent, func() {
 		ui.Column(c).Gap(8).Width(460).Children(func() {
 			ui.Text(c, "最近的仓库").Bold()
+			if a.prefs.RecentSort == "" {
+				a.prefs.RecentSort = "最近使用"
+			}
+			ui.Select(c.Key("recent-sort"), &a.prefs.RecentSort, []string{"最近使用", "名称", "完整路径"})
 			if len(a.recent) == 0 {
 				ui.Text(c, "还没有。打开一个仓库后会出现在这里。").TextColor(c.Theme().TextMuted)
 			}
-			for i, p := range a.recent {
+			for i, p := range a.sortedRecent() {
 				p := p
 				if ui.Button(c.Key(fmt.Sprintf("recent-%d", i)), p).Clicked() {
 					a.showRecent = false
@@ -556,32 +766,6 @@ func (a *app) recentModal(c *ui.Context) {
 	})
 }
 
-func (a *app) branchModal(c *ui.Context) {
-	ui.Modal(c.Key("branch-modal"), &a.branching, func() {
-		ui.Column(c).Gap(8).Width(380).Children(func() {
-			ui.Text(c, "新建分支").Bold()
-			shown := a.branchHash
-			if len(shown) > 7 {
-				shown = shown[:7]
-			}
-			ui.Text(c, "从 "+shown+" 创建，不会检出。").FontSize(12).TextColor(c.Theme().TextMuted)
-			input := ui.TextInput(c.Key("branch-name"), &a.branchName).Placeholder("分支名").Width(340).AutoFocus()
-			submit := input.Submitted()
-			if a.branchErr != "" {
-				ui.Text(c, a.branchErr).TextColor(c.Theme().Danger)
-			}
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if ui.Button(c.Key("branch-cancel"), "取消").Clicked() {
-					a.branching = false
-				}
-				if ui.PrimaryButton(c.Key("branch-create"), "创建").Disabled(a.branchBusy).Clicked() || submit {
-					a.createBranch()
-				}
-			})
-		})
-	})
-}
-
 func (a *app) sampleMem(c *ui.Context) {
 	now := c.Now()
 	if !a.heapAt.IsZero() && now.Sub(a.heapAt) < 2*time.Second {
@@ -589,7 +773,6 @@ func (a *app) sampleMem(c *ui.Context) {
 	}
 	a.heap = readHeap()
 	a.heapAt = now
-	c.After(2 * time.Second)
 }
 
 func (a *app) expireFlash(c *ui.Context) {
@@ -628,6 +811,16 @@ func laneColor(col int) ui.Color {
 }
 
 func drawCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool) {
+	paintCommit(p, r, c, contFromTop, "圆角", nil)
+}
+
+func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, style string, palette []ui.Color) {
+	colorAt := func(col int) ui.Color {
+		if len(palette) > 0 {
+			return palette[max(0, col)%len(palette)]
+		}
+		return laneColor(col)
+	}
 	var path ui.Path
 	mid := r.Y + r.H/2
 	for _, s := range c.segs {
@@ -638,7 +831,7 @@ func drawCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool) {
 		if !s.bot {
 			y1 = mid
 		}
-		color := laneColor(s.a)
+		color := colorAt(s.a)
 		x0, x1 := laneCenter(r, s.a), laneCenter(r, s.b)
 		if x0 == x1 {
 			p.Line(x0, y0, x1, y1, 2, color)
@@ -646,16 +839,20 @@ func drawCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool) {
 		}
 		path.Reset()
 		path.MoveTo(x0, y0)
-		path.CubeTo(x0, (y0+y1)/2, x1, (y0+y1)/2, x1, y1)
+		if style == "折线" {
+			path.LineTo(x1, y1)
+		} else {
+			path.CubeTo(x0, (y0+y1)/2, x1, (y0+y1)/2, x1, y1)
+		}
 		p.StrokePath(&path, 2, color)
 	}
 	if contFromTop {
 		x := laneCenter(r, c.nodeCol)
-		p.Line(x, r.Y, x, mid, 2, laneColor(c.nodeCol))
+		p.Line(x, r.Y, x, mid, 2, colorAt(c.nodeCol))
 	}
 	var node ui.Path
 	node.Circle(laneCenter(r, c.nodeCol), mid, 4.5)
-	p.FillPath(&node, laneColor(c.nodeCol))
+	p.FillPath(&node, colorAt(c.nodeCol))
 }
 
 func drawDirty(p *ui.Painter, r ui.Rect, tab *repoTab) {
@@ -672,7 +869,13 @@ func drawDirty(p *ui.Painter, r ui.Rect, tab *repoTab) {
 	p.FillPath(&node, color)
 }
 
+// Filled only by the p0bench build for repeatable native process measurements.
+var onAppReady func(*app)
+
 func main() {
+	if askpassMain() {
+		return
+	}
 	a := newApp()
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
@@ -681,10 +884,27 @@ func main() {
 			Height:    800,
 			MinWidth:  860,
 			MinHeight: 560,
-			StateKey:  "main",
-			Content:   ui.View(a.view),
+			StateKey: func() string {
+				if onAppReady != nil {
+					return ""
+				}
+				return "main"
+			}(),
+			Content: ui.View(a.view),
 		})
+		a.win.OnClose(func(e *mygo.CloseEvent) { a.saveSession() })
+		if onAppReady != nil {
+			onAppReady(a)
+		} else {
+			a.restoreSession()
+			for _, path := range os.Args[1:] {
+				a.openPath(path)
+			}
+		}
 		a.win.OnClosed(func() {
+			if a.op != nil && a.op.Cancel != nil {
+				a.op.Cancel()
+			}
 			for _, tab := range a.tabs {
 				tab.releaseHeavy()
 			}
