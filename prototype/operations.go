@@ -19,7 +19,7 @@ type operation struct {
 	Upstream, Prune, PruneTags, Annotated, PushNow, RemoteDelete, IncludeUntracked, RestoreIndex bool
 	Remotes                                                                                      []string
 	Selected                                                                                     map[string]bool
-	Busy, ConfirmHard                                                                            bool
+	Preparing, Busy, ConfirmHard                                                                 bool
 	Error, Output                                                                                string
 	Cancel                                                                                       context.CancelFunc
 }
@@ -275,7 +275,7 @@ func (a *app) beginOperation(t *repoTab, kind, target string) {
 		a.banner = "请等待或取消正在执行的操作"
 		return
 	}
-	o := &operation{Kind: kind, Repo: t.path, Target: target, NoFF: true, RecordOrigin: true, Mode: "普通", Selected: map[string]bool{}}
+	o := &operation{Kind: kind, Repo: t.path, Target: target, Preparing: true, NoFF: true, RecordOrigin: true, Mode: "普通", Selected: map[string]bool{}}
 	if kind == "Reset" {
 		o.Mode = "mixed"
 	}
@@ -320,6 +320,7 @@ func (a *app) beginOperation(t *repoTab, kind, target string) {
 			}
 		}
 		a.post(func() {
+			o.Preparing = false
 			o.ParentHashes = parents
 			if a.op != o {
 				return
@@ -363,7 +364,7 @@ func (a *app) operationModal(c *ui.Context) {
 		panel := ui.Column(c).Width(550).Gap(8).Children(func() {
 			ui.Text(c, o.Kind).Bold()
 			ui.Text(c, o.Repo).FontSize(12).SingleLine().Tooltip(o.Repo)
-			ui.Scroll(c.Key("operation-fields")).MaxHeight(390).Children(func() {
+			ui.Scroll(c.Key("operation-fields")).MaxHeight(390).Disabled(o.Preparing || o.Busy).Children(func() {
 				ui.Column(c).Gap(8).Children(func() {
 					if len(o.ParentHashes) > 1 {
 						for i, p := range o.ParentHashes {
@@ -452,7 +453,9 @@ func (a *app) operationModal(c *ui.Context) {
 			if o.Output != "" {
 				ui.Scroll(c.Key("op-output")).MaxHeight(130).Children(func() { ui.Text(c, o.Output).Selectable() })
 			}
-			if o.Busy {
+			if o.Preparing {
+				ui.Text(c, "正在读取远程和提交信息…")
+			} else if o.Busy {
 				ui.Text(c, "Git 正在执行… 可取消；已执行的步骤会保留。")
 			} else {
 				ui.Text(c, "执行前请核对仓库、目标和选项。").FontSize(12)
@@ -473,7 +476,7 @@ func (a *app) operationModal(c *ui.Context) {
 					if o.ConfirmHard {
 						label = "丢弃改动并执行 hard reset"
 					}
-					button := ui.PrimaryButton(c.Key("op-run"), label)
+					button := ui.PrimaryButton(c.Key("op-run"), label).Disabled(o.Preparing)
 					if firstInput {
 						button.AutoFocus()
 					}
@@ -483,14 +486,14 @@ func (a *app) operationModal(c *ui.Context) {
 				}
 			})
 		})
-		if !o.Busy && panel.OverlayShortcut(0, ui.KeyEnter) {
+		if !o.Preparing && !o.Busy && panel.OverlayShortcut(0, ui.KeyEnter) {
 			a.runOperation(o)
 		}
 	})
 }
 
 func (a *app) runOperation(o *operation) {
-	if o.Busy {
+	if o.Preparing || o.Busy {
 		return
 	}
 	commands, err := operationCommands(o)

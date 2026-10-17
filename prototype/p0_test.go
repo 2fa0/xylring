@@ -625,8 +625,16 @@ func TestCreateBranchFromCommitMenu(t *testing.T) {
 	if a.op == nil || a.op.Kind != "新建分支" {
 		t.Fatal("new branch dialog did not open")
 	}
-	a.op.Name = "from-ui"
+	tt.Key(0, ui.KeyEnter)
+	if a.op.Busy {
+		t.Fatal("operation started before its defaults were loaded")
+	}
+	awaitUpdates(t, updates, func() bool { return !a.op.Preparing })
 	tt.Frame()
+	tt.Type("from-ui")
+	if a.op.Name != "from-ui" {
+		t.Fatal("branch input did not receive focus after preparation")
+	}
 	tt.Key(0, ui.KeyEnter)
 	if !a.op.Busy {
 		t.Fatalf("Enter did not start operation: error=%s name=%s texts=%q", a.op.Error, a.op.Name, tt.Texts())
