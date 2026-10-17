@@ -238,6 +238,24 @@ func TestForceWithLeaseRejectsUnseenRemoteChanges(t *testing.T) {
 		t.Fatal("acknowledged remote update was not replaced", tip)
 	}
 }
+
+func TestFetchPruneTagsWithoutSeparatePruneToggle(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("config", "fetch.prune", "false")
+	writeFile(t, dir, "file", "base\n")
+	git("add", ".")
+	git("commit", "-m", "base")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	git("init", "--bare", remote)
+	git("remote", "add", "origin", remote)
+	git("config", "remote.origin.prune", "false")
+	git("push", "origin", "main")
+	git("tag", "local-only")
+	executeOp(t, dir, operation{Kind: "Fetch", PruneTags: true})
+	if tags := strings.TrimSpace(string(git("tag", "--list"))); tags != "" {
+		t.Fatal("prune tags retained a tag absent from the remote", tags)
+	}
+}
 func TestHardResetNeedsSecondConfirmation(t *testing.T) {
 	tab := newTab(1, t.TempDir())
 	a, _ := newTestApp(t, tab)
