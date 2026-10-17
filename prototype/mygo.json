@@ -1,0 +1,6 @@
+{
+  "name": "Git Client",
+  "identifier": "dev.gitclient.prototype",
+  "version": "0.1.0",
+  "out": "build"
+}
