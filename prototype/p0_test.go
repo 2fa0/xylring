@@ -170,6 +170,9 @@ func TestWriteOperationsLocalAndRemotes(t *testing.T) {
 }
 func TestWriteCancelAndBoundedOutput(t *testing.T) {
 	dir, git := initTestRepo(t)
+	if _, err := runWriteGit(context.Background(), filepath.Join(dir, "missing"), []string{"status"}, nil); err == nil || !strings.Contains(err.Error(), "no such file or directory") {
+		t.Fatal("process startup error was lost", err)
+	}
 	git("config", "alias.wait", "!sleep 30")
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -183,6 +186,56 @@ func TestWriteCancelAndBoundedOutput(t *testing.T) {
 	b.Write([]byte(text))
 	if b.Len() != 64<<10 {
 		t.Fatal(b.Len())
+	}
+}
+
+func TestForceWithLeaseRejectsUnseenRemoteChanges(t *testing.T) {
+	dir, git := initTestRepo(t)
+	writeFile(t, dir, "base", "base\n")
+	git("add", ".")
+	git("commit", "-m", "base")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	git("init", "--bare", remote)
+	git("remote", "add", "origin", remote)
+	git("push", "origin", "main")
+	peer := filepath.Join(t.TempDir(), "peer")
+	git("clone", "--branch", "main", remote, peer)
+	peerGit := func(args ...string) string {
+		t.Helper()
+		out, err := runGit(context.Background(), peer, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	peerGit("config", "user.name", "Peer")
+	peerGit("config", "user.email", "peer@example.invalid")
+	peerGit("config", "commit.gpgsign", "false")
+	peerGit("config", "core.hooksPath", filepath.Join(peer, "no-hooks"))
+	writeFile(t, peer, "peer", "remote change\n")
+	peerGit("add", ".")
+	peerGit("commit", "-m", "remote change")
+	peerTip := peerGit("rev-parse", "HEAD")
+	peerGit("push", "origin", "main")
+	writeFile(t, dir, "local", "local change\n")
+	git("add", ".")
+	git("commit", "-m", "local change")
+	o := operation{Kind: "推送", Name: "main", Mode: "force-with-lease", Remotes: []string{"origin"}, Selected: map[string]bool{"origin": true}}
+	cmds, err := operationCommands(&o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runWriteGit(context.Background(), dir, cmds[0], nil); err == nil {
+		t.Fatal("force-with-lease overwrote an unseen remote commit")
+	}
+	if tip := string(git("ls-remote", "origin", "refs/heads/main")); !strings.HasPrefix(tip, peerTip) {
+		t.Fatal("rejected push changed the remote", tip)
+	}
+	git("fetch", "origin")
+	executeOp(t, dir, o)
+	localTip := strings.TrimSpace(string(git("rev-parse", "HEAD")))
+	if tip := string(git("ls-remote", "origin", "refs/heads/main")); !strings.HasPrefix(tip, localTip) {
+		t.Fatal("acknowledged remote update was not replaced", tip)
 	}
 }
 func TestHardResetNeedsSecondConfirmation(t *testing.T) {
