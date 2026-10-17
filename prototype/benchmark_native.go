@@ -270,5 +270,16 @@ func nativeBenchmark(a *app, repo, out string) {
 		}
 		sample("soak-end")
 	}
+	// Compare identical foreground data after closing only the background tabs.
+	uiDo(func() {
+		for len(a.tabs) > 1 {
+			if a.active == 0 {
+				a.closeTab(1)
+			} else {
+				a.closeTab(0)
+			}
+		}
+	})
+	sample("one-tab-after-background-close")
 	finish(nil)
 }
