@@ -190,7 +190,7 @@ func operationCommands(o *operation) ([][]string, error) {
 		cmds = append(cmds, append(args, remotes[0], o.Name))
 	case "Fetch":
 		args := []string{"fetch", "--all"}
-		if o.Prune {
+		if o.Prune || o.PruneTags {
 			args = append(args, "--prune")
 		}
 		if o.PruneTags {
@@ -411,7 +411,7 @@ func (a *app) operationModal(c *ui.Context) {
 						}
 					case "Fetch":
 						ui.Checkbox(c.Key("op-prune"), &o.Prune, "prune（清理失效远程引用）")
-						ui.Checkbox(c.Key("op-prune-tags"), &o.PruneTags, "prune tags（同步删除本地失效标签）")
+						ui.Checkbox(c.Key("op-prune-tags"), &o.PruneTags, "prune tags（删除本地失效标签，同时启用 prune）")
 					case "添加标签":
 						input("op-tag-name", &o.Name, "标签名")
 						if a.recentTag != "" {
