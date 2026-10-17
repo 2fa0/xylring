@@ -201,6 +201,58 @@ func TestHardResetNeedsSecondConfirmation(t *testing.T) {
 	}
 }
 
+func TestHardResetEnterRequiresTwoPresses(t *testing.T) {
+	dir, git := initTestRepo(t)
+	writeFile(t, dir, "file", "base\n")
+	git("add", ".")
+	git("commit", "-m", "base")
+	writeFile(t, dir, "file", "keep until confirmed\n")
+	tab := newTab(1, dir)
+	tab.loaded = true
+	a, updates := newTestApp(t, tab)
+	a.op = &operation{Kind: "Reset", Repo: dir, Target: "HEAD", Mode: "hard"}
+	a.showOperation = true
+	tt := ui.NewTester(a.view, 1200, 860)
+	tt.Key(0, ui.KeyEnter)
+	if !a.op.ConfirmHard || a.op.Busy {
+		t.Fatal("first Enter bypassed the second confirmation")
+	}
+	if text, _ := os.ReadFile(filepath.Join(dir, "file")); string(text) != "keep until confirmed\n" {
+		t.Fatal("unconfirmed reset changed the worktree")
+	}
+	tt.Key(0, ui.KeyEnter)
+	awaitUpdates(t, updates, func() bool { return !a.op.Busy })
+	if a.op.Error != "" {
+		t.Fatal(a.op.Error)
+	}
+	if text, _ := os.ReadFile(filepath.Join(dir, "file")); string(text) != "base\n" {
+		t.Fatal("confirmed reset did not restore the worktree")
+	}
+}
+
+func TestStaleStashOrdinalCannotDropAnotherStash(t *testing.T) {
+	dir, git := initTestRepo(t)
+	writeFile(t, dir, "file", "base\n")
+	git("add", ".")
+	git("commit", "-m", "base")
+	writeFile(t, dir, "file", "first\n")
+	git("stash", "push", "-m", "first")
+	first := strings.TrimSpace(string(git("rev-parse", "stash@{0}")))
+	writeFile(t, dir, "file", "second\n")
+	git("stash", "push", "-m", "second")
+	tab := newTab(1, dir)
+	a, updates := newTestApp(t, tab)
+	o := &operation{Kind: "Drop Stash", Repo: dir, Target: "stash@{0}", Expected: first}
+	a.runOperation(o)
+	awaitUpdates(t, updates, func() bool { return !o.Busy })
+	if !strings.Contains(o.Error, "Stash 列表已发生变化") {
+		t.Fatal("stale stash operation was not rejected", o.Error)
+	}
+	if lines := strings.Split(strings.TrimSpace(string(git("stash", "list"))), "\n"); len(lines) != 2 {
+		t.Fatal("a different stash was dropped", lines)
+	}
+}
+
 func TestP0SessionSettingsAndTabOrder(t *testing.T) {
 	root := t.TempDir()
 	old := userConfigDir
