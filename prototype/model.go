@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	editor "github.com/egoist/mygo/gitclient-editor"
 	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/editor"
 )
 
 // commit 只保留列表和图谱要用的字段。正文、文件列表和 diff 在打开时再取。
@@ -32,10 +32,20 @@ func (c commit) whenText() string {
 	return time.Unix(c.when, 0).Local().Format("2006-01-02 15:04")
 }
 
+type searchOrigin struct {
+	reading       *editor.DiffReadingPosition
+	hash          [20]byte
+	dirty, hidden bool
+	count, row    int
+	file, detail  string
+}
 type repoTab struct {
-	id    int
-	path  string
-	title string
+	searchOrigin                               *searchOrigin
+	pending                                    []string
+	historyStarted, detailStarted, diffStarted time.Time
+	id                                         int
+	path                                       string
+	title                                      string
 
 	generation  int
 	loading     bool
@@ -53,33 +63,37 @@ type repoTab struct {
 	navCancel     context.CancelFunc
 	navGen        int
 
-	scope                                string
-	scopeChoice                          string
-	historyRefs                          []string
-	refInput                             string
-	refErr                               string
-	refBusy                              bool
-	historyPath                          string
-	searchText                           string
-	searchIndex                          int
-	searchScope                          string
-	wantFirst, wantNext                  bool
-	sidebarSection                       string
-	dirCache                             map[string][]browserEntry
-	dirBusy                              map[string]bool
-	browseCtx                            context.Context
-	browseCancel                         context.CancelFunc
-	treeOpen                             map[string]bool
-	browserErr                           string
-	browserList, refList, changeTreeList ui.ListState
-	viewer                               *fileViewer
-	fileMode                             string
-	fileTree                             bool
-	closedFolders                        map[string]bool
-	options                              viewSettings
-	palette                              []ui.Color
-	tableLayout                          ui.TableLayout
-	detailHidden                         bool
+	scope                                     string
+	scopeChoice                               string
+	historyRefs                               []string
+	refInput                                  string
+	refErr                                    string
+	refBusy                                   bool
+	historyPath                               string
+	searchText                                string
+	searchIndex                               int
+	searchScope                               string
+	wantFirst, wantNext                       bool
+	sidebarSection                            string
+	dirCache                                  map[string][]browserEntry
+	dirBusy                                   map[string]bool
+	browseCtx                                 context.Context
+	browseCancel                              context.CancelFunc
+	treeOpen                                  map[string]bool
+	browserErr                                string
+	browserList, refList, changeTreeList      ui.ListState
+	viewer                                    *fileViewer
+	fileMode                                  string
+	fileTree                                  bool
+	closedFolders                             map[string]bool
+	options                                   viewSettings
+	palette                                   []ui.Color
+	tableLayout                               ui.TableLayout
+	detailHidden                              bool
+	focusDiff, infoExpanded, showRef          bool
+	detailSplit, filePaneWidth, filePaneShown float32
+	resumeFile, resumeDetail                  string
+	resumeReading                             *editor.DiffReadingPosition
 
 	stashes    []commit
 	stashView  *commit
@@ -124,6 +138,8 @@ type repoTab struct {
 func newTab(id int, path string) *repoTab {
 	return &repoTab{
 		id:            id,
+		detailSplit:   35,
+		filePaneWidth: 210,
 		path:          path,
 		title:         repoTitle(path),
 		selected:      -1,
@@ -336,6 +352,7 @@ func (t *repoTab) refText(h [20]byte) string {
 }
 
 func (t *repoTab) releaseHeavy() {
+	t.captureReading()
 	t.captureSelection()
 	t.cancelReads()
 	t.generation++
@@ -422,4 +439,20 @@ func saveRecent(paths []string) error {
 		return err
 	}
 	return writeJSON(path, paths)
+}
+
+// Keep identities only; background tabs must not retain buffers.
+func (t *repoTab) captureReading() {
+	if t.fileSel >= 0 && t.fileSel < len(t.files) {
+		f := t.files[t.fileSel]
+		if t.resumeDetail != t.shownKey || t.resumeFile != f.layer+":"+f.path {
+			t.resumeReading = nil
+		}
+		t.resumeFile = f.layer + ":" + f.path
+		t.resumeDetail = t.shownKey
+		if t.diff != nil {
+			position := t.diff.ReadingPosition()
+			t.resumeReading = &position
+		}
+	}
 }

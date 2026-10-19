@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	editor "github.com/egoist/mygo/gitclient-editor"
 	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/editor"
 )
 
 func (a *app) post(fn func()) {
@@ -152,6 +152,7 @@ func (a *app) closeTab(i int) {
 }
 
 func (a *app) reload(t *repoTab) {
+	t.captureReading()
 	t.captureSelection()
 	t.cancelReads()
 	t.options = a.options(t.path)
@@ -162,6 +163,7 @@ func (a *app) reload(t *repoTab) {
 	t.generation++
 	gen := t.generation
 	t.loading = true
+	t.historyStarted = time.Now()
 	t.loaded = false
 	t.released = false
 	t.err = ""
@@ -228,6 +230,7 @@ func (a *app) reload(t *repoTab) {
 			t.refs = meta.refs
 			t.refChoices = nil
 			t.stashes = meta.stashes
+			t.pending = meta.pending
 			t.graph = graph{}
 			t.layoutStashes()
 			for i := range commits {
@@ -241,6 +244,9 @@ func (a *app) reload(t *repoTab) {
 			t.loaded = true
 			t.holdAuto = true
 			t.reselect()
+			if t.detailHidden {
+				t.commitApplied = t.selected
+			}
 			if !t.wantFirst && t.detailHidden && t.searchText != "" && t.selected >= 0 {
 				a.selectSearchResult(t, t.rowCommit(t.selected))
 			}
@@ -251,7 +257,8 @@ func (a *app) reload(t *repoTab) {
 			if t.resumeRow >= 0 && t.rows() > 0 {
 				t.list.ScrollTo(min(t.resumeRow, t.rows()-1), ui.Start)
 			}
-			if t.comparison != nil || t.stashView != nil {
+			if !t.detailHidden && (t.comparison != nil || t.stashView != nil || t.selected >= 0) {
+				t.commitApplied = t.selected
 				a.onCommitSelected(t)
 			}
 			a.sampleNow()
@@ -264,6 +271,7 @@ func (a *app) loadMore(t *repoTab) {
 		return
 	}
 	t.loading = true
+	t.historyStarted = time.Now()
 	t.err = ""
 	gen := t.generation
 	skip := len(t.commits)
@@ -330,6 +338,7 @@ func (a *app) refreshRefs(t *repoTab) {
 			t.refs = meta.refs
 			t.refChoices = nil
 			t.stashes = meta.stashes
+			t.pending = meta.pending
 			t.branch = meta.branch
 			t.head = meta.head
 			t.dirty = meta.dirty
@@ -385,6 +394,7 @@ func (a *app) onCommitSelected(t *repoTab) {
 		historyPath = c.historyPath
 	}
 	t.detailLoading = true
+	t.detailStarted = time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.detailCancel = cancel
 	go func() {
@@ -430,6 +440,18 @@ func (a *app) onCommitSelected(t *repoTab) {
 			t.fileApplied = -1
 			if len(files) > 0 {
 				t.fileSel = 0
+				if t.resumeDetail == key && t.resumeFile != "" {
+					t.fileSel = -1
+					for i, f := range files {
+						if f.layer+":"+f.path == t.resumeFile {
+							t.fileSel = i
+							break
+						}
+					}
+					if t.fileSel < 0 {
+						t.detailNote = "原先阅读的文件已不在此改动中，请重新选择文件"
+					}
+				}
 			}
 		})
 	}()
@@ -453,6 +475,8 @@ func (a *app) onFileSelected(t *repoTab) {
 	repoGen := t.generation
 	detailGen := t.detailGen
 	t.diffLoading = true
+	t.diffStarted = time.Now()
+	t.detailErr = ""
 	t.detailNote = ""
 	t.diff = nil
 	path := t.path
@@ -511,6 +535,9 @@ func (a *app) onFileSelected(t *repoTab) {
 			t.diff.Layout = t.layout
 			t.diff.Font.Family = "monospace"
 			t.diff.Font.Size = 13
+			if t.resumeReading != nil && t.resumeDetail == t.shownKey && t.resumeFile == file.layer+":"+file.path {
+				t.diff.RestoreReadingPosition(*t.resumeReading)
+			}
 		})
 	}()
 }

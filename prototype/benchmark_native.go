@@ -11,9 +11,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -21,13 +22,30 @@ import (
 )
 
 type nativeSample struct {
+	RSSBytes, HeapBytes, FootprintBytes             uint64
+	Sampling                                        string
 	ViewBuilds                                      uint64
 	Scenario                                        string
 	RSSMiB, HeapMiB, FootprintMiB, PeakFootprintMiB float64
 	Commits, Tabs                                   int
 	At                                              string
 }
+type sampleWindow struct {
+	Scenario                                                           string
+	Samples                                                            int
+	DurationSeconds                                                    float64
+	FootprintMedianBytes, FootprintMaxBytes, RSSMaxBytes, HeapMaxBytes uint64
+}
+type memoryPoint struct {
+	At                       string
+	Scenario                 string
+	RSSBytes, FootprintBytes uint64
+}
 type nativeReport struct {
+	Timeline                        []memoryPoint
+	Completed                       bool
+	MemoryMethod                    string
+	Windows                         []sampleWindow
 	ScrollFrames                    uint64
 	ScrollSeconds                   float64
 	Platform, GoVersion, Repository string
@@ -50,12 +68,37 @@ func init() {
 	}
 }
 func nativeBenchmark(a *app, repo, out string) {
-	report := nativeReport{Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Repository: repo}
+	report := nativeReport{MemoryMethod: "proc_pid_rusage exact physical footprint primary; decimal MB = bytes / 1000000; natural GC; 30-second windows sampled every 2 seconds; vmmap retained for graphical region diagnostics; cumulative peak is diagnostic only", Platform: runtime.GOOS + "/" + runtime.GOARCH, GoVersion: runtime.Version(), Repository: repo}
 	uiDo := func(fn func()) { done := make(chan struct{}); a.win.Update(func() { fn(); close(done) }); <-done }
+	var timelineMu sync.Mutex
+	var timeline []memoryPoint
+	phase := "startup"
+	stopSampling := make(chan struct{})
+	samplingDone := make(chan struct{})
+	go func() {
+		defer close(samplingDone)
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopSampling:
+				return
+			case <-ticker.C:
+				usage, err := nativeMemory()
+				if err != nil {
+					continue
+				}
+				timelineMu.Lock()
+				timeline = append(timeline, memoryPoint{At: time.Now().Format(time.RFC3339Nano), Scenario: phase, RSSBytes: usage.Resident, FootprintBytes: usage.Footprint})
+				timelineMu.Unlock()
+			}
+		}
+	}()
+	setPhase := func(name string) { timelineMu.Lock(); phase = name; timelineMu.Unlock() }
 	save := func() { data, _ := json.MarshalIndent(report, "", "  "); os.WriteFile(out, data, 0600) }
-	sample := func(name string) {
-		debug.FreeOSMemory()
-		time.Sleep(2500 * time.Millisecond)
+	var sampledBuilds uint64
+	var sampledTabs, sampledCommits int
+	sampleOnce := func(name string) {
 		raw, _ := exec.Command("ps", "-o", "rss=", "-p", strconv.Itoa(os.Getpid())).Output()
 		rss, _ := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
 		memory, _ := exec.Command("vmmap", "-summary", strconv.Itoa(os.Getpid())).Output()
@@ -74,18 +117,59 @@ func nativeBenchmark(a *app, repo, out string) {
 			return v
 		}
 		os.WriteFile(strings.TrimSuffix(out, ".json")+"-"+name+".vmmap.txt", memory, 0600)
-		s := nativeSample{FootprintMiB: footprint(`Physical footprint:\s+([0-9.]+)([KMG])`), PeakFootprintMiB: footprint(`Physical footprint \(peak\):\s+([0-9.]+)([KMG])`), Scenario: name, RSSMiB: rss / 1024, At: time.Now().Format(time.RFC3339)}
-		uiDo(func() {
-			s.ViewBuilds = a.rendered.Builds
-			s.HeapMiB = float64(readHeap()) / (1 << 20)
-			s.Tabs = len(a.tabs)
-			if t := a.activeTab(); t != nil {
-				s.Commits = len(t.commits)
-			}
-		})
+		s := nativeSample{FootprintMiB: footprint(`Physical footprint:\s+([0-9.]+)([KMG])`), PeakFootprintMiB: footprint(`Physical footprint \(peak\):\s+([0-9.]+)([KMG])`), Scenario: name, RSSMiB: rss / 1024, At: time.Now().Format(time.RFC3339Nano), Sampling: "natural"}
+		s.ViewBuilds = sampledBuilds
+		s.HeapMiB = float64(readHeap()) / (1 << 20)
+		s.Tabs, s.Commits = sampledTabs, sampledCommits
+
+		usage, usageErr := nativeMemory()
+		if usageErr != nil {
+			report.Error = usageErr.Error()
+		}
+		s.RSSBytes = usage.Resident
+		s.HeapBytes = uint64(s.HeapMiB * (1 << 20))
+		s.FootprintBytes = usage.Footprint
+		if s.FootprintBytes == 0 {
+			report.Error = "无法取得 physical footprint，不能完成内存验收"
+		}
 		report.Samples = append(report.Samples, s)
 		save()
 	}
+	sample := func(name string) {
+		setPhase(name)
+		uiDo(func() {
+			sampledBuilds = a.rendered.Builds
+			sampledTabs = len(a.tabs)
+			sampledCommits = 0
+			if t := a.activeTab(); t != nil {
+				sampledCommits = len(t.commits)
+			}
+		})
+		// Allow native drawable retirement without asking the UI to repaint
+		// during the sampling window. This is natural idle, never forced GC.
+		time.Sleep(5 * time.Second)
+		start := time.Now()
+		index := len(report.Samples)
+		for i := 0; i < 16; i++ {
+			if delay := time.Until(start.Add(time.Duration(i) * 2 * time.Second)); delay > 0 {
+				time.Sleep(delay)
+			}
+			sampleOnce(fmt.Sprintf("%s-%02d", name, i))
+		}
+		window := sampleWindow{Scenario: name, Samples: len(report.Samples) - index, DurationSeconds: time.Since(start).Seconds()}
+		var footprints []uint64
+		for _, point := range report.Samples[index:] {
+			footprints = append(footprints, point.FootprintBytes)
+			window.FootprintMaxBytes = max(window.FootprintMaxBytes, point.FootprintBytes)
+			window.RSSMaxBytes = max(window.RSSMaxBytes, point.RSSBytes)
+			window.HeapMaxBytes = max(window.HeapMaxBytes, point.HeapBytes)
+		}
+		sort.Slice(footprints, func(i, j int) bool { return footprints[i] < footprints[j] })
+		window.FootprintMedianBytes = (footprints[(len(footprints)-1)/2] + footprints[len(footprints)/2]) / 2
+		report.Windows = append(report.Windows, window)
+		save()
+	}
+
 	wait := func(ready func() bool) error {
 		deadline := time.Now().Add(90 * time.Second)
 		for time.Now().Before(deadline) {
@@ -108,6 +192,10 @@ func nativeBenchmark(a *app, repo, out string) {
 		return fmt.Errorf("benchmark wait timed out")
 	}
 	finish := func(err error) {
+		close(stopSampling)
+		<-samplingDone
+		report.Timeline = timeline
+		report.Completed = err == nil && report.Error == ""
 		if err != nil {
 			report.Error = err.Error()
 		}
@@ -116,6 +204,7 @@ func nativeBenchmark(a *app, repo, out string) {
 	}
 	time.Sleep(1500 * time.Millisecond)
 	sample("empty-window")
+	setPhase("open-first-page")
 	start := time.Now()
 	uiDo(func() { a.win.Show(); a.openRoot(repo) })
 	if err := wait(func() bool {
@@ -127,6 +216,7 @@ func nativeBenchmark(a *app, repo, out string) {
 	}
 	report.FirstPageMS = float64(time.Since(start).Microseconds()) / 1000
 	sample("100k-first-300")
+	setPhase("load-50k")
 	uiDo(func() { a.activeTab().options.More = 5000 })
 	for {
 		var n int
@@ -146,11 +236,12 @@ func nativeBenchmark(a *app, repo, out string) {
 	}
 	sample("loaded-50k")
 	// Exercise distinct visible ranges through the normal native table.
+	setPhase("scroll")
 	var frames uint64
 	uiDo(func() { frames = a.rendered.Frames })
 	scrollStart := time.Now()
 	ticker := time.NewTicker(time.Second / 60)
-	for i := 0; i < 240; i++ {
+	for i := 0; i < 1800; i++ {
 		i := i
 		uiDo(func() { t := a.activeTab(); t.list.ScrollTo((i*197)%49000, ui.Start) })
 		<-ticker.C
@@ -169,6 +260,7 @@ func nativeBenchmark(a *app, repo, out string) {
 	}
 	capture("")
 	sample("after-native-scroll")
+	setPhase("open-diff")
 	uiDo(func() {
 		a.activeTab().selected = a.activeTab().commitRow(0)
 		a.activeTab().commitApplied = a.activeTab().selected
@@ -186,8 +278,10 @@ func nativeBenchmark(a *app, repo, out string) {
 	sample("10k-line-diff")
 	capture("-diff")
 	sample("10k-line-diff-rendered")
+	setPhase("close-diff")
 	uiDo(func() { a.closeDetails(a.activeTab()) })
 	sample("diff-closed")
+	setPhase("repeat-diff")
 	for i := 0; i < 9; i++ {
 		uiDo(func() {
 			t := a.activeTab()
@@ -250,7 +344,17 @@ func nativeBenchmark(a *app, repo, out string) {
 				} else {
 					t := a.activeTab()
 					if t.loaded {
-						a.reload(t)
+						switch tick % 4 {
+						case 1:
+							a.reload(t)
+						case 2:
+							t.detailHidden = false
+							t.selected = t.commitRow(0)
+							t.commitApplied = t.selected
+							a.onCommitSelected(t)
+						case 3:
+							a.closeDetails(t)
+						}
 					}
 				}
 			})

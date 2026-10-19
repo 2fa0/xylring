@@ -1,0 +1,114 @@
+--- a/diffview.go
++++ b/diffview.go
+@@ -11,6 +11,7 @@
+ // own, as the lines expanded and its scroll position. Zero options are
+ // the defaults, those of Pierre's diffs.
+ type DiffState struct {
++	pendingReading *DiffReadingPosition
+ 	// Old and New are the texts compared; empty buffers are made when
+ 	// nil. New is the one edited when Editable, and can be the buffer of
+ 	// an editor's too: an edit in either shows in both.
+@@ -432,6 +433,7 @@
+ 			d.oldView.setWrap(ed.view.wrap, ed.view.wrapWidth)
+ 			d.prepare()
+ 			ed.layout(r.W, r.H, p.Scale())
++			d.restoreReadingPosition()
+ 			d.rebuildIfMoved()
+ 		})
+ 		root.Children(func() {
+@@ -473,6 +475,7 @@
+ 				d.scroll.set(ed0.scrollY)
+ 			}
+ 		}
++		d.restoreReadingPosition()
+ 		d.rebuildIfMoved()
+ 	})
+ 	row.Children(func() {
+--- a/reading.go
++++ b/reading.go
+@@ -0,0 +1,50 @@
++package editor
++
++// DiffReadingPosition retains geometry and expanded ranges only, never text,
++// buffers, shaped glyphs or callbacks. It can outlive the corresponding diff.
++type DiffReadingPosition struct {
++	y         float64
++	x         [2]float32
++	expanded  bool
++	revealed  []lineSpan
++	oldActive bool
++}
++
++func (d *DiffState) ReadingPosition() DiffReadingPosition {
++	y := d.scroll.y
++	if d.Layout == DiffUnified {
++		y = d.eds[1].scrollY
++	}
++	return DiffReadingPosition{y: y, x: [2]float32{d.eds[0].scrollX, d.eds[1].scrollX}, expanded: d.ExpandUnchanged, revealed: append([]lineSpan(nil), d.revealed...), oldActive: d.oldActive}
++}
++
++// RestoreReadingPosition applies after layout, when scroll limits are known.
++// Use only for the same file and comparison identity.
++func (d *DiffState) RestoreReadingPosition(position DiffReadingPosition) {
++	d.ensure()
++	d.ExpandUnchanged = position.expanded
++	d.revealed = append([]lineSpan(nil), position.revealed...)
++	d.expandV++
++	d.pendingReading = &position
++}
++
++func (d *DiffState) restoreReadingPosition() {
++	p := d.pendingReading
++	if p == nil {
++		return
++	}
++	d.pendingReading = nil
++	d.oldActive = p.oldActive
++	for i := range d.eds {
++		if d.Layout == DiffUnified && i == 0 {
++			continue
++		}
++		ed := &d.eds[i]
++		ed.reveal = revealNone
++		ed.setScroll(p.y)
++		ed.scrollX = max(0, min(p.x[i], ed.maxScrollX()))
++	}
++	if d.Layout != DiffUnified {
++		d.scroll.set(p.y)
++	}
++}
+--- a/reading_test.go
++++ b/reading_test.go
+@@ -0,0 +1,32 @@
++package editor
++
++import (
++	"fmt"
++	"strings"
++	"testing"
++
++	"github.com/egoist/mygo/ui"
++)
++
++func TestReadingPositionSurvivesBufferRelease(t *testing.T) {
++	for _, layout := range []DiffLayout{DiffSplit, DiffUnified} {
++		t.Run(fmt.Sprint(layout), func(t *testing.T) {
++			text := strings.Repeat("line changed\n", 200)
++			d := &DiffState{Old: NewBuffer(""), New: NewBuffer(text), Layout: layout}
++			tt := ui.NewTester(func(c *ui.Context) { DiffView(c, d).Fill() }, 800, 400)
++			tt.Scroll(600, 200, 0, 600)
++			tt.Frame()
++			position := d.ReadingPosition()
++			if position.y <= 0 {
++				t.Fatal("fixture did not scroll")
++			}
++			d = &DiffState{Old: NewBuffer(""), New: NewBuffer(text), Layout: layout}
++			d.RestoreReadingPosition(position)
++			tt.Frame()
++			restored := d.ReadingPosition()
++			if restored.y != position.y {
++				t.Fatalf("lost viewport: %v -> %v", position.y, restored.y)
++			}
++		})
++	}
++}

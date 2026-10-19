@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -21,6 +22,9 @@ type operation struct {
 	Selected                                                                                     map[string]bool
 	Preparing, Busy, ConfirmHard                                                                 bool
 	Error, Output                                                                                string
+	RawError                                                                                     string
+	ShowOutput, CancelRequested, NotedDismiss                                                    bool
+	Recovery                                                                                     []string
 	Cancel                                                                                       context.CancelFunc
 }
 
@@ -362,9 +366,28 @@ func (a *app) operationModal(c *ui.Context) {
 			return e
 		}
 		panel := ui.Column(c).Width(550).Gap(8).Children(func() {
-			ui.Text(c, o.Kind).Bold()
+			ui.Text(c, operationTitle(o.Kind)).Bold()
 			ui.Text(c, o.Repo).FontSize(12).SingleLine().Tooltip(o.Repo)
-			ui.Scroll(c.Key("operation-fields")).MaxHeight(390).Disabled(o.Preparing || o.Busy).Children(func() {
+			if o.Error != "" {
+				ui.Text(c, o.Error).Selectable().TextColor(c.Theme().Danger)
+			}
+			if !o.Busy && len(o.Recovery) > 0 {
+				ui.Row(c).Gap(8).Children(func() {
+					for _, kind := range o.Recovery {
+						if ui.Button(c.Key("recover-"+kind), kind+"…").Clicked() {
+							a.beginOperation(&repoTab{path: o.Repo}, kind, "")
+						}
+					}
+					if ui.Button(c.Key("recover-terminal"), "打开终端").Clicked() {
+						a.openTerminal(o.Repo)
+					}
+				})
+			}
+			fieldMax := float32(360)
+			if o.Error != "" {
+				fieldMax = 160
+			}
+			ui.Scroll(c.Key("operation-fields")).MaxHeight(fieldMax).Disabled(o.Preparing || o.Busy).Children(func() {
 				ui.Column(c).Gap(8).Children(func() {
 					if len(o.ParentHashes) > 1 {
 						for i, p := range o.ParentHashes {
@@ -447,17 +470,24 @@ func (a *app) operationModal(c *ui.Context) {
 					}
 				})
 			})
-			if o.Error != "" {
-				ui.Scroll(c.Key("op-error")).MaxHeight(130).Children(func() { ui.Text(c, o.Error).Selectable().TextColor(c.Theme().Danger) })
+			if o.RawError != "" || o.Output != "" {
+				ui.Checkbox(c.Key("op-show-output"), &o.ShowOutput, "查看 Git 原始输出")
+				if ui.Button(c.Key("op-copy-output"), "复制输出").Clicked() {
+					c.WriteClipboard(o.Output + "\n" + o.RawError)
+				}
 			}
-			if o.Output != "" {
-				ui.Scroll(c.Key("op-output")).MaxHeight(130).Children(func() { ui.Text(c, o.Output).Selectable() })
+			if o.ShowOutput && (o.Output != "" || o.RawError != "") {
+				ui.Scroll(c.Key("op-output")).MaxHeight(130).Children(func() { ui.Text(c, o.Output+"\n"+o.RawError).Selectable() })
 			}
 			if o.Preparing {
 				ui.Text(c, "正在读取远程和提交信息…")
 			} else if o.Busy {
-				ui.Text(c, "Git 正在执行… 可取消；已执行的步骤会保留。")
-			} else {
+				if o.CancelRequested {
+					ui.Text(c, "已请求取消，正在等待 Git 退出；已执行的步骤会保留。")
+				} else {
+					ui.Text(c, "Git 正在执行… 可取消；已执行的步骤会保留。")
+				}
+			} else if o.Error == "" {
 				ui.Text(c, "执行前请核对仓库、目标和选项。").FontSize(12)
 			}
 			if o.ConfirmHard {
@@ -469,10 +499,14 @@ func (a *app) operationModal(c *ui.Context) {
 				}
 				if o.Busy {
 					if ui.Button(c.Key("op-cancel"), "取消执行").Clicked() {
+						o.CancelRequested = true
 						o.Cancel()
 					}
 				} else {
 					label := "确认执行"
+					if o.Error != "" {
+						label = "重新执行"
+					}
 					if o.ConfirmHard {
 						label = "丢弃改动并执行 hard reset"
 					}
@@ -516,6 +550,9 @@ func (a *app) runOperation(o *operation) {
 	o.Busy = true
 	o.Error = ""
 	o.Output = ""
+	o.RawError = ""
+	o.CancelRequested = false
+	o.Recovery = nil
 	ctx, cancel := context.WithCancel(context.Background())
 	o.Cancel = cancel
 	go func() {
@@ -526,28 +563,46 @@ func (a *app) runOperation(o *operation) {
 			if e != nil {
 				err = e
 			} else if hashHex(resolved) != o.Expected {
-				err = errors.New("Stash 列表已发生变化，请刷新后重新选择")
+				err = errStashChanged
 			}
 		}
-		for _, args := range commands {
+		for i, args := range commands {
 			if err != nil {
 				break
 			}
 			var out string
 			out, err = runWriteGit(ctx, o.Repo, args, a.askCredential)
-			a.post(func() { o.Output = trimOutput(o.Output + "\n" + out) })
+			status := "已完成"
+			if err != nil {
+				status = "未完成"
+			}
+			receipt := fmt.Sprintf("步骤 %d/%d · %s · git %s\n%s", i+1, len(commands), status, redactGitOutput(strings.Join(args, " ")), out)
+			a.post(func() { o.Output = trimOutput(o.Output + "\n" + receipt) })
 			if err != nil {
 				break
 			}
 		}
+		recovery := []string(nil)
+		if err != nil {
+			stateCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+			recovery = pendingOperations(stateCtx, o.Repo)
+			done()
+		}
+		summary := operationFailure(err, ctx.Err(), recovery)
 		a.post(func() {
 			o.Busy = false
 			o.Cancel = nil
 			delete(a.writeBusy, o.Repo)
 			if err != nil {
-				o.Error = err.Error() + "\n可在仓库操作菜单中选择中止操作，或用外部工具解决冲突。"
+				o.Error = summary
+				o.RawError = redactGitOutput(err.Error())
+				o.Recovery = recovery
+				a.banner = repoTitle(o.Repo) + " · " + operationTitle(o.Kind) + "：" + summary
+				if a.op == o {
+					a.showOperation = true
+				}
 			} else {
-				a.setFlash(o.Kind + "已完成")
+				a.setFlash(repoTitle(o.Repo) + " · " + operationTitle(o.Kind) + "已完成")
 				if a.op == o {
 					a.showOperation = false
 				}
