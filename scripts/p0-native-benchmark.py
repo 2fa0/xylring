@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import hashlib
+import platform
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_FLAGS = [
@@ -62,6 +64,12 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
     revision = git(ROOT, "rev-parse", "HEAD")
     dirty = bool(git(ROOT, "status", "--porcelain"))
+    source_hash = hashlib.sha256()
+    sources = list((ROOT / "prototype").glob("*.go")) + [ROOT / "prototype" / "go.mod"]
+    sources += list((ROOT / "third_party" / "mygo-editor").glob("*.go"))
+    for path in sorted(sources):
+        source_hash.update(str(path.relative_to(ROOT)).encode())
+        source_hash.update(path.read_bytes())
     with tempfile.TemporaryDirectory(prefix="gitclient-p0-") as directory:
         temp = Path(directory)
         repo = temp / "repo"
@@ -82,9 +90,13 @@ def main():
             awake.terminate()
             awake.wait()
         report = json.loads(output.read_text())
-        report.update(SourceRevision=revision, WorkingTreeDirty=dirty, BuildFlags=BUILD_FLAGS)
+        report.update(SourceRevision=revision, WorkingTreeDirty=dirty, BuildFlags=BUILD_FLAGS,
+                      SourceSHA256=source_hash.hexdigest(), System=platform.platform(),
+                      GitVersion=subprocess.check_output(["git", "--version"], text=True).strip())
         output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(output.read_text())
+        if not report.get("Completed"):
+            raise RuntimeError("原生测试未完成；保留中断数据，不计入验收")
         if report.get("Error"):
             raise RuntimeError("原生测试未通过：" + report["Error"])
 

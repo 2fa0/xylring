@@ -77,9 +77,9 @@ func (a *app) comparisonModal(c *ui.Context) {
 		ui.Column(c).Width(460).Gap(8).Children(func() {
 			ui.Text(c, "比较提交或分支").Bold()
 			ui.Text(c, "显示从起点到终点的文件变化，不检出分支。").TextColor(c.Theme().TextMuted)
-			ui.Text(c, "起点")
+			ui.Text(c, "从（起点）")
 			ui.TextInput(c.Key("compare-from"), &a.compareFrom).Placeholder("起点 ref / SHA").Width(420)
-			ui.Text(c, "终点")
+			ui.Text(c, "到（终点）")
 			input := ui.TextInput(c.Key("compare-to"), &a.compareTo).Placeholder("终点 ref / SHA，或起点..终点").Width(420)
 			if a.compareErr != "" {
 				ui.Text(c, a.compareErr).TextColor(c.Theme().Danger)

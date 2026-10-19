@@ -57,8 +57,10 @@ func TestNavigateOutsideLoadedHistory(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1000, 800)
 	tab.refInput = "old"
+	tab.showRef = true
+	tab.infoExpanded = true
 	tt.Frame()
-	click(t, tt, "打开提交")
+	click(t, tt, "定位提交")
 	awaitUpdates(t, updates, func() bool { return !tab.refBusy && tab.loaded && !tab.loading })
 	tt.Frame()
 	awaitUpdates(t, updates, func() bool { return !tab.detailLoading && tab.info != nil })
@@ -69,7 +71,7 @@ func TestNavigateOutsideLoadedHistory(t *testing.T) {
 	want := tab.selectedCommit().hash
 	tab.refInput = "not-a-ref"
 	tt.Frame()
-	click(t, tt, "打开提交")
+	click(t, tt, "定位提交")
 	awaitUpdates(t, updates, func() bool { return !tab.refBusy })
 	if tab.refErr == "" || tab.selectedCommit() == nil || tab.selectedCommit().hash != want {
 		t.Fatal("invalid ref replaced current history")
@@ -174,7 +176,7 @@ func TestComparisonUIAndRenameDiff(t *testing.T) {
 	}
 	awaitUpdates(t, updates, func() bool { return !tab.detailLoading })
 	tt.Frame()
-	if tab.comparison == nil || len(tab.files) != 1 || tab.files[0].status != "R" || !tt.HasText("关闭比较") {
+	if tab.comparison == nil || len(tab.files) != 1 || tab.files[0].status != "R" || !tt.HasText("返回提交") {
 		t.Fatalf("Cmd-click comparison=%v files=%v err=%s", tab.comparison, tab.files, tab.detailErr)
 	}
 	awaitUpdates(t, updates, func() bool { return !tab.diffLoading })
@@ -193,7 +195,7 @@ func TestComparisonUIAndRenameDiff(t *testing.T) {
 	if tab.comparison == nil || *tab.comparison != want {
 		t.Fatal("comparison was lost on reload")
 	}
-	click(t, tt, "关闭比较")
+	click(t, tt, "返回提交")
 	click(t, tt, "比较…")
 	a.compareTo = "before..main"
 	tt.Frame()

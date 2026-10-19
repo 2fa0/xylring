@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	editor "github.com/egoist/mygo/gitclient-editor"
 	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/editor"
 )
 
 type browserEntry struct {
@@ -93,7 +93,7 @@ func (a *app) sidebar(c *ui.Context) {
 		if t.sidebarSection == "" {
 			t.sidebarSection = "引用"
 		}
-		ui.Select(c.Key("sidebar-section"), &t.sidebarSection, []string{"引用", "文件", "Stash"}).Width(190)
+		ui.Select(c.Key("sidebar-section"), &t.sidebarSection, []string{"引用", "文件", "Stash"}).Grow(1).MinWidth(0)
 		switch t.sidebarSection {
 		case "文件":
 			a.loadDirectory(t, "")
@@ -393,6 +393,8 @@ func worktreeSides(ctx context.Context, dir, rev, path string) (string, string, 
 }
 
 func (a *app) closeDetails(t *repoTab) {
+	t.captureReading()
+	t.focusDiff = false
 	t.captureSelection()
 	if t.detailCancel != nil {
 		t.detailCancel()
@@ -416,7 +418,5 @@ func (a *app) closeDetails(t *repoTab) {
 	if c := t.selectedCommit(); c != nil {
 		t.selection.Add(c.hash)
 	}
-	t.selected = -1
-	t.commitApplied = -1
-	t.stashView = nil
+	t.commitApplied = t.selected
 }

@@ -1,4 +1,4 @@
-// Git 客户端原型：验证 MyGo 原生界面能否画出提交图谱、打开 diff，
+// Git 客户端：验证 MyGo 原生界面能否画出提交图谱、打开 diff，
 // 并在多仓库标签之间释放大块数据。这不是完整客户端。
 //
 //	go test
@@ -11,11 +11,12 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
+	editor "github.com/egoist/mygo/gitclient-editor"
 	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/editor"
 )
 
 const (
@@ -64,9 +65,9 @@ type app struct {
 	settingsView                                          viewSettings
 	settingsFirst, settingsMore, settingsGit, settingsErr string
 
-	sidebarWidth float32
-	split        float32
-	filePane     float32
+	sidebarWidth, sidebarShown float32
+	split                      float32
+	filePane                   float32
 
 	picking     bool
 	showRecent  bool
@@ -95,7 +96,7 @@ func newApp() *app {
 	gitMu.Unlock()
 	a := &app{
 		sidebarWidth: 220,
-		split:        48,
+		split:        40,
 		filePane:     300,
 		recent:       loadRecent(),
 		prefs:        prefs,
@@ -108,6 +109,9 @@ func newApp() *app {
 }
 
 func (a *app) view(c *ui.Context) {
+	if hook, _ := onFrame.Load().(func(*app, time.Time)); hook != nil {
+		hook(a, c.Now())
+	}
 	if a.rendered != nil {
 		defer func() {
 			a.rendered.Builds++
@@ -127,7 +131,9 @@ func (a *app) view(c *ui.Context) {
 		}()
 	}
 	a.tabShortcuts(c)
-	a.sampleMem(c)
+	if os.Getenv("GITCLIENT_DEBUG") != "" {
+		a.sampleMem(c)
+	}
 	a.expireFlash(c)
 	t := c.Theme()
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
@@ -135,17 +141,34 @@ func (a *app) view(c *ui.Context) {
 		if a.activeTab() == nil {
 			a.emptyState(c)
 		} else {
-			a.toolbar(c)
+			if !a.activeTab().focusDiff {
+				a.toolbar(c)
+			}
 			if a.sidebarWidth == 0 {
 				a.sidebarWidth = 220
 			}
-			ui.Split(c.Key("main-sidebar"), &a.sidebarWidth, func() { a.sidebar(c) }, func() {
-				ui.SplitVerticalPercent(c, &a.split, func() {
-					a.commitPane(c)
-				}, func() {
-					a.detail(c)
+			tab := a.activeTab()
+			width, _ := c.Size()
+			if tab.focusDiff {
+				if !a.showOperation && !a.showSettings && !a.showCompare && !a.showRecent && len(a.credentials) == 0 && c.Shortcut(0, ui.KeyEscape) {
+					tab.focusDiff = false
+				}
+				a.detail(c)
+			} else {
+				a.sidebarShown = shownSidebar(a.sidebarWidth, width)
+				split := ui.Split(c.Key("main-sidebar"), &a.sidebarShown, func() { a.sidebar(c) }, func() {
+					if tab.detailHidden || tab.selectionKey() == "" {
+						a.commitPane(c)
+					} else {
+						ui.SplitVerticalPercent(c.Key(fmt.Sprintf("history-detail-%d", tab.id)), &tab.detailSplit, func() {
+							a.commitPane(c)
+						}, func() { a.detail(c) }).Grow(1).MinHeight(0)
+					}
 				}).Grow(1).MinHeight(0)
-			}).Grow(1).MinHeight(0)
+				if split.Changed() {
+					a.sidebarWidth = a.sidebarShown
+				}
+			}
 		}
 		a.statusBar(c)
 	})
@@ -154,6 +177,13 @@ func (a *app) view(c *ui.Context) {
 	a.comparisonModal(c)
 	a.settingsModal(c)
 	a.operationModal(c)
+	if a.op != nil && a.op.Busy && !a.showOperation && !a.op.NotedDismiss {
+		a.op.NotedDismiss = true
+		a.setFlash(operationTitle(a.op.Kind) + "仍在执行，没有取消")
+	}
+	if a.showOperation && a.op != nil {
+		a.op.NotedDismiss = false
+	}
 	a.credentialModal(c)
 }
 
@@ -179,14 +209,17 @@ func (a *app) tabBar(c *ui.Context) {
 					if button.Clicked() {
 						activateAt = i
 					}
-					if ui.Button(c.Key(fmt.Sprintf("tabx-%d", tab.id)), "×").Clicked() {
+					if ui.Button(c.Key(fmt.Sprintf("tabx-%d", tab.id)), "×").Label("关闭仓库标签").Tooltip("关闭仓库标签").Clicked() {
 						closeAt = i
 					}
 				}
 			})
 		})
-		if ui.Button(c.Key("add-tab"), "+").Tooltip("打开仓库").Clicked() {
+		if ui.Button(c.Key("add-tab"), "+").Label("打开仓库").Tooltip("打开仓库").Clicked() {
 			a.pickRepo()
+		}
+		if ui.Button(c.Key("recent-open"), "最近").Clicked() {
+			a.showRecent = true
 		}
 		if ui.Button(c.Key("settings-open"), "设置").Clicked() {
 			a.beginSettings()
@@ -205,8 +238,8 @@ func (a *app) tabBar(c *ui.Context) {
 func (a *app) emptyState(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Grow(1).Center().Gap(12).Padding(24).Children(func() {
-		ui.Text(c, "Git 客户端原型").FontSize(28).Bold()
-		ui.Text(c, "打开一个仓库，查看提交图谱和 diff。后台标签会释放已加载的历史。").
+		ui.Text(c, "Git 客户端").FontSize(28).Bold()
+		ui.Text(c, "打开仓库，浏览历史，看清每一次改动。").
 			TextColor(t.TextMuted)
 		ui.Row(c).Gap(8).Children(func() {
 			if ui.PrimaryButton(c.Key("open-empty"), "打开仓库").Clicked() {
@@ -225,36 +258,34 @@ func (a *app) toolbar(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
-	if c.Shortcut(ui.Cmd, ui.KeyR) {
+	width, _ := c.Size()
+	wide := width >= 1050
+	if c.Shortcut(commandModifier(), ui.KeyR) {
 		a.reload(tab)
 	}
-	ui.Row(c).Padding(6, 8).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, tab.branch).Bold().Shrink(0)
-		options := []string{"全部分支", "当前分支", "多选分支"}
-		if tab.scope == "指定 ref" || tab.scope == "文件历史" || tab.scope == "搜索结果" {
-			options = append(options, tab.scope)
+	ui.Toolbar(c, func() {
+		ui.Text(c, tab.branch).Bold().SingleLine().MaxWidth(150).MinWidth(36).Tooltip("当前分支 " + tab.branch)
+		a.historyScope(c, tab)
+		if tab.scope == "多选分支" && ui.Button(c.Key("edit-filter"), "选择分支…").Clicked() {
+			a.beginBranchFilter(tab)
 		}
-		if ui.Select(c.Key("history-scope"), &tab.scopeChoice, options).Width(130).Disabled(tab.loading).Changed() {
-			switch tab.scopeChoice {
-			case "全部分支":
-				a.setHistory(tab, "全部分支", nil, zeroHash)
-			case "当前分支":
-				a.setHistory(tab, "当前分支", []string{"HEAD"}, zeroHash)
-			case "多选分支":
-				a.beginBranchFilter(tab)
-				tab.scopeChoice = tab.scope
+		if wide {
+			for _, action := range syncActions() {
+				if ui.Button(c.Key("toolbar-"+action.kind), action.label).Tooltip(action.tip).Clicked() {
+					a.beginOperation(tab, action.kind, "")
+				}
 			}
 		}
-		if tab.scope == "多选分支" {
-			if ui.Button(c.Key("edit-filter"), "选择分支…").Clicked() {
-				a.beginBranchFilter(tab)
+		ui.Button(c.Key("repo-operations"), "仓库操作 ▾").Menu(func(m *ui.Menu) {
+			if !wide {
+				for _, action := range syncActions() {
+					if m.Item(action.label).Chosen() {
+						a.beginOperation(tab, action.kind, "")
+					}
+				}
+				m.Separator()
 			}
-		}
-		if ui.Button(c.Key("toolbar-Fetch"), "Fetch…").Clicked() {
-			a.beginOperation(tab, "Fetch", "")
-		}
-		ui.Button(c.Key("repo-operations"), "操作 ▾").Menu(func(m *ui.Menu) {
-			for _, kind := range []string{"推送", "拉取", "新建 Stash", "中止合并", "中止 Cherry-pick", "中止 Revert", "外部合并工具"} {
+			for _, kind := range append([]string{"新建 Stash", "外部合并工具"}, tab.pending...) {
 				if m.Item(kind + "…").Chosen() {
 					a.beginOperation(tab, kind, "")
 				}
@@ -263,58 +294,114 @@ func (a *app) toolbar(c *ui.Context) {
 				a.openTerminal(tab.path)
 			}
 		})
-
-		if ui.Button(c.Key("refresh"), "刷新").Clicked() {
+		if ui.Button(c.Key("refresh"), "刷新").Tooltip("重新读取仓库").Clicked() {
 			a.reload(tab)
 		}
-		if ui.Button(c.Key("open-more"), "打开").Clicked() {
-			a.pickRepo()
+	}).Label("仓库与历史操作").Padding(2, 8).Gap(6)
+
+	ui.Toolbar(c, func() {
+		if ui.Button(c.Key("toggle-ref"), "定位提交…").Tooltip("按分支、标签或 SHA 跳转，不搜索提交说明").Clicked() {
+			tab.showRef = !tab.showRef
 		}
-		if ui.Button(c.Key("recent-open"), "最近").Clicked() {
-			a.showRecent = true
+		find := ui.TextInput(c.Key(fmt.Sprintf("find-%d", tab.id)), &tab.query).Placeholder("搜索历史：消息、作者、日期、哈希或引用").Grow(1).MinWidth(72)
+		if c.Shortcut(commandModifier(), ui.KeyF) {
+			find.Focus()
 		}
-		ui.Textf(c, "已加载 %d", len(tab.commits)).TextColor(t.TextMuted).Shrink(0)
-		if tab.hasMore {
-			ui.Text(c, "可继续").TextColor(t.TextMuted).Shrink(0)
+		label, tip := "搜索", "查找匹配的提交"
+		if tab.searchText != "" && strings.TrimSpace(tab.query) == tab.searchText {
+			label, tip = "下一个匹配", "跳到下一个匹配"
 		}
-	})
-	ui.Row(c).Padding(0, 8, 6, 8).Gap(8).AlignItems(ui.Center).Children(func() {
-		input := ui.TextInput(c.Key(fmt.Sprintf("ref-%d", tab.id)), &tab.refInput).Placeholder("分支、标签或 SHA，例如 HEAD~3").Width(260)
-		if ui.Button(c.Key("open-ref"), "打开提交").Disabled(tab.refBusy).Clicked() || input.Submitted() {
-			a.openRef(tab, tab.refInput)
-		}
-		if tab.refBusy {
-			ui.Text(c, "正在定位…").TextColor(t.TextMuted)
-		}
-		find := ui.TextInput(c.Key(fmt.Sprintf("find-%d", tab.id)), &tab.query).Placeholder("消息、日期、作者、哈希或 ref").Grow(1).MinWidth(100)
-		if ui.Button(c.Key("find-next"), "下一个").Clicked() || c.Shortcut(ui.Cmd, ui.KeyG) {
+		if ui.Button(c.Key("find-next"), label).Tooltip(tip).Disabled(tab.loading).Clicked() || c.Shortcut(commandModifier(), ui.KeyG) {
 			a.findNext(tab)
 		}
 		if find.Submitted() {
 			a.findNext(tab)
 		}
-		if tab.searchText != "" && ui.Button(c.Key("clear-search"), "清除搜索").Clicked() {
-			tab.query = ""
-			a.searchHistory(tab, "")
-		}
-		if ui.Button(c.Key("compare"), "比较…").Clicked() {
+		if ui.Button(c.Key("compare"), "比较…").Tooltip("比较两个提交之间的改动").Clicked() {
 			a.showCompare, a.compareRepo = true, tab.path
 			a.compareFrom, a.compareTo, a.compareErr = "HEAD", tab.refInput, ""
 			if commit := tab.selectedCommit(); commit != nil {
 				a.compareTo = hashHex(commit.hash)
 			}
 		}
-	})
+	}).Label("搜索与比较").Padding(0, 8, 2, 8).Gap(6)
+	if tab.showRef {
+		ui.Row(c).Padding(0, 8, 4, 8).Gap(8).Children(func() {
+			input := ui.TextInput(c.Key(fmt.Sprintf("ref-%d", tab.id)), &tab.refInput).Placeholder("分支、标签或 SHA，例如 HEAD~3").Grow(1).AutoFocus()
+			if ui.Button(c.Key("open-ref"), "定位提交").Disabled(tab.refBusy).Clicked() || input.Submitted() {
+				a.openRef(tab, tab.refInput)
+			}
+			if ui.Button(c.Key("hide-ref"), "收起").Clicked() {
+				tab.showRef = false
+			}
+		})
+	}
+	if tab.searchText != "" {
+		msg := "正在搜索历史…"
+		if !tab.loading {
+			if len(tab.commits) == 0 {
+				msg = "没有匹配的提交，试试其他关键词"
+			} else if tab.hasMore {
+				msg = fmt.Sprintf("第 %d 个匹配 · 还可继续查找", tab.searchIndex+1)
+			} else {
+				msg = fmt.Sprintf("第 %d / %d 个匹配", tab.searchIndex+1, len(tab.commits))
+			}
+		}
+		ui.Row(c).Padding(0, 8, 4, 8).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, msg).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine()
+			if ui.Button(c.Key("clear-search"), "返回原历史").Clicked() {
+				tab.query = ""
+				a.searchHistory(tab, "")
+			}
+		})
+	}
 	if tab.refErr != "" || tab.scope == "指定 ref" {
-		ui.Row(c).Padding(0, 8, 6, 8).Gap(8).Children(func() {
+		ui.Row(c).Padding(0, 8, 4, 8).Gap(8).Children(func() {
 			if tab.scope == "指定 ref" && len(tab.historyRefs) == 1 {
-				ui.Text(c, "历史起点 "+tab.historyRefs[0][:7]).TextColor(t.TextMuted)
+				ui.Text(c, "历史起点 "+shortRef(tab.historyRefs[0])).TextColor(t.TextMuted)
 			}
 			if tab.refErr != "" {
 				ui.Text(c, tab.refErr).TextColor(t.Danger).SingleLine().Grow(1).MinWidth(0).Tooltip(tab.refErr)
 			}
 		})
 	}
+}
+
+type repoAction struct {
+	kind, label, tip string
+}
+
+func syncActions() []repoAction {
+	return []repoAction{
+		{"Fetch", "获取…", "fetch：更新远程引用，不合并到当前分支"},
+		{"拉取", "拉取…", "把远程提交合并到当前分支"},
+		{"推送", "推送…", "把当前分支送到远程"},
+	}
+}
+
+func (a *app) historyScope(c *ui.Context, tab *repoTab) {
+	options := []string{"全部分支", "当前分支", "多选分支"}
+	if tab.scope == "指定 ref" || tab.scope == "文件历史" || tab.scope == "搜索结果" {
+		options = append(options, tab.scope)
+	}
+	if ui.Select(c.Key("history-scope"), &tab.scopeChoice, options).Width(112).Disabled(tab.loading).Changed() {
+		switch tab.scopeChoice {
+		case "全部分支":
+			a.setHistory(tab, "全部分支", nil, zeroHash)
+		case "当前分支":
+			a.setHistory(tab, "当前分支", []string{"HEAD"}, zeroHash)
+		case "多选分支":
+			a.beginBranchFilter(tab)
+			tab.scopeChoice = tab.scope
+		}
+	}
+}
+
+func shortRef(s string) string {
+	if len(s) > 12 {
+		return s[:12] + "…"
+	}
+	return s
 }
 
 func (a *app) commitPane(c *ui.Context) {
@@ -325,7 +412,7 @@ func (a *app) commitPane(c *ui.Context) {
 	}
 	if tab.loading && len(tab.commits) == 0 && tab.err == "" {
 		ui.Column(c).Fill().Center().Children(func() {
-			ui.Text(c, "正在读取提交…").TextColor(t.TextMuted)
+			loadingMessage(c, tab.historyStarted, "正在读取仓库历史…")
 		})
 		return
 	}
@@ -376,6 +463,9 @@ func (a *app) commitPane(c *ui.Context) {
 	tab.tableLayout = tab.list.Columns
 	if tab.rows() == 0 && !tab.loading {
 		msg := "这个仓库还没有提交"
+		if tab.searchText != "" {
+			msg = "没有匹配的提交，请修改搜索词或返回原历史"
+		}
 		if tab.err != "" {
 			msg = tab.err
 		}
@@ -515,88 +605,87 @@ func (a *app) detail(c *ui.Context) {
 			ui.Text(c, "单击一条提交查看改动").Padding(12).TextColor(t.TextMuted)
 			return
 		}
-		ui.Row(c).Padding(2, 8).Justify(ui.End).Children(func() {
-			if ui.Button(c.Key("close-details"), "关闭详情").Clicked() {
-				a.closeDetails(tab)
-			}
-		})
 		a.detailHeader(c, tab)
 		if tab.detailErr != "" {
 			ui.Text(c, tab.detailErr).Padding(8, 12).TextColor(t.Danger)
 		}
 		if tab.detailLoading {
-			ui.Text(c, "正在读取文件列表…").Padding(8, 12).TextColor(t.TextMuted)
+			loadingMessage(c, tab.detailStarted, "正在读取此提交的文件列表…")
 		}
-		ui.Split(c.Key(fmt.Sprintf("file-split-%d", tab.id)), &a.filePane, func() {
+		tab.filePaneShown = shownFilePane(tab.filePaneWidth, a.fileRoom(c, tab))
+		split := ui.Split(c.Key(fmt.Sprintf("file-split-%d", tab.id)), &tab.filePaneShown, func() {
 			a.filePaneView(c, tab)
 		}, func() {
 			a.diffPane(c, tab)
 		}).Grow(1).MinHeight(0)
+		if split.Changed() {
+			tab.filePaneWidth = tab.filePaneShown
+		}
 	})
 }
 
 func (a *app) detailHeader(c *ui.Context, tab *repoTab) {
 	t := c.Theme()
-	if tab.comparison != nil {
-		ui.Row(c).Padding(8, 12).Gap(12).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "比较 "+shortHash(tab.comparison.from)+" → "+shortHash(tab.comparison.to)).Bold().Grow(1)
-			if ui.Button(c.Key("close-comparison"), "关闭比较").Clicked() {
-				tab.comparison = nil
-				a.onCommitSelected(tab)
+	ui.Column(c).Padding(4, 8).Gap(4).Shrink(0).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			subject := "未提交更改 · 工作区相对 HEAD"
+			if tab.comparison != nil {
+				subject = "比较：从 " + shortHash(tab.comparison.from) + " → 到 " + shortHash(tab.comparison.to)
+			} else if item := tab.selectedCommit(); item != nil {
+				subject = item.subject
+			}
+			ui.Text(c, subject).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(subject)
+			label := "放大 diff"
+			if tab.focusDiff {
+				label = "返回"
+			}
+			if ui.Button(c.Key("focus-diff"), label).Clicked() {
+				tab.focusDiff = !tab.focusDiff
+			}
+			if ui.Button(c.Key("close-details"), "关闭详情").Clicked() {
+				a.closeDetails(tab)
 			}
 		})
-		return
-	}
-	if tab.dirty > 0 && tab.selected == 0 {
-		ui.Column(c).Padding(8, 12).Gap(4).Shrink(0).Children(func() {
-			ui.Textf(c, "未提交更改（%d 个文件）", tab.dirty).Bold()
-			if ui.Button(c.Key("dirty-stash"), "Stash 未提交更改…").Clicked() {
-				a.beginOperation(tab, "新建 Stash", "")
-			}
-			ui.Text(c, "对比的是工作区相对 HEAD 的内容").FontSize(12).TextColor(t.TextMuted)
-		})
-		return
-	}
-	commit := tab.selectedCommit()
-	if commit == nil {
-		return
-	}
-	ui.Column(c).Padding(8, 12).Gap(4).Shrink(0).Children(func() {
-		subject := commit.subject
-		if subject == "" {
-			subject = "（无说明）"
-		}
-		if tab.info == nil {
-			ui.Text(c, subject).Bold()
-		} else {
-			ui.Scroll(c.Key("commit-info")).MaxHeight(140).Shrink(0).Children(func() {
-				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, tab.info.message).Selectable()
-					ui.Textf(c, "作者：%s <%s>  %s", tab.info.author, tab.info.authorEmail, tab.info.authorDate).FontSize(12).TextColor(t.TextMuted).Selectable()
-					ui.Textf(c, "提交者：%s <%s>  %s", tab.info.committer, tab.info.committerEmail, tab.info.committerDate).FontSize(12).TextColor(t.TextMuted).Selectable()
-				})
-			})
-		}
-		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, hashHex(commit.hash)).Font("monospace").FontSize(12).TextColor(t.TextMuted)
-			if ui.Button(c.Key("copy-hash"), "复制").Clicked() {
-				c.WriteClipboard(hashHex(commit.hash))
-				a.setFlash("已复制 " + shortHash(commit.hash))
-			}
-			ui.Text(c, commit.author).TextColor(t.TextMuted)
-			ui.Text(c, commit.whenText()).TextColor(t.TextMuted)
-		})
-		if len(commit.parents) > 0 {
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "父提交").FontSize(12).TextColor(t.TextMuted)
-				for _, p := range commit.parents {
-					p := p
-					label := shortHash(p)
-					if ui.Button(c.Key("parent-"+hashHex(p)), label).Clicked() {
-						a.jumpHash(tab, p)
-					}
+		if item := tab.selectedCommit(); item != nil && tab.comparison == nil {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				meta := item.author + " · " + item.whenText()
+				if tab.branch != "" {
+					meta = tab.branch + " · " + meta
+				}
+				ui.Text(c, meta).SingleLine().Grow(1).MinWidth(0).TextColor(t.TextMuted).Tooltip(meta)
+				if ui.Button(c.Key("copy-hash"), shortHash(item.hash)).Tooltip("复制完整哈希").Clicked() {
+					c.WriteClipboard(hashHex(item.hash))
+					a.setFlash("已复制完整哈希")
+				}
+				label := "展开摘要"
+				if tab.infoExpanded {
+					label = "收起摘要"
+				}
+				if ui.Button(c.Key("expand-info"), label).Clicked() {
+					tab.infoExpanded = !tab.infoExpanded
 				}
 			})
+			if tab.infoExpanded {
+				ui.Scroll(c.Key("commit-info")).MaxHeight(140).Shrink(0).Children(func() {
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, hashHex(item.hash)).Selectable()
+						if tab.info != nil {
+							ui.Text(c, tab.info.message).Selectable()
+							ui.Textf(c, "作者：%s <%s>  %s", tab.info.author, tab.info.authorEmail, tab.info.authorDate).Selectable()
+							ui.Textf(c, "提交者：%s <%s>  %s", tab.info.committer, tab.info.committerEmail, tab.info.committerDate).Selectable()
+						}
+						for _, parent := range item.parents {
+							if ui.Button(c.Key("parent-"+hashHex(parent)), "父提交 "+hashHex(parent)).Clicked() {
+								a.jumpHash(tab, parent)
+							}
+						}
+					})
+				})
+			}
+		}
+		if tab.comparison != nil && ui.Button(c.Key("close-comparison"), "返回提交").Clicked() {
+			tab.comparison = nil
+			a.onCommitSelected(tab)
 		}
 	})
 }
@@ -659,13 +748,14 @@ func (a *app) filePaneView(c *ui.Context, tab *repoTab) {
 
 func (a *app) diffPane(c *ui.Context, tab *repoTab) {
 	t := c.Theme()
+	width, _ := c.Size()
 	ui.Column(c).Fill().MinHeight(0).Children(func() {
-		ui.Row(c).Padding(4, 8).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
+		ui.Row(c).Padding(2, 8).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 			label := "并排"
 			if tab.layout == editor.DiffUnified {
 				label = "统一"
 			}
-			if ui.Button(c.Key("layout"), label).Clicked() {
+			if ui.Button(c.Key("layout"), label).Tooltip("切换并排或统一视图").Clicked() {
 				if tab.layout == editor.DiffSplit {
 					tab.layout = editor.DiffUnified
 				} else {
@@ -675,21 +765,33 @@ func (a *app) diffPane(c *ui.Context, tab *repoTab) {
 					tab.diff.Layout = tab.layout
 				}
 			}
-			if tab.diff != nil {
+			if tab.fileSel >= 0 && tab.fileSel < len(tab.files) {
+				path := tab.files[tab.fileSel].path
+				ui.Text(c, path).SingleLine().Grow(1).MinWidth(40).Tooltip(path)
+			} else {
+				ui.Box(c).Grow(1).MinWidth(0)
+			}
+			if tab.diff != nil && width >= 1050 {
 				if ui.Button(c.Key("expand-context"), "展开上下文").Clicked() {
 					tab.diff.ExpandAll()
 				}
 				if ui.Button(c.Key("collapse-context"), "折叠上下文").Clicked() {
 					tab.diff.CollapseAll()
 				}
-			}
-			if tab.fileSel >= 0 && tab.fileSel < len(tab.files) {
-				ui.Text(c, tab.files[tab.fileSel].path).SingleLine().Grow(1).MinWidth(0)
+			} else if tab.diff != nil {
+				ui.Button(c.Key("diff-context"), "上下文").Menu(func(m *ui.Menu) {
+					if m.Item("展开上下文").Chosen() {
+						tab.diff.ExpandAll()
+					}
+					if m.Item("折叠上下文").Chosen() {
+						tab.diff.CollapseAll()
+					}
+				})
 			}
 		})
 		switch {
 		case tab.diffLoading:
-			ui.Text(c, "正在读取 diff…").Padding(12).TextColor(t.TextMuted)
+			loadingMessage(c, tab.diffStarted, "正在读取所选文件的 diff…")
 		case tab.detailNote != "":
 			ui.Text(c, tab.detailNote).Padding(12).TextColor(t.TextMuted)
 		case tab.diff != nil:
@@ -703,15 +805,29 @@ func (a *app) diffPane(c *ui.Context, tab *repoTab) {
 func (a *app) statusBar(c *ui.Context) {
 	t := c.Theme()
 	ui.Row(c).Padding(4, 8).Gap(12).AlignItems(ui.Center).Background(t.Surface).Children(func() {
-		ui.Textf(c, "Go 堆 %.1f MB", float64(a.heap)/1024/1024).FontSize(12).TextColor(t.TextMuted)
-		ui.Text(c, "不含窗口和 GPU").FontSize(12).TextColor(t.TextMuted)
+		if os.Getenv("GITCLIENT_DEBUG") != "" {
+			ui.Textf(c, "Go 堆 %.1f MB（不含窗口与 GPU）", float64(a.heap)/1e6).FontSize(12).TextColor(t.TextMuted)
+		}
+		if tab := a.activeTab(); tab != nil {
+			status := tab.title
+			if tab.branch != "" {
+				status += " · " + tab.branch
+			}
+			if tab.dirty > 0 {
+				status += fmt.Sprintf(" · %d 处未提交", tab.dirty)
+			}
+			ui.Text(c, status).SingleLine().MinWidth(0).TextColor(t.TextMuted).Tooltip(status)
+			if tab.hasMore && !tab.loading {
+				ui.Textf(c, "已显示 %d 条，滚动继续", len(tab.commits)).FontSize(12).TextColor(t.TextMuted).Shrink(0)
+			}
+		}
 		if a.op != nil && a.op.Busy {
-			ui.Text(c, a.op.Kind+"正在执行…").FontSize(12)
+			ui.Text(c, operationTitle(a.op.Kind)+"正在执行…").FontSize(12)
 			if ui.Button(c.Key("show-running-op"), "查看 / 取消").Clicked() {
 				a.showOperation = true
 			}
 		}
-		if n := a.releasedCount(); n > 0 {
+		if n := a.releasedCount(); n > 0 && os.Getenv("GITCLIENT_DEBUG") != "" {
 			ui.Textf(c, "后台标签已释放 %d", n).FontSize(12).TextColor(t.TextMuted)
 		}
 		if tab := a.activeTab(); tab != nil && tab.loading {
@@ -870,7 +986,17 @@ func drawDirty(p *ui.Painter, r ui.Rect, tab *repoTab) {
 }
 
 // Filled only by the p0bench build for repeatable native process measurements.
-var onAppReady func(*app)
+var (
+	onAppReady func(*app)
+	// onFrame observes a view build. Store only through setFrameHook.
+	onFrame atomic.Value
+	// benchExit is set by a measurement run that should not look successful.
+	benchExit int
+)
+
+func setFrameHook(hook func(*app, time.Time)) {
+	onFrame.Store(hook)
+}
 
 func main() {
 	if askpassMain() {
@@ -879,7 +1005,7 @@ func main() {
 	a := newApp()
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Git 客户端原型",
+			Title:     "Git 客户端",
 			Width:     1200,
 			Height:    800,
 			MinWidth:  860,
@@ -913,4 +1039,67 @@ func main() {
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
+	if benchExit != 0 {
+		os.Exit(benchExit)
+	}
+}
+
+func commandModifier() ui.Modifiers {
+	if runtime.GOOS == "darwin" {
+		return ui.Cmd
+	}
+	return ui.Ctrl
+}
+
+func shownSidebar(preferred, width float32) float32 {
+	return fitPane(preferred, 220, width*0.22, 148, 240)
+}
+
+func shownFilePane(preferred, room float32) float32 {
+	return fitPane(preferred, 210, room*0.28, 132, 240)
+}
+
+func (a *app) fileRoom(c *ui.Context, tab *repoTab) float32 {
+	width, _ := c.Size()
+	if tab != nil && tab.focusDiff {
+		return width
+	}
+	return width - shownSidebar(a.sidebarWidth, width)
+}
+
+// fitPane keeps a saved width when the window has room, and only the
+// displayed width yields on a narrow window. The saved value comes back
+// when the window grows, unless the user actually drags the divider.
+func fitPane(preferred, fallback, cap, floor, ceiling float32) float32 {
+	if preferred <= 0 {
+		preferred = fallback
+	}
+	if cap <= 0 {
+		return preferred
+	}
+	if cap > ceiling {
+		cap = ceiling
+	}
+	if cap < floor {
+		cap = floor
+	}
+	if preferred > cap {
+		return cap
+	}
+	return preferred
+}
+
+func loadingMessage(c *ui.Context, started time.Time, description string) {
+	elapsed := c.Now().Sub(started)
+	if elapsed < 150*time.Millisecond {
+		c.After(150*time.Millisecond - elapsed)
+		return
+	}
+	label := "读取中…"
+	if elapsed >= time.Second {
+		label = description
+	} else {
+		c.After(time.Second - elapsed)
+	}
+	ui.Text(c, label).Padding(8, 12).TextColor(c.Theme().TextMuted)
 }

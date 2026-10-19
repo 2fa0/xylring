@@ -2,6 +2,10 @@
 
 Go + MyGo v0.5.5 Native UI + 系统 Git。功能范围按《独立桌面 Git 客户端需求文档 v0.3》的 P0 实现，验收状态见 [P0-进度.md](P0-进度.md)。
 
+下一轮产品与工程改进的顺序、范围和验收标准见 [改进计划 v0.2：清楚、专注、顺滑](改进计划-v0.1.md)。
+
+P1 的完整需求、分批交付顺序、实现边界与验收场景见 [P1 需求与落地计划](P1-落地计划.md)。首批聚焦暂存、提交与冲突处理的日常闭环。
+
 ## 本机运行
 
 需要 Go 1.27.2 和系统 Git，在 `prototype/` 执行：
@@ -10,13 +14,15 @@ Go + MyGo v0.5.5 Native UI + 系统 Git。功能范围按《独立桌面 Git 客
 go run . /path/to/repository
 ```
 
-构建 macOS 应用：
+构建本机 macOS 应用：
 
 ```sh
 go tool mygo build -skip-dmg -skip-notarize
 ```
 
 生成 `prototype/build/darwin-arm64/Git Client.app`。本机构建使用 ad hoc 签名，未进行发行公证。
+
+一键打包 macOS（Apple 芯片）和 Windows 11 x64：双击仓库根目录的 `build.command`，或在终端执行 `./build.command`。可交付的磁盘镜像和 Windows 安装程序会收进 `release/`。Windows 安装程序需要本机已安装 `makensis`（`brew install makensis`）；没有它时会改交付压缩包。
 
 ## 使用
 

@@ -10,7 +10,7 @@ func TestEmptyView(t *testing.T) {
 	a := &app{split: 64, filePane: 300}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if !tt.HasText("打开仓库") || !tt.HasText("Git 客户端原型") {
+	if !tt.HasText("打开仓库") || !tt.HasText("Git 客户端") {
 		t.Fatalf("空窗口文本：%q", tt.Texts())
 	}
 }

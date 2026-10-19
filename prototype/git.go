@@ -424,6 +424,7 @@ type refInfo struct {
 }
 
 type repoMeta struct {
+	pending []string
 	stashes []commit
 	branch  string
 	head    [20]byte
@@ -457,6 +458,7 @@ func loadMeta(ctx context.Context, dir string, includeUntracked ...bool) (repoMe
 	}
 	m.refs = parseRefs(rawRefs)
 	m.stashes, err = loadStashes(ctx, dir)
+	m.pending = pendingOperations(ctx, dir)
 	return m, err
 }
 

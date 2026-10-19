@@ -187,7 +187,7 @@ func runWriteGit(ctx context.Context, dir string, args []string, ask func(contex
 	cmd.Stdout = output
 	cmd.Stderr = output
 	err = cmd.Run()
-	text := output.String()
+	text := redactGitOutput(output.String())
 	if ctx.Err() != nil {
 		return text, fmt.Errorf("Git 已取消；请检查仓库状态：%w", ctx.Err())
 	}
