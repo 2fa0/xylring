@@ -401,7 +401,10 @@ func TestP0FileAndStashUI(t *testing.T) {
 	tt.Frame()
 	awaitUpdates(t, updates, func() bool { return !tab.detailLoading && len(tab.files) > 0 })
 	tt.Frame()
-	awaitUpdates(t, updates, func() bool { return !tab.diffLoading })
+	click(t, tt, "改动")
+	click(t, tt, "[工作区] M  src/nested/file.go")
+	tt.Frame()
+	awaitUpdates(t, updates, func() bool { return !tab.diffLoading && tab.diff != nil })
 	if tab.diff == nil {
 		t.Fatal("stash diff missing", tab.detailErr)
 	}
@@ -603,12 +606,18 @@ func TestTabDragAndShortcuts(t *testing.T) {
 	a, _ := newTestApp(t, first)
 	a.tabs = append(a.tabs, second)
 	tt := ui.NewTester(a.view, 1000, 800)
-	from, _ := tt.Find("● tmp/one")
-	to, _ := tt.Find("tmp/two")
-	tt.Press(from.X+10, from.Y+10)
-	tt.Move(from.X+30, from.Y+10)
-	tt.Move(to.X+10, to.Y+10)
-	tt.Release(to.X+10, to.Y+10)
+	from, ok := tt.Find("on")
+	if !ok {
+		t.Fatalf("repo rail missing: %q", tt.Texts())
+	}
+	to, ok := tt.Find("tw")
+	if !ok {
+		t.Fatal(tt.Texts())
+	}
+	tt.Press(from.X+8, from.Y+8)
+	tt.Move(from.X+8, from.Y+20)
+	tt.Move(to.X+8, to.Y+8)
+	tt.Release(to.X+8, to.Y+8)
 	tt.Frame()
 	if a.tabs[1] != first || a.active != 1 {
 		t.Fatal("drag did not reorder tabs")

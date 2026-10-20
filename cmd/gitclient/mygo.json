@@ -1,0 +1,6 @@
+{
+  "name": "Xylring",
+  "identifier": "dev.xylring.app",
+  "version": "0.2.0",
+  "out": "build"
+}

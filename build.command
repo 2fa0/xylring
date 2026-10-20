@@ -9,7 +9,7 @@ set -u
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:${PATH:-/usr/bin:/bin}"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$ROOT/prototype"
+APP_DIR="$ROOT/cmd/gitclient"
 PACKAGES="$ROOT/release"
 
 pause() {
@@ -31,8 +31,8 @@ if [ "$(uname -s)" != "Darwin" ]; then
   fail "请在 Mac 上运行。磁盘镜像需要 macOS，Windows 包会在这里交叉编译。"
 fi
 
-if [ ! -f "$APP_DIR/go.mod" ] || [ ! -f "$APP_DIR/mygo.json" ]; then
-  fail "找不到 prototype/。请把 build.command 留在仓库根目录。"
+if [ ! -f "$ROOT/go.mod" ] || [ ! -f "$APP_DIR/mygo.json" ]; then
+  fail "找不到 cmd/gitclient/。请把 build.command 留在仓库根目录。"
 fi
 
 if ! command -v go >/dev/null 2>&1; then
@@ -41,7 +41,7 @@ fi
 
 version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$APP_DIR/mygo.json" 2>/dev/null || true)"
 if [ -z "$version" ]; then
-  fail "无法读取 prototype/mygo.json 里的 version。"
+  fail "无法读取 cmd/gitclient/mygo.json 里的 version。"
 fi
 
 have_nsis=0
@@ -49,8 +49,8 @@ if command -v makensis >/dev/null 2>&1; then
   have_nsis=1
 fi
 
-printf '\033]0;打包 Git Client\007'
-echo "Git Client ${version}"
+printf '\033]0;打包 Xylring\007'
+echo "Xylring ${version}"
 echo
 echo "将打包："
 echo "  • macOS Apple 芯片（arm64）磁盘镜像"
@@ -66,7 +66,7 @@ echo
 echo "目标电脑需要已安装 Git。这两份都没有发行签名。"
 echo
 
-cd "$APP_DIR" || fail "无法进入 prototype/。"
+cd "$APP_DIR" || fail "无法进入 cmd/gitclient/。"
 
 started=$(date +%s)
 # makensis 在 LANG 为空或 C 时写安装包会崩溃（NSIS bug 1165）。
@@ -109,9 +109,9 @@ if [ -d "$win_dir" ]; then
     note_windows="installer"
   elif [ "${#setups[@]}" -gt 1 ]; then
     fail "windows-amd64 里有多份安装程序，无法判断该交付哪一份。"
-  elif [ -f "$win_dir/Git Client.exe" ]; then
+  elif [ -f "$win_dir/Xylring.exe" ]; then
     payload="$(mktemp -d "${TMPDIR:-/tmp}/gitclient-win.XXXXXX")"
-    inner="$payload/Git Client"
+    inner="$payload/Xylring"
     mkdir -p "$inner"
     for entry in "$win_dir"/*; do
       name="$(basename "$entry")"
@@ -120,7 +120,7 @@ if [ -d "$win_dir" ]; then
       esac
       cp -R "$entry" "$inner/"
     done
-    zip_name="Git Client ${version} windows-x64.zip"
+    zip_name="Xylring ${version} windows-x64.zip"
     if ! ditto -c -k --norsrc "$inner" "$staging/$zip_name"; then
       rm -rf "$payload"
       fail "无法压缩 Windows 文件。"
@@ -145,7 +145,7 @@ echo
 ls -lh "$PACKAGES"
 echo
 if [ "${#dmgs[@]}" -eq 1 ]; then
-  echo "macOS：把磁盘镜像发给 Apple 芯片的 Mac。对方打开后把 Git Client 拖进“应用程序”。"
+  echo "macOS：把磁盘镜像发给 Apple 芯片的 Mac。对方打开后把 Xylring 拖进“应用程序”。"
   echo "其他 Mac 第一次可能会被系统拦截：在访达里对应用按住 Control 点按，选择“打开”。"
 else
   echo "这次没有生成 macOS 磁盘镜像。"
@@ -155,7 +155,7 @@ if [ "$note_windows" = "installer" ]; then
   echo "Windows 11 x64：运行安装程序。它安装到当前用户，不需要管理员权限。"
   echo "第一次可能出现 SmartScreen 提示，选择“仍要运行”。"
 elif [ "$note_windows" = "zip" ]; then
-  echo "Windows 11 x64：解压后运行 Git Client.exe。这次没有安装程序。"
+  echo "Windows 11 x64：解压后运行 Xylring.exe。这次没有安装程序。"
   echo "装好 makensis 后重新双击本文件，即可改打安装包：brew install makensis"
 else
   echo "这次没有生成 Windows 包。"

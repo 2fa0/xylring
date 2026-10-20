@@ -179,7 +179,10 @@ func TestComparisonUIAndRenameDiff(t *testing.T) {
 	if tab.comparison == nil || len(tab.files) != 1 || tab.files[0].status != "R" || !tt.HasText("返回提交") {
 		t.Fatalf("Cmd-click comparison=%v files=%v err=%s", tab.comparison, tab.files, tab.detailErr)
 	}
-	awaitUpdates(t, updates, func() bool { return !tab.diffLoading })
+	click(t, tt, "改动")
+	click(t, tt, "R  旧文件.txt → 新文件.txt")
+	tt.Frame()
+	awaitUpdates(t, updates, func() bool { return !tab.diffLoading && tab.diff != nil })
 	if tab.diff == nil {
 		t.Fatalf("comparison diff missing: %s", tab.detailErr)
 	}

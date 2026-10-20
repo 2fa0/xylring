@@ -75,6 +75,8 @@ type repoTab struct {
 	searchScope                               string
 	wantFirst, wantNext                       bool
 	sidebarSection                            string
+	leftPane                                  string
+	diffOpen                                  bool
 	dirCache                                  map[string][]browserEntry
 	dirBusy                                   map[string]bool
 	browseCtx                                 context.Context

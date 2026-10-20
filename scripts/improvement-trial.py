@@ -88,7 +88,7 @@ def main():
         other = make_repo(repo)
         binary = temp / "gitclient-trial"
         subprocess.run(["go", "build", *BUILD_FLAGS, "-o", str(binary), "."],
-                       cwd=ROOT / "prototype", check=True)
+                       cwd=ROOT / "cmd" / "gitclient", check=True)
         env = dict(os.environ)
         capture = subprocess.run([str(binary), "--ui-capture", str(repo), str(out)], env=env)
         smooth_path = out / "smooth.json"
