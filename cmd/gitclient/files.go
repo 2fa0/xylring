@@ -84,100 +84,53 @@ func browserRows(t *repoTab, dir string, depth int) []browserRow {
 	return rows
 }
 
-func (a *app) sidebar(c *ui.Context) {
-	t := a.activeTab()
-	if t == nil {
-		return
+func (a *app) workspaceTree(c *ui.Context, t *repoTab) {
+	a.loadDirectory(t, "")
+	if t.dirBusy[""] {
+		ui.Text(c, "正在读取目录…")
 	}
-	ui.Column(c).Fill().Gap(6).Padding(6).Children(func() {
-		if t.sidebarSection == "" {
-			t.sidebarSection = "引用"
-		}
-		ui.Select(c.Key("sidebar-section"), &t.sidebarSection, []string{"引用", "文件", "Stash"}).Grow(1).MinWidth(0)
-		switch t.sidebarSection {
-		case "文件":
-			a.loadDirectory(t, "")
-			if t.dirBusy[""] {
-				ui.Text(c, "正在读取目录…")
+	rows := browserRows(t, "", 0)
+	ui.List(c.Key("workspace-tree"), &t.browserList, len(rows), func(i int) {
+		row := rows[i]
+		label := row.name
+		if row.dir {
+			if t.treeOpen[row.path] {
+				label = "▾ " + label
+			} else {
+				label = "▸ " + label
 			}
-			rows := browserRows(t, "", 0)
-			ui.List(c.Key("workspace-tree"), &t.browserList, len(rows), func(i int) {
-				row := rows[i]
-				label := row.name
-				if row.dir {
-					if t.treeOpen[row.path] {
-						label = "▾ " + label
-					} else {
-						label = "▸ " + label
-					}
-				}
-				e := ui.Button(c.Key(row.path), label).Tooltip(row.path).Margin(0, 0, 0, float32(row.depth*12))
-				if !row.dir {
-					e.ContextMenu(func(m *ui.Menu) {
-						if m.Item("文件历史").Chosen() {
-							a.openFileHistory(t, row.path)
-						}
-						if m.Item("查看当前文件").Chosen() {
-							a.openFile(t, "", row.path)
-						}
-						if m.Item("打开当前文件").Chosen() {
-							a.openCurrentFile(t, row.path)
-						}
-					})
-				}
-				if e.Clicked() {
-					if row.dir {
-						if t.treeOpen == nil {
-							t.treeOpen = map[string]bool{}
-						}
-						t.treeOpen[row.path] = !t.treeOpen[row.path]
-						if t.treeOpen[row.path] {
-							a.loadDirectory(t, row.path)
-						}
-					} else {
-						a.openFile(t, "", row.path)
-					}
-				}
-			}).Grow(1).MinHeight(0)
-			if t.browserErr != "" {
-				ui.Text(c, t.browserErr).TextColor(c.Theme().Danger)
-			}
-		case "引用":
-			a.refSidebar(c, t)
-		case "Stash":
-			a.stashSidebar(c, t)
 		}
-	})
-}
-
-func (a *app) refSidebar(c *ui.Context, t *repoTab) {
-	if t.refChoices == nil {
-		for _, list := range t.refs {
-			t.refChoices = append(t.refChoices, list...)
+		e := ui.Button(c.Key(row.path), label).Tooltip(row.path).Margin(0, 0, 0, float32(row.depth*12))
+		if !row.dir {
+			e.ContextMenu(func(m *ui.Menu) {
+				if m.Item("文件历史").Chosen() {
+					a.openFileHistory(t, row.path)
+				}
+				if m.Item("查看当前文件").Chosen() {
+					a.openFile(t, "", row.path)
+				}
+				if m.Item("打开当前文件").Chosen() {
+					a.openCurrentFile(t, row.path)
+				}
+			})
 		}
-		sortRefs(t.refChoices)
-	}
-	refs := t.refChoices
-	ui.List(c.Key("ref-list"), &t.refList, len(refs), func(i int) {
-		ref := refs[i]
-		label := "分支 " + ref.name
-		if ref.kind == refTag {
-			label = "标签 " + ref.name
-		} else if ref.kind == refRemote {
-			label = "远程 " + ref.name
-		}
-		e := ui.Button(c.Key(label), label).Tooltip(label)
 		if e.Clicked() {
-			prefix := "refs/heads/"
-			if ref.kind == refRemote {
-				prefix = "refs/remotes/"
-			} else if ref.kind == refTag {
-				prefix = "refs/tags/"
+			if row.dir {
+				if t.treeOpen == nil {
+					t.treeOpen = map[string]bool{}
+				}
+				t.treeOpen[row.path] = !t.treeOpen[row.path]
+				if t.treeOpen[row.path] {
+					a.loadDirectory(t, row.path)
+				}
+			} else {
+				a.openFile(t, "", row.path)
 			}
-			a.openRef(t, prefix+ref.name)
 		}
-		e.ContextMenu(func(m *ui.Menu) { a.refMenu(c, m, t, ref) })
 	}).Grow(1).MinHeight(0)
+	if t.browserErr != "" {
+		ui.Text(c, t.browserErr).TextColor(c.Theme().Danger)
+	}
 }
 
 func (a *app) openFileHistory(t *repoTab, path string) {
@@ -414,6 +367,7 @@ func (a *app) closeDetails(t *repoTab) {
 	t.detailNote = ""
 	t.shownKey = ""
 	t.detailHidden = true
+	t.diffOpen = false
 	t.selection.Clear()
 	if c := t.selectedCommit(); c != nil {
 		t.selection.Add(c.hash)

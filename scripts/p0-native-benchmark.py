@@ -65,7 +65,8 @@ def main():
     revision = git(ROOT, "rev-parse", "HEAD")
     dirty = bool(git(ROOT, "status", "--porcelain"))
     source_hash = hashlib.sha256()
-    sources = list((ROOT / "prototype").glob("*.go")) + [ROOT / "prototype" / "go.mod"]
+    sources = list((ROOT / "cmd" / "gitclient").glob("*.go"))
+    sources += [ROOT / "go.mod", ROOT / "go.sum"]
     sources += list((ROOT / "third_party" / "mygo-editor").glob("*.go"))
     for path in sorted(sources):
         source_hash.update(str(path.relative_to(ROOT)).encode())
@@ -76,7 +77,7 @@ def main():
         create_repository(repo, temp)
         binary = temp / "gitclient-bench"
         subprocess.run(["go", "build", *BUILD_FLAGS, "-o", str(binary), "."],
-                       cwd=ROOT / "prototype", check=True)
+                       cwd=ROOT / "cmd" / "gitclient", check=True)
         env = dict(os.environ, P0_SOAK_MINUTES=str(args.soak_minutes))
         app = subprocess.Popen([str(binary), "--p0-bench", str(repo), str(output)], env=env)
         awake = subprocess.Popen(["/usr/bin/caffeinate", "-d", "-i", "-u", "-w", str(app.pid)])

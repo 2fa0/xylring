@@ -38,7 +38,7 @@ type settings struct {
 }
 
 func defaultViewSettings() viewSettings {
-	return viewSettings{First: pageFirst, More: pageMore, OpenDetails: true, GraphStyle: "圆角", Colors: "#1f78b4,#33a02c,#e31a1c,#ff7f00,#6a3d9a,#b15928,#17becf,#bc80bd"}
+	return viewSettings{First: pageFirst, More: pageMore, OpenDetails: true, GraphStyle: "圆角", Colors: graphColorDefault}
 }
 
 var userConfigDir = os.UserConfigDir
@@ -102,10 +102,19 @@ func (a *app) options(path string) viewSettings {
 	if v.First <= 0 || v.More <= 0 {
 		return defaultViewSettings()
 	}
+	v.Colors = canonicalGraphColors(v.Colors)
 	if layout, ok := a.prefs.Layouts[path]; ok {
 		v.Layout = layout
 	}
 	return v
+}
+
+func canonicalGraphColors(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.EqualFold(s, graphColorLegacy) {
+		return graphColorDefault
+	}
+	return s
 }
 
 func parsePalette(s string) ([]ui.Color, error) {

@@ -346,11 +346,57 @@ func (a *app) refreshRefs(t *repoTab) {
 	}()
 }
 
+func (a *app) ensureWorktreeFiles(t *repoTab) {
+	if t.shownKey == "worktree" && (t.files != nil || t.detailLoading) {
+		return
+	}
+	if t.detailCancel != nil {
+		t.detailCancel()
+	}
+	if t.diffCancel != nil {
+		t.diffCancel()
+	}
+	t.detailGen++
+	t.diffGen++
+	t.diffOpen = false
+	t.fileSel = -1
+	t.fileApplied = -1
+	t.shownKey = "worktree"
+	t.files = nil
+	t.info = nil
+	t.diff = nil
+	t.detailErr = ""
+	t.detailNote = ""
+	t.detailLoading = true
+	t.detailStarted = time.Now()
+	gen, repoGen := t.detailGen, t.generation
+	path := t.path
+	include := t.options.IncludeUntracked
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.detailCancel = cancel
+	go func() {
+		defer cancel()
+		files, err := statusFiles(ctx, path, include)
+		a.post(func() {
+			if t.generation != repoGen || t.detailGen != gen {
+				return
+			}
+			t.detailLoading = false
+			if err != nil {
+				t.detailErr = err.Error()
+				return
+			}
+			t.files = files
+		})
+	}()
+}
+
 func (a *app) onCommitSelected(t *repoTab) {
 	key := t.selectionKey()
 	if key == t.shownKey && key != "" && (t.files != nil || t.detailLoading) {
 		return
 	}
+	t.diffOpen = false
 	if t.detailCancel != nil {
 		t.detailCancel()
 	}
@@ -438,19 +484,18 @@ func (a *app) onCommitSelected(t *repoTab) {
 			t.info = info
 			t.fileSel = -1
 			t.fileApplied = -1
-			if len(files) > 0 {
-				t.fileSel = 0
-				if t.resumeDetail == key && t.resumeFile != "" {
-					t.fileSel = -1
-					for i, f := range files {
-						if f.layer+":"+f.path == t.resumeFile {
-							t.fileSel = i
-							break
-						}
+			t.diffOpen = false
+			if t.resumeDetail == key && t.resumeFile != "" {
+				for i, f := range files {
+					if f.layer+":"+f.path == t.resumeFile {
+						t.fileSel = i
+						t.diffOpen = true
+						t.leftPane = "改动"
+						break
 					}
-					if t.fileSel < 0 {
-						t.detailNote = "原先阅读的文件已不在此改动中，请重新选择文件"
-					}
+				}
+				if t.fileSel < 0 {
+					t.detailNote = "原先阅读的文件已不在此改动中，请重新选择文件"
 				}
 			}
 		})

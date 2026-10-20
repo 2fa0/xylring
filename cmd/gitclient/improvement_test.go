@@ -21,6 +21,8 @@ func readingFixture() (*app, *repoTab) {
 	tab.selected, tab.commitApplied = 0, 0
 	tab.files = []fileChange{{status: "M", path: "file.go"}}
 	tab.fileSel, tab.fileApplied = 0, 0
+	tab.leftPane = "改动"
+	tab.diffOpen = true
 	tab.shownKey = tab.selectionKey()
 	var before, after strings.Builder
 	for i := 1; i <= 100; i++ {

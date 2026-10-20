@@ -1,1 +1,4 @@
 /release/
+/cmd/gitclient/build/
+/cmd/gitclient/.mygo/
+/cmd/gitclient/mygo_windows_*.syso
