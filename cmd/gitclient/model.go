@@ -22,6 +22,7 @@ type commit struct {
 	historyPath string
 	stash       string
 	nodeCol     int
+	nodeColor   int
 	segs        []seg
 }
 
@@ -90,7 +91,6 @@ type repoTab struct {
 	closedFolders                             map[string]bool
 	options                                   viewSettings
 	palette                                   []ui.Color
-	tableLayout                               ui.TableLayout
 	detailHidden                              bool
 	focusDiff, infoExpanded, showRef          bool
 	detailSplit, filePaneWidth, filePaneShown float32
@@ -389,7 +389,7 @@ func (t *repoTab) releaseHeavy() {
 	t.commitApplied = -1
 	t.fileSel = -1
 	t.fileApplied = -1
-	t.list = ui.ListState{}
+	t.list = ui.ListState{Columns: t.list.Columns}
 	t.fileList = ui.ListState{}
 	t.selection = ui.Selection[any]{}
 }
