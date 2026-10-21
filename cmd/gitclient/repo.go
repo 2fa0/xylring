@@ -157,8 +157,8 @@ func (a *app) reload(t *repoTab) {
 	t.cancelReads()
 	t.options = a.options(t.path)
 	t.palette, _ = parsePalette(t.options.Colors)
-	if t.tableLayout.Widths == nil {
-		t.tableLayout = t.options.Layout
+	if t.list.Columns.Widths == nil {
+		t.list.Columns = t.options.Layout
 	}
 	t.generation++
 	gen := t.generation

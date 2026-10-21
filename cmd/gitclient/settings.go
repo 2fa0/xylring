@@ -174,7 +174,6 @@ func (a *app) settingsModal(c *ui.Context) {
 					})
 					ui.Checkbox(c.Key("include-untracked"), &a.settingsView.IncludeUntracked, "显示未跟踪文件")
 					ui.Checkbox(c.Key("open-search-detail"), &a.settingsView.OpenDetails, "搜索跳转时自动打开详情")
-					ui.Select(c.Key("graph-style"), &a.settingsView.GraphStyle, []string{"圆角", "折线"})
 					ui.Text(c, "图谱颜色（#RRGGBB，以逗号分隔）")
 					ui.TextInput(c.Key("graph-colors"), &a.settingsView.Colors).Width(520)
 					ui.Checkbox(c.Key("hide-subject"), &a.settingsView.HideSubject, "隐藏描述 / 引用列")
@@ -182,7 +181,7 @@ func (a *app) settingsModal(c *ui.Context) {
 					ui.Checkbox(c.Key("hide-date"), &a.settingsView.HideDate, "隐藏日期列")
 					ui.Checkbox(c.Key("hide-author"), &a.settingsView.HideAuthor, "隐藏作者列")
 					ui.Checkbox(c.Key("hide-hash"), &a.settingsView.HideHash, "隐藏哈希列")
-					ui.Text(c, "列宽可在提交表头拖动调整。")
+					ui.Text(c, "拖动表头右侧分隔线调整列宽，双击自动适配内容。")
 				})
 			})
 			if a.settingsErr != "" {

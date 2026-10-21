@@ -98,12 +98,14 @@ func (t *repoTab) layoutStashes() {
 	}
 	if t.dirty > 0 && t.head != zeroHash {
 		t.graph.cols = append(t.graph.cols, t.head)
+		t.graph.colors = append(t.graph.colors, 0)
 	}
 	for i := range t.stashes {
 		node := t.stashes[i]
 		node.parents = node.parents[:min(1, len(node.parents))]
 		t.graph.add(&node)
 		t.stashes[i].nodeCol = node.nodeCol
+		t.stashes[i].nodeColor = node.nodeColor
 		t.stashes[i].segs = node.segs
 	}
 }

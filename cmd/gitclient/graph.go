@@ -2,20 +2,30 @@ package main
 
 // seg 是提交行里的一段图谱线。top/bot 表示线从行顶还是行中开始，到行中还是行底结束。
 type seg struct {
-	a, b int
-	top  bool
-	bot  bool
+	a, b  int
+	top   bool
+	bot   bool
+	color int
+	bend  uint8 // 1：S 曲线的下半行，2：下一行的上半行。
+}
+
+type graphBend struct {
+	a, b, color int
+	joins       bool
 }
 
 // graph 按 git log 从新到旧的顺序增量排泳道。
 // 已排过的提交不会因为后面追加新页而改列，这样分页加载时已经画出的线不跳动。
 type graph struct {
 	cols     [][20]byte
+	colors   []int
+	bends    []graphBend
 	maxLanes int
 }
 
 func (g *graph) add(c *commit) {
 	incoming := append([][20]byte(nil), g.cols...)
+	incomingColors := append([]int(nil), g.colors...)
 	node := -1
 	for i, h := range incoming {
 		if h == c.hash {
@@ -25,7 +35,9 @@ func (g *graph) add(c *commit) {
 	}
 	if node < 0 {
 		node = g.alloc()
+		g.colors[node] = g.freeColor(-1)
 	}
+	nodeColor := g.colors[node]
 	for i, h := range g.cols {
 		if h == c.hash {
 			g.cols[i] = zeroHash
@@ -33,6 +45,7 @@ func (g *graph) add(c *commit) {
 	}
 
 	parentCols := make([]int, len(c.parents))
+	parentJoins := make([]bool, len(c.parents))
 	for i, p := range c.parents {
 		parentCols[i] = -1
 		if p == zeroHash {
@@ -40,11 +53,17 @@ func (g *graph) add(c *commit) {
 		}
 		if j := indexHash(g.cols, p); j >= 0 {
 			parentCols[i] = j
+			parentJoins[i] = true
 			continue
 		}
 		dest := node
 		if i != 0 || g.cols[node] != zeroHash {
 			dest = g.alloc()
+		}
+		if i == 0 {
+			g.colors[dest] = nodeColor
+		} else {
+			g.colors[dest] = g.freeColor(nodeColor)
 		}
 		g.cols[dest] = p
 		parentCols[i] = dest
@@ -57,23 +76,43 @@ func (g *graph) add(c *commit) {
 	}
 
 	var segs []seg
+	for _, bend := range g.bends {
+		segs = append(segs, seg{a: bend.a, b: bend.b, top: true, color: bend.color, bend: 2})
+	}
 	for i, h := range incoming {
 		if h == zeroHash {
 			continue
 		}
-		if i == node {
-			segs = append(segs, seg{a: i, b: i, top: true, bot: false})
-			continue
+		top := true
+		for _, bend := range g.bends {
+			if bend.b == i && !bend.joins {
+				top = false
+				break
+			}
 		}
-		segs = append(segs, seg{a: i, b: i, top: true, bot: true})
+		if i != node || top {
+			segs = append(segs, seg{a: i, b: i, top: top, bot: i != node, color: incomingColors[i]})
+		}
 	}
-	for _, pc := range parentCols {
+	g.bends = nil
+	for i, pc := range parentCols {
 		if pc < 0 {
 			continue
 		}
-		segs = append(segs, seg{a: node, b: pc, top: false, bot: true})
+		color := g.colors[pc]
+		if i == 0 {
+			// 第一父链汇回已有链前，连线仍属于当前链。
+			color = nodeColor
+		}
+		s := seg{a: node, b: pc, bot: true, color: color}
+		if node != pc {
+			s.bend = 1
+			g.bends = append(g.bends, graphBend{a: node, b: pc, color: color, joins: parentJoins[i]})
+		}
+		segs = append(segs, s)
 	}
 	c.nodeCol = node
+	c.nodeColor = nodeColor
 	c.segs = segs
 }
 
@@ -84,7 +123,27 @@ func (g *graph) alloc() int {
 		}
 	}
 	g.cols = append(g.cols, zeroHash)
+	g.colors = append(g.colors, 0)
 	return len(g.cols) - 1
+}
+
+// 颜色跟随第一父链；新链从未被在途链占用的颜色中分配，与物理列无关。
+func (g *graph) freeColor(nodeColor int) int {
+	for color := 0; ; color++ {
+		if color == nodeColor {
+			continue
+		}
+		used := false
+		for i, hash := range g.cols {
+			if hash != zeroHash && g.colors[i] == color {
+				used = true
+				break
+			}
+		}
+		if !used {
+			return color
+		}
+	}
 }
 
 func (g *graph) lanes() int {

@@ -346,7 +346,7 @@ func TestP0SessionSettingsAndTabOrder(t *testing.T) {
 	if a.active != 1 || a.tabs[1] != tab {
 		t.Fatal("reorder lost active tab")
 	}
-	tab.tableLayout = ui.TableLayout{Widths: map[string]float32{"author": 173}}
+	tab.list.Columns = ui.TableLayout{Widths: map[string]float32{"author": 173}}
 	a.persist = true
 	a.saveSession()
 	a.persist = false
@@ -358,7 +358,7 @@ func TestP0SessionSettingsAndTabOrder(t *testing.T) {
 		}
 	})
 	awaitUpdates(t, updates, func() bool { return len(b.tabs) == 2 && b.activeTab().loaded })
-	if b.active != 1 || b.activeTab().selectedCommit() == nil || b.activeTab().selectedCommit().hash != want || b.activeTab().query != "message" || b.activeTab().tableLayout.Widths["author"] != 173 {
+	if b.active != 1 || b.activeTab().selectedCommit() == nil || b.activeTab().selectedCommit().hash != want || b.activeTab().query != "message" || b.activeTab().list.Columns.Widths["author"] != 173 {
 		t.Fatal("session mismatch")
 	}
 	a.prefs.View.First = 45

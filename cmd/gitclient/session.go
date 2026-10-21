@@ -38,11 +38,11 @@ func (a *app) saveSession() {
 	}
 	// TableLayout holds only column preferences, never row data.
 	for _, t := range a.tabs {
-		if len(t.tableLayout.Widths) > 0 {
+		if len(t.list.Columns.Widths) > 0 {
 			if a.prefs.Layouts == nil {
 				a.prefs.Layouts = map[string]ui.TableLayout{}
 			}
-			a.prefs.Layouts[t.path] = t.tableLayout
+			a.prefs.Layouts[t.path] = t.list.Columns
 		}
 	}
 	if path, err := configFile("settings.json"); err == nil {

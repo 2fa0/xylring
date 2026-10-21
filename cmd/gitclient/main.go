@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	laneGap     = 14
+	laneGap     = 18
 	lanePad     = 10
-	graphStroke = 1.75
+	graphStroke = 2.5
 	// 表格单元格会 Clip，并把内容垫进 Space(1.5)/Space(2.5)。
 	// 图谱要画进这块内边距，线才能接到下一行的格线上。
 	graphCellPadY = 1.5
@@ -620,18 +620,23 @@ func (a *app) commitPane(c *ui.Context) {
 	if !tab.options.HideHash {
 		columns = append(columns, ui.TableColumn{ID: "hash", Title: "哈希", Width: 85, MinWidth: 70})
 	}
-	tab.list.Columns = tab.tableLayout
 	if tab.infoExpanded && tab.comparison == nil {
 		a.commitSummary(c, tab)
 	}
+	var pointerY float32
+	var pointerOver bool
+	rowHovered := func(r ui.Rect) bool {
+		return pointerOver && pointerY >= r.Y && pointerY < r.Y+r.H
+	}
 	table := ui.Table(c.Key(fmt.Sprintf("commits-%d", tab.id)), &tab.list, columns, tab.rows(), func(row, col int) {
-		a.commitCell(c, tab, row, columns[col].ID)
+		a.commitCell(c, tab, row, columns[col].ID, rowHovered)
 	}).Grow(1).MinHeight(0)
+	_, y, over := table.PointerPosition()
+	pointerY, pointerOver = table.Bounds().Y+y, over
 	if tab.detailHidden && table.Clicked() {
 		tab.detailHidden = false
 		a.onCommitSelected(tab)
 	}
-	tab.tableLayout = tab.list.Columns
 	if tab.rows() == 0 && !tab.loading {
 		msg := "这个仓库还没有提交"
 		if tab.searchText != "" {
@@ -665,22 +670,40 @@ func (a *app) commitPane(c *ui.Context) {
 	}
 }
 
-func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string) {
+func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowHovered func(ui.Rect) bool) {
 	t := c.Theme()
 	ci := tab.rowCommit(i)
 	item := tab.rowData(i)
+	var key any = "dirty"
+	if item != nil {
+		key = item.hash
+	}
+	selected := tab.selection.Has(key)
+	muted := t.TextMuted
+	if selected {
+		muted = t.AccentText
+	}
 	if column == "graph" {
 		padX, padY := c.Theme().Space(graphCellPadX), c.Theme().Space(graphCellPadY)
+		background := t.Background
+		if selected {
+			background = t.Accent
+		}
+		hasRefs := item != nil && (len(tab.refs[item.hash]) > 0 || item.hash == tab.head)
 		ui.Box(c).Grow(1).MinHeight(28).AlignSelf(ui.Stretch).ContextMenu(func(m *ui.Menu) {
 			a.commitMenu(c, m, tab, i)
 		}).Draw(func(p *ui.Painter, r ui.Rect) {
 			// 画进单元格内边距，上下缘与相邻行相接。单元格会裁掉超出的部分。
 			full := ui.Rect{X: r.X - padX, Y: r.Y - padY, W: r.W + padX*2, H: r.H + padY*2}
+			bg := background
+			if !tab.selection.Has(key) && rowHovered(full) {
+				bg = t.SurfaceHover
+			}
 			if item == nil {
-				drawDirty(p, full, tab)
+				drawDirty(p, full, tab, bg)
 				return
 			}
-			paintCommit(p, full, item, ci == 0 && tab.dirty > 0, tab.options.GraphStyle, tab.palette)
+			paintCommit(p, full, item, ci == 0 && tab.dirty > 0, tab.palette, bg, hasRefs)
 		})
 		return
 	}
@@ -696,8 +719,12 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string) {
 		commit := *item
 		switch column {
 		case "subject":
+			color := graphColor(commit.nodeColor, tab.palette)
+			if selected {
+				color = t.AccentText
+			}
 			if commit.hash == tab.head && tab.head != zeroHash {
-				ui.Text(c, "HEAD").TextColor(t.Success).Shrink(0)
+				ui.Text(c, "HEAD").TextColor(color).Background(color.Alpha(0.12)).Padding(2, 6).Radius(4).Shrink(0)
 			}
 			for j, ref := range tab.refs[commit.hash] {
 				if j == 4 {
@@ -706,9 +733,9 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string) {
 				}
 				label := ref.name
 				if ref.kind == refTag {
-					label = "tag " + label
+					label = "🏷 " + label
 				}
-				ui.Text(c, label).SingleLine().Shrink(0).TextColor(t.Success).ContextMenu(func(m *ui.Menu) { a.refMenu(c, m, tab, ref) })
+				ui.Text(c, label).SingleLine().Shrink(0).TextColor(color).Background(color.Alpha(0.12)).Padding(2, 6).Radius(4).ContextMenu(func(m *ui.Menu) { a.refMenu(c, m, tab, ref) })
 			}
 
 			text := commit.subject
@@ -719,15 +746,21 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string) {
 				text = "（无说明）"
 			}
 			e := ui.Text(c, text).SingleLine().Grow(1).MinWidth(0)
+			if strings.HasPrefix(commit.subject, "Merge branch") || strings.HasPrefix(commit.subject, "merge branch dev into") {
+				e.TextColor(muted)
+			}
 			if tab.searchText != "" || (tab.query != "" && ci >= 0 && tab.match(ci, strings.ToLower(tab.query))) {
-				e.Background(t.Surface).Bold()
+				e.Bold()
+				if !selected {
+					e.Background(t.Surface)
+				}
 			}
 		case "date":
-			ui.Text(c, commit.whenText()).SingleLine().TextColor(t.TextMuted)
+			ui.Text(c, commit.whenText()).SingleLine().TextColor(muted)
 		case "author":
-			ui.Text(c, commit.author).SingleLine().TextColor(t.TextMuted)
+			ui.Text(c, commit.author).SingleLine().TextColor(muted)
 		case "hash":
-			ui.Text(c, shortHash(commit.hash)).Font("monospace").SingleLine().TextColor(t.TextMuted)
+			ui.Text(c, shortHash(commit.hash)).Font("monospace").SingleLine().TextColor(muted)
 		}
 	})
 }
@@ -1071,70 +1104,84 @@ func laneColor(col int) ui.Color {
 	return laneColors[col%len(laneColors)]
 }
 
-func drawCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool) {
-	paintCommit(p, r, c, contFromTop, "圆角", nil)
+func graphColor(chain int, palette []ui.Color) ui.Color {
+	if len(palette) > 0 {
+		return palette[max(0, chain)%len(palette)]
+	}
+	return laneColor(chain)
 }
 
-func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, style string, palette []ui.Color) {
-	colorAt := func(col int) ui.Color {
-		if len(palette) > 0 {
-			return palette[max(0, col)%len(palette)]
-		}
-		return laneColor(col)
-	}
+func drawCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool) {
+	paintCommit(p, r, c, contFromTop, nil, ui.RGB(255, 255, 255), false)
+}
+
+func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette []ui.Color, background ui.Color, hasRefs bool) {
 	mid := r.Y + r.H/2
-	for _, s := range c.segs {
-		y0, y1 := r.Y, r.Y+r.H
-		if !s.top {
-			y0 = mid
-		} else {
-			y0--
+	// 长泳道在下，短曲线带背景色衬底跨过泳道，最后再画节点。
+	for _, bends := range []bool{false, true} {
+		for _, s := range c.segs {
+			if (s.bend != 0) != bends {
+				continue
+			}
+			path := lanePath(r, s)
+			if bends {
+				p.StrokePath(&path, graphStroke+3, background)
+			}
+			p.StrokePath(&path, graphStroke, graphColor(s.color, palette))
 		}
-		if !s.bot {
-			y1 = mid
-		} else {
-			y1++
-		}
-		// 线色跟着它进入的泳道，这样下一行同一列是同一种颜色。
-		strokeLane(p, laneCenter(r, s.a), y0, laneCenter(r, s.b), y1, colorAt(s.b), style != "折线")
 	}
 	if contFromTop {
 		x := laneCenter(r, c.nodeCol)
-		p.Line(x, r.Y-1, x, mid, graphStroke, colorAt(c.nodeCol))
+		p.Line(x, r.Y-1, x, mid, graphStroke, graphColor(c.nodeColor, palette))
 	}
-	var node ui.Path
-	node.Circle(laneCenter(r, c.nodeCol), mid, 3.75)
-	p.FillPath(&node, colorAt(c.nodeCol))
+	radius := float32(4.5)
+	if hasRefs {
+		radius = 5.5
+	}
+	paintGraphNode(p, laneCenter(r, c.nodeCol), mid, radius, graphColor(c.nodeColor, palette), background, len(c.parents) > 1)
 }
 
-// strokeLane 在两端沿泳道竖直进出，再弯向目标列。斜切的贝塞尔会在节点旁断开。
-func strokeLane(p *ui.Painter, x0, y0, x1, y1 float32, color ui.Color, rounded bool) {
-	if x0 == x1 || abs32(x0-x1) < 0.5 {
-		p.Line(x0, y0, x1, y1, graphStroke, color)
-		return
-	}
-	if !rounded {
-		mid := (y0 + y1) / 2
-		p.Line(x0, y0, x0, mid, graphStroke, color)
-		p.Line(x0, mid, x1, mid, graphStroke, color)
-		p.Line(x1, mid, x1, y1, graphStroke, color)
-		return
-	}
+// 每次换道用一个行高的三次贝塞尔。两行分别画 t=0..0.5、0.5..1，
+// 行边界处位置和切线相同，节点处则沿泳道竖直进出，没有水平线段。
+func lanePath(r ui.Rect, s seg) ui.Path {
+	x0, x1 := laneCenter(r, s.a), laneCenter(r, s.b)
+	mid, bottom := r.Y+r.H/2, r.Y+r.H
 	var path ui.Path
-	path.MoveTo(x0, y0)
-	dy := y1 - y0
-	path.CubeTo(x0, y0+dy*0.65, x1, y1-dy*0.65, x1, y1)
-	p.StrokePath(&path, graphStroke, color)
-}
-
-func abs32(v float32) float32 {
-	if v < 0 {
-		return -v
+	switch s.bend {
+	case 1:
+		path.MoveTo(x0, mid)
+		path.CubeTo(x0, mid+r.H/4, x0+(x1-x0)/4, bottom-r.H/8, (x0+x1)/2, bottom)
+	case 2:
+		path.MoveTo((x0+x1)/2, r.Y)
+		path.CubeTo(x1-(x1-x0)/4, r.Y+r.H/8, x1, r.Y+r.H/4, x1, mid)
+	default:
+		y0, y1 := mid, mid
+		if s.top {
+			y0 = r.Y - 1
+		}
+		if s.bot {
+			y1 = bottom + 1
+		}
+		path.MoveTo(x0, y0).LineTo(x1, y1)
 	}
-	return v
+	return path
 }
 
-func drawDirty(p *ui.Painter, r ui.Rect, tab *repoTab) {
+func paintGraphNode(p *ui.Painter, x, y, radius float32, color, background ui.Color, hollow bool) {
+	var halo ui.Path
+	halo.Circle(x, y, radius+2)
+	p.FillPath(&halo, background)
+	var node ui.Path
+	if hollow {
+		node.Circle(x, y, radius-1)
+		p.StrokePath(&node, 2, color)
+	} else {
+		node.Circle(x, y, radius)
+		p.FillPath(&node, color)
+	}
+}
+
+func drawDirty(p *ui.Painter, r ui.Rect, tab *repoTab, background ui.Color) {
 	col := 0
 	if len(tab.commits) > 0 {
 		col = tab.commits[0].nodeCol
@@ -1143,9 +1190,7 @@ func drawDirty(p *ui.Painter, r ui.Rect, tab *repoTab) {
 	x := laneCenter(r, col)
 	mid := r.Y + r.H/2
 	p.Line(x, mid, x, r.Y+r.H+1, graphStroke, color)
-	var node ui.Path
-	node.Circle(x, mid, 3.75)
-	p.FillPath(&node, color)
+	paintGraphNode(p, x, mid, 4.5, color, background, false)
 }
 
 // Filled only by the p0bench build for repeatable native process measurements.
