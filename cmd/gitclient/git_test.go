@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -93,93 +90,6 @@ func TestGitQueueCancellation(t *testing.T) {
 	}
 }
 
-func importTestHistory(t *testing.T, dir string, n int) {
-	t.Helper()
-	var input strings.Builder
-	for i := 0; i < n; i++ {
-		msg := fmt.Sprintf("commit %d", i)
-		fmt.Fprintf(&input, "commit refs/heads/main\ncommitter Test <test@example.com> %d +0000\ndata %d\n%s\n\n", 1700000000+i, len(msg), msg)
-	}
-	cmd := exec.Command("git", "fast-import", "--quiet")
-	cmd.Dir = dir
-	cmd.Stdin = strings.NewReader(input.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fast-import: %v\n%s", err, out)
-	}
-}
-
-func TestBranchFilteringAndRefResolution(t *testing.T) {
-	dir, git := initTestRepo(t)
-	git("commit", "--allow-empty", "-m", "base")
-	git("checkout", "-b", "feature")
-	git("commit", "--allow-empty", "-m", "feature-only")
-	feature, err := resolveCommit(context.Background(), dir, "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	git("checkout", "main")
-	git("commit", "--allow-empty", "-m", "main-only")
-	git("tag", "-a", "release", "-m", "release", "feature")
-	for _, ref := range []string{"feature", "release", shortHash(feature)} {
-		got, err := resolveCommit(context.Background(), dir, ref)
-		if err != nil || got != feature {
-			t.Fatalf("resolve %s: %x %v", ref, got, err)
-		}
-	}
-	for _, ref := range []string{"--all", "missing-ref", "HEAD^{tree}"} {
-		if _, err := resolveCommit(context.Background(), dir, ref); err == nil {
-			t.Fatalf("accepted non-commit ref %q", ref)
-		}
-	}
-	for _, tc := range []struct {
-		refs []string
-		want string
-		n    int
-	}{
-		{[]string{"HEAD"}, "main-only", 2},
-		{[]string{"refs/heads/feature"}, "feature-only", 2},
-		{[]string{"refs/heads/main", "refs/heads/feature"}, "", 3},
-	} {
-		var commits []commit
-		err := streamHistory(context.Background(), dir, 0, pageFirst, tc.refs, func(c commit) error {
-			commits = append(commits, c)
-			return nil
-		})
-		if err != nil || len(commits) != tc.n {
-			t.Fatalf("refs %v: commits=%v err=%v", tc.refs, commits, err)
-		}
-		if tc.want != "" && commits[0].subject != tc.want {
-			t.Fatalf("refs %v: newest %s", tc.refs, commits[0].subject)
-		}
-	}
-	if branch := strings.TrimSpace(string(git("symbolic-ref", "--short", "HEAD"))); branch != "main" {
-		t.Fatalf("filter checked out %s", branch)
-	}
-	git("checkout", "--orphan", "empty")
-	if err := streamHistory(context.Background(), dir, 0, 10, []string{"HEAD"}, func(commit) error {
-		t.Fatal("unborn current branch returned a commit")
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestCompleteCommitInfo(t *testing.T) {
-	dir, git := initTestRepo(t)
-	git("commit", "--allow-empty", "--author", "Writer <writer@example.com>", "-m", "标题\n\n多行正文\n第二行")
-	hash, err := resolveCommit(context.Background(), dir, "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := loadCommitInfo(context.Background(), dir, hashHex(hash))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.author != "Writer" || info.authorEmail != "writer@example.com" || info.committer != "Test" || info.committerEmail != "test@example.com" || info.authorDate == "" || info.committerDate == "" || info.message != "标题\n\n多行正文\n第二行" {
-		t.Fatalf("details: %+v", info)
-	}
-}
-
 func TestParseCommitRecord(t *testing.T) {
 	rec := "0123456789abcdef0123456789abcdef01234567\x1f\x1fAda\x1f1700000000\x1f初始"
 	c, err := parseCommitRecord(rec)
@@ -199,111 +109,303 @@ func TestParseCommitRecord(t *testing.T) {
 	}
 }
 
-func TestParseNameStatusAndPorcelain(t *testing.T) {
-	files := parseNameStatusZ([]byte("R050\x00说明.txt\x00文档.txt\x00A\x00sub/a.go\x00"))
-	if len(files) != 2 || files[0].status != "R" || files[0].oldPath != "说明.txt" || files[0].path != "文档.txt" {
-		t.Fatalf("name-status %+v", files)
+func TestParseRefsPlacesAnnotatedTagOnCommit(t *testing.T) {
+	commitHash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tagObject := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	raw := []byte(tagObject + " refs/tags/v1 " + commitHash + "\n" + commitHash + " refs/heads/main\n")
+	refs := parseRefs(raw)
+	got := refs[mustHash(t, commitHash)]
+	if len(got) != 2 || got[0].kind != refBranch || got[0].name != "main" || got[1].kind != refTag || got[1].name != "v1" {
+		t.Fatalf("refs %+v", got)
 	}
-	if files[1].status != "A" || files[1].path != "sub/a.go" {
-		t.Fatalf("add %+v", files[1])
-	}
-	st := parsePorcelainZ([]byte(" M 文档.txt\x00R  终稿.txt\x00文档.txt\x00"))
-	if len(st) != 2 {
-		t.Fatalf("porcelain %+v", st)
-	}
-	if st[0].status != "M" || st[0].path != "文档.txt" || st[0].oldPath != "" {
-		t.Fatalf("mod %+v", st[0])
-	}
-	if st[1].status != "R" || st[1].path != "终稿.txt" || st[1].oldPath != "文档.txt" {
-		t.Fatalf("rename %+v", st[1])
+	if _, ok := refs[mustHash(t, tagObject)]; ok {
+		t.Fatal("annotated tag stayed on the tag object")
 	}
 }
 
-func TestGitRoundTrip(t *testing.T) {
+func mustHash(t *testing.T, s string) [20]byte {
+	t.Helper()
+	h, err := parseHash(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+func initGitDir(t *testing.T, dir string) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip(err)
 	}
-	dir := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), dir, "init", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindGitRepos(t *testing.T) {
+	root := t.TempDir()
+	alpha := filepath.Join(root, "alpha")
+	beta := filepath.Join(root, "beta")
+	nested := filepath.Join(alpha, "lib", "nested")
+	junk := filepath.Join(root, "node_modules", "pkg")
+	initGitDir(t, alpha)
+	initGitDir(t, beta)
+	initGitDir(t, nested)
+	initGitDir(t, junk)
+
+	got, err := findGitRepos(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{alpha, nested, beta}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v want %v", got, want)
 		}
 	}
-	git("init", "-b", "main")
-	git("config", "user.email", "test@example.com")
-	git("config", "user.name", "Test")
-	git("config", "commit.gpgsign", "false")
-	if err := os.WriteFile(filepath.Join(dir, "说明.txt"), []byte("一\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "说明.txt")
-	git("commit", "-m", "初始")
-	if err := os.WriteFile(filepath.Join(dir, "说明.txt"), []byte("二\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "sub", "a.go"), []byte("package sub\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "-A")
-	git("commit", "-m", "修改并新增")
-	git("mv", "说明.txt", "文档.txt")
-	git("commit", "-m", "重命名")
 
-	root, err := repoRoot(ctx, dir)
-	wantRoot, _ := filepath.EvalSymlinks(dir)
-	gotRoot, _ := filepath.EvalSymlinks(root)
-	if err != nil || gotRoot != wantRoot {
-		t.Fatalf("root %q err %v", root, err)
-	}
-	var got []commit
-	if err := streamCommits(ctx, dir, 0, 10, func(c commit) error {
-		got = append(got, c)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 3 || got[0].subject != "重命名" || got[2].subject != "初始" || len(got[2].parents) != 0 {
-		t.Fatalf("%d commits, newest %q oldest parents %d", len(got), got[0].subject, len(got[2].parents))
-	}
-	files, err := commitFiles(ctx, dir, hashHex(got[0].hash))
+	got, err = findGitRepos(context.Background(), alpha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0].status != "R" || files[0].oldPath != "说明.txt" || files[0].path != "文档.txt" {
-		t.Fatalf("rename diff %+v", files)
+	want = []string{alpha, nested}
+	if len(got) != len(want) {
+		t.Fatalf("alpha: got %v want %v", got, want)
 	}
-	oldb, note, err := readBlob(ctx, dir, hashHex(got[0].parents[0]), "说明.txt")
-	if err != nil || note != "" || !bytes.Equal(oldb, []byte("二\n")) {
-		t.Fatalf("blob %q note %q err %v", oldb, note, err)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("alpha: got %v want %v", got, want)
+		}
 	}
-	meta, err := loadMeta(ctx, dir)
+}
+
+func TestFindGitReposFallback(t *testing.T) {
+	dir, _ := initTestRepo(t)
+	src := filepath.Join(dir, "src")
+	if err := os.Mkdir(src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := findGitRepos(context.Background(), src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.branch != "main" || meta.dirty != 0 || meta.head != got[0].hash {
-		t.Fatalf("meta %+v", meta)
-	}
-	if refs := meta.refs[meta.head]; len(refs) != 1 || refs[0].name != "main" {
-		t.Fatalf("refs %+v", refs)
-	}
-
-	var page []commit
-	if err := streamCommits(ctx, dir, 2, 2, func(c commit) error {
-		page = append(page, c)
-		return nil
-	}); err != nil {
+	want, err := repoRoot(context.Background(), src)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page) != 1 || page[0].hash != got[2].hash {
-		t.Fatalf("skip page %+v", page)
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %v want [%s]", got, want)
+	}
+}
+
+func TestFindGitReposNone(t *testing.T) {
+	_, err := findGitRepos(context.Background(), t.TempDir())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestOpenPathPresentsChoices(t *testing.T) {
+	root := t.TempDir()
+	alpha := filepath.Join(root, "alpha")
+	beta := filepath.Join(root, "beta")
+	initGitDir(t, alpha)
+	initGitDir(t, beta)
+	ready := make(chan func(), 16)
+	a := &app{
+		persist:  false,
+		dispatch: func(fn func()) { ready <- fn },
+	}
+	a.openPath(root)
+	select {
+	case fn := <-ready:
+		fn()
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
+	}
+	defer func() {
+		for _, tab := range a.tabs {
+			tab.cancel()
+		}
+	}()
+	if len(a.tabs) != 1 {
+		t.Fatalf("tabs=%d", len(a.tabs))
+	}
+	if len(a.found) != 2 {
+		t.Fatalf("found=%v", a.found)
+	}
+	if a.foundFrom != root {
+		t.Fatalf("foundFrom=%q want %q", a.foundFrom, root)
+	}
+}
+
+func TestOpenPathSingleOpens(t *testing.T) {
+	dir, _ := initTestRepo(t)
+	ready := make(chan func(), 16)
+	a := &app{
+		persist:  false,
+		dispatch: func(fn func()) { ready <- fn },
+	}
+	a.openPath(dir)
+	select {
+	case fn := <-ready:
+		fn()
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
+	}
+	defer func() {
+		for _, tab := range a.tabs {
+			tab.cancel()
+		}
+	}()
+	if len(a.found) != 0 || len(a.tabs) != 1 || a.tabs[0].path != dir {
+		t.Fatalf("found=%v tabs=%d", a.found, len(a.tabs))
+	}
+	if a.foundFrom != dir {
+		t.Fatalf("foundFrom=%q want %q", a.foundFrom, dir)
+	}
+}
+
+func TestRefreshDiscoversNestedRepo(t *testing.T) {
+	root := t.TempDir()
+	alpha := filepath.Join(root, "alpha")
+	initGitDir(t, alpha)
+	ready := make(chan func(), 16)
+	a := &app{
+		persist:  false,
+		dispatch: func(fn func()) { ready <- fn },
+	}
+	a.openPath(root)
+	select {
+	case fn := <-ready:
+		fn()
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
+	}
+	defer func() {
+		for _, tab := range a.tabs {
+			tab.cancel()
+		}
+	}()
+	if len(a.found) != 0 || a.foundFrom != root || len(a.tabs) != 1 {
+		t.Fatalf("found=%v from=%q tabs=%d", a.found, a.foundFrom, len(a.tabs))
+	}
+	initGitDir(t, filepath.Join(root, "beta"))
+	a.refresh(a.tabs[0])
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case fn := <-ready:
+			fn()
+		case <-deadline:
+			t.Fatalf("found=%v", a.found)
+		}
+		if len(a.found) == 2 {
+			break
+		}
+	}
+	if len(a.tabs) != 1 {
+		t.Fatalf("tabs=%d", len(a.tabs))
+	}
+}
+
+func TestRefreshDiscoversNestedUnderOpenRepo(t *testing.T) {
+	dir, _ := initTestRepo(t)
+	ready := make(chan func(), 16)
+	tab := newTab(1, dir)
+	tab.loaded = true
+	a := &app{
+		tabs:     []*repoTab{tab},
+		persist:  false,
+		dispatch: func(fn func()) { ready <- fn },
+	}
+	initGitDir(t, filepath.Join(dir, "lib", "nested"))
+	a.refresh(tab)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case fn := <-ready:
+			fn()
+		case <-deadline:
+			t.Fatalf("found=%v from=%q", a.found, a.foundFrom)
+		}
+		if len(a.found) == 2 {
+			break
+		}
+	}
+	if a.foundFrom != dir {
+		t.Fatalf("foundFrom=%q want %q", a.foundFrom, dir)
+	}
+	if len(a.tabs) != 1 {
+		t.Fatalf("tabs=%d", len(a.tabs))
+	}
+}
+
+func TestCommitFiles(t *testing.T) {
+	dir, git := initTestRepo(t)
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600)
+	git("add", "a.txt")
+	git("commit", "-m", "initial")
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o600)
+	git("add", "a.txt")
+	git("commit", "-m", "change")
+	git("checkout", "-b", "feature")
+	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("feat\n"), 0o600)
+	git("add", "b.txt")
+	git("commit", "-m", "feature")
+	git("checkout", "main")
+	git("merge", "--no-ff", "-m", "merge feature", "feature")
+
+	ctx := context.Background()
+	initial, err := resolveCommit(ctx, dir, "HEAD~2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	change, err := resolveCommit(ctx, dir, "HEAD~1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge, err := resolveCommit(ctx, dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commits []commit
+	err = streamCommits(ctx, dir, 0, pageFirst, func(c commit) error {
+		commits = append(commits, c)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byHash := map[[20]byte]commit{}
+	for _, c := range commits {
+		byHash[c.hash] = c
+	}
+	root, err := commitFiles(ctx, dir, initial, byHash[initial].parents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(root) != 1 || root[0].status != "A" || root[0].path != "a.txt" {
+		t.Fatalf("root %+v", root)
+	}
+	mid, err := commitFiles(ctx, dir, change, byHash[change].parents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mid) != 1 || mid[0].status != "M" || mid[0].path != "a.txt" {
+		t.Fatalf("change %+v", mid)
+	}
+	merged, err := commitFiles(ctx, dir, merge, byHash[merge].parents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged) != 1 || merged[0].status != "A" || merged[0].path != "b.txt" {
+		t.Fatalf("merge first-parent %+v", merged)
 	}
 }

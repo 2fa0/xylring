@@ -4,30 +4,23 @@ import (
 	"fmt"
 	"image/png"
 	"os"
-	"slices"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 )
 
 func TestGraphLinesMeetAcrossRows(t *testing.T) {
-	for _, style := range []string{"圆角", "折线"} {
-		t.Run(style, func(t *testing.T) {
-			for _, dark := range []bool{false, true} {
-				t.Run(fmt.Sprintf("dark=%t", dark), func(t *testing.T) {
-					testGraphLinesMeetAcrossRows(t, style, dark)
-				})
-			}
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%t", dark), func(t *testing.T) {
+			testGraphLinesMeetAcrossRows(t, dark)
 		})
 	}
 }
 
-func testGraphLinesMeetAcrossRows(t *testing.T, style string, dark bool) {
+func testGraphLinesMeetAcrossRows(t *testing.T, dark bool) {
 	tab := newTab(1, "/tmp/graph-gap")
 	tab.loaded = true
 	tab.branch = "main"
-	tab.options = defaultViewSettings()
-	tab.options.GraphStyle = style
 	tab.commits = []commit{
 		{hash: hashN(1), parents: [][20]byte{hashN(2), hashN(3)}, subject: "merge", author: "A", when: 1700000000},
 		{hash: hashN(2), parents: [][20]byte{hashN(4)}, subject: "left", author: "A", when: 1700000000},
@@ -38,16 +31,13 @@ func testGraphLinesMeetAcrossRows(t *testing.T, style string, dark bool) {
 		tab.graph.add(&tab.commits[i])
 	}
 	tab.head = tab.commits[0].hash
-	tab.selected, tab.commitApplied = 0, 0
-	a := &app{split: 40, filePane: 200, tabs: []*repoTab{tab}}
+	tab.selected = 0
+	a := &app{tabs: []*repoTab{tab}}
 	tt := ui.NewTester(a.view, 900, 500)
 	tt.SetDark(dark)
 	tt.Frame()
 	img := tt.Image()
 	if path := os.Getenv("GRAPH_PNG"); path != "" {
-		if style == "折线" {
-			path += ".legacy.png"
-		}
 		if dark {
 			path += ".dark.png"
 		}
@@ -135,22 +125,11 @@ func TestGraphLaneBendsAreSmooth(t *testing.T) {
 	}
 }
 
-func TestCanonicalGraphColorsKeepsCustomPalette(t *testing.T) {
-	if canonicalGraphColors(graphColorLegacy) != graphColorDefault {
-		t.Fatal("旧默认色没有迁移")
-	}
-	custom := "#112233,#445566"
-	if canonicalGraphColors(custom) != custom {
-		t.Fatal("自定义颜色被覆盖")
-	}
-}
-
 func TestGraphReleaseRendering(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		t.Run(fmt.Sprintf("dark=%t", dark), func(t *testing.T) {
 			tab := newTab(1, "/tmp/release-graph")
 			tab.loaded, tab.branch = true, "master"
-			tab.options = defaultViewSettings()
 			tab.commits = releaseHistory()
 			tab.refs = map[[20]byte][]refInfo{}
 			for i := range tab.commits {
@@ -162,22 +141,13 @@ func TestGraphReleaseRendering(t *testing.T) {
 				}
 			}
 			tab.head = tab.commits[0].hash
-			tab.selected, tab.commitApplied = -1, -1
-			a := &app{split: 40, filePane: 200, tabs: []*repoTab{tab}}
+			a := &app{tabs: []*repoTab{tab}}
 			tt := ui.NewTester(a.view, 1200, 760)
 			tt.SetDark(dark)
 			tt.Frame()
-			if !tt.HasText("🏷 v1-1") || tt.HasText("tag v1-1") {
-				t.Fatal("标签没有改为带图标的徽章")
+			if !tt.HasText("标签 v1-1") || tt.HasText("🏷 v1-1") {
+				t.Fatal("标签徽章应使用文字而不是图标")
 			}
-			if err := tt.RightClick("🏷 v1-1"); err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Contains(tt.Menu(), "删除标签…") {
-				t.Fatal("引用徽章丢失了标签右键菜单")
-			}
-			tt.CloseMenu()
-			tt.Frame()
 			if path := os.Getenv("GRAPH_PNG"); path != "" {
 				f, err := os.Create(fmt.Sprintf("%s.releases-dark-%t.png", path, dark))
 				if err != nil {
