@@ -1,5 +1,7 @@
 package main
 
+import "slices"
+
 // seg 是提交行里的一段图谱线。top/bot 表示线从行顶还是行中开始，到行中还是行底结束。
 type seg struct {
 	a, b  int
@@ -17,15 +19,21 @@ type graphBend struct {
 // graph 按 git log 从新到旧的顺序增量排泳道。
 // 已排过的提交不会因为后面追加新页而改列，这样分页加载时已经画出的线不跳动。
 type graph struct {
-	cols     [][20]byte
-	colors   []int
-	bends    []graphBend
-	maxLanes int
+	cols           [][20]byte
+	colors         []int
+	bends          []graphBend
+	maxLanes       int
+	incoming       [][20]byte
+	incomingColors []int
+	scratch        []seg
+	previous       []seg
+	usedColors     []bool
 }
 
 func (g *graph) add(c *commit) {
-	incoming := append([][20]byte(nil), g.cols...)
-	incomingColors := append([]int(nil), g.colors...)
+	g.incoming = append(g.incoming[:0], g.cols...)
+	g.incomingColors = append(g.incomingColors[:0], g.colors...)
+	incoming, incomingColors := g.incoming, g.incomingColors
 	node := -1
 	for i, h := range incoming {
 		if h == c.hash {
@@ -75,7 +83,7 @@ func (g *graph) add(c *commit) {
 		g.maxLanes = node + 1
 	}
 
-	var segs []seg
+	segs := g.scratch[:0]
 	for _, bend := range g.bends {
 		segs = append(segs, seg{a: bend.a, b: bend.b, top: true, color: bend.color, bend: 2})
 	}
@@ -113,7 +121,24 @@ func (g *graph) add(c *commit) {
 	}
 	c.nodeCol = node
 	c.nodeColor = nodeColor
-	c.segs = segs
+	// Consecutive rows often have identical through lanes. Keep their geometry once.
+	if !slices.Equal(segs, g.previous) {
+		g.previous = slices.Clone(segs)
+	}
+	c.segs = g.previous
+	g.scratch = segs
+	for len(g.cols) > 0 && g.cols[len(g.cols)-1] == zeroHash {
+		g.cols = g.cols[:len(g.cols)-1]
+		g.colors = g.colors[:len(g.colors)-1]
+	}
+}
+
+func (g graph) clone() graph {
+	g.cols = slices.Clone(g.cols)
+	g.colors = slices.Clone(g.colors)
+	g.bends = slices.Clone(g.bends)
+	g.incoming, g.incomingColors, g.scratch, g.usedColors = nil, nil, nil, nil
+	return g
 }
 
 func (g *graph) alloc() int {
@@ -129,18 +154,19 @@ func (g *graph) alloc() int {
 
 // 颜色跟随第一父链；新链从未被在途链占用的颜色中分配，与物理列无关。
 func (g *graph) freeColor(nodeColor int) int {
+	n := len(g.cols) + 2
+	g.usedColors = slices.Grow(g.usedColors, max(0, n-len(g.usedColors)))[:n]
+	clear(g.usedColors)
+	for i, h := range g.cols {
+		if h != zeroHash && g.colors[i] < len(g.usedColors) {
+			g.usedColors[g.colors[i]] = true
+		}
+	}
 	for color := 0; ; color++ {
 		if color == nodeColor {
 			continue
 		}
-		used := false
-		for i, hash := range g.cols {
-			if hash != zeroHash && g.colors[i] == color {
-				used = true
-				break
-			}
-		}
-		if !used {
+		if color >= len(g.usedColors) || !g.usedColors[color] {
 			return color
 		}
 	}
