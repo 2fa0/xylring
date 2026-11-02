@@ -36,7 +36,7 @@ if [ ! -f "$ROOT/go.mod" ] || [ ! -f "$APP_DIR/mygo.json" ]; then
 fi
 
 if ! command -v go >/dev/null 2>&1; then
-  fail "没有找到 Go。需要 Go 1.27.2，并保证终端能运行 go version。"
+  fail "没有找到 Go。需要 Go 1.27.3，并保证终端能运行 go version。"
 fi
 
 version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$APP_DIR/mygo.json" 2>/dev/null || true)"
@@ -101,7 +101,7 @@ fi
 win_dir="$APP_DIR/build/windows-amd64"
 if [ -d "$win_dir" ]; then
   shopt -s nullglob
-  setups=("$win_dir/"*"Setup"*.exe)
+  setups=("$win_dir/"*[Ss]etup*.exe)
   shopt -u nullglob
   if [ "${#setups[@]}" -eq 1 ]; then
     cp -p "${setups[0]}" "$staging/"
@@ -116,7 +116,7 @@ if [ -d "$win_dir" ]; then
     for entry in "$win_dir"/*; do
       name="$(basename "$entry")"
       case "$name" in
-        *Setup*.exe) continue ;;
+        *[Ss]etup*.exe) continue ;;
       esac
       cp -R "$entry" "$inner/"
     done
