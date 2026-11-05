@@ -12,10 +12,8 @@ func (a *app) installMenu() {
 			a.pickRepo()
 		}},
 		mygo.Separator(),
-		{ID: "close-tab", Label: "关闭仓库", Accelerator: "CmdOrCtrl+W", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
-			if a.activeTab() != nil {
-				a.closeTab(a.active)
-			}
+		{ID: "close-tab", Label: "关闭当前标签页或仓库", Accelerator: "CmdOrCtrl+W", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.closeCurrentTab()
 		}},
 	}
 	if runtime.GOOS != "darwin" {
@@ -25,6 +23,15 @@ func (a *app) installMenu() {
 		{Label: "文件", Submenu: file},
 		{Role: mygo.RoleEditMenu},
 		{Label: "显示", Submenu: []*mygo.MenuItem{
+			{ID: "toggle-sidebar", Label: "切换侧边栏", Accelerator: "CmdOrCtrl+B", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+				a.toggleSidebar()
+			}},
+			mygo.Separator(),
+			{ID: "fetch", Label: "获取远程…", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+				if tab := a.activeTab(); tab != nil {
+					a.openFetch(tab)
+				}
+			}},
 			{ID: "refresh", Label: "刷新", Accelerator: "CmdOrCtrl+R", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 				if tab := a.activeTab(); tab != nil {
 					a.refresh(tab)
@@ -54,6 +61,9 @@ func (a *app) syncMenu() {
 	tab := a.activeTab()
 	has := tab != nil
 	busy := has && tab.loading
+	empty := tab == nil && len(a.found) <= 1
+	a.setMenuEnabled("toggle-sidebar", !empty)
+	a.setMenuEnabled("fetch", has && !a.fetch.busy && !a.write.busy)
 	a.setMenuEnabled("refresh", has && !busy)
 	a.setMenuEnabled("compare", has && !busy)
 	a.setMenuEnabled("close-tab", has)

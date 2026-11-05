@@ -31,7 +31,8 @@ func TestHistoryControlsStayVisible(t *testing.T) {
 			for _, dark := range []bool{false, true} {
 				tt.SetDark(dark)
 				tt.Frame()
-				for _, text := range []string{"搜索", "跳到", "本地分支", "全部分支", "筛选分支", "图谱", "复制哈希", "完整信息", "复制路径", "文件历史", "刷新"} {
+				hoverSelectedFile(t, tt, tab)
+				for _, text := range []string{"搜索", "跳到", "本地分支", "全部分支", "筛选分支", "图谱", "复制哈希", "完整信息", "复制路径", "文件历史", "获取", "刷新"} {
 					r, ok := tt.Find(text)
 					if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > float32(size.w)+1 || r.Y+r.H > float32(size.h)+1 {
 						t.Fatalf("%q is outside the window: %+v", text, r)
@@ -93,6 +94,77 @@ func TestHistoryControlsStayVisible(t *testing.T) {
 			waitUpdates(t, updates, func() bool { return !tab.loading })
 			a.selectCommit(tab, 1)
 			waitUpdates(t, updates, func() bool { return !tab.compareLoading && !tab.diffLoading })
+			retireTester(tt)
 		})
 	}
+}
+
+func TestWorkflowOptimizations(t *testing.T) {
+	badges := groupCommitRefs([]refInfo{
+		{name: "main", kind: refBranch},
+		{name: "origin/main", kind: refRemote},
+		{name: "origin/HEAD", kind: refRemote},
+		{name: "origin/dev", kind: refRemote},
+		{name: "v1.0.0", kind: refTag},
+	}, false)
+	if len(badges) != 4 {
+		t.Fatalf("expected 4 grouped badges, got %+v", badges)
+	}
+	if badges[0].kind != refBranch || badges[0].name != "main" || len(badges[0].remotes) != 1 || badges[0].remotes[0] != "origin" {
+		t.Fatalf("expected main merged with origin, got %+v", badges[0])
+	}
+
+	dir, _ := renameHistoryRepo(t)
+	tab := newTab(1, dir)
+	updates := make(chan func(), 64)
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+	defer tab.cancel()
+	a.reload(tab)
+	waitUpdates(t, updates, func() bool { return !tab.loading })
+	a.selectCommit(tab, 1)
+	waitUpdates(t, updates, func() bool { return !tab.compareLoading && !tab.diffLoading && tab.details != nil })
+
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+
+	// 1. 放大阅读 / 还原布局 & 关闭详情
+	if err := tt.Click("放大阅读"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tab.diffMaximized || !tt.HasText("还原布局") {
+		t.Fatal("diffMaximized not enabled")
+	}
+	if err := tt.Click("还原布局"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tab.diffMaximized {
+		t.Fatal("diffMaximized not restored")
+	}
+	if err := tt.Click("关闭详情"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tab.inspecting != zeroHash {
+		t.Fatal("closeBottomPane did not clear inspecting")
+	}
+
+	// 2. 搜索结果中直接定位到此提交
+	tab.searchText = "modify"
+	a.searchHistory(tab)
+	waitUpdates(t, updates, func() bool { return !tab.loading })
+	a.selectCommit(tab, 0)
+	waitUpdates(t, updates, func() bool { return !tab.compareLoading && !tab.diffLoading })
+	targetHash := tab.inspecting
+	tt.Frame()
+	if err := tt.Click("定位到此提交"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdates(t, updates, func() bool { return !tab.loading && !tab.compareLoading && !tab.diffLoading })
+	tt.Frame()
+	if tab.query.term != "" || tab.inspecting != targetHash {
+		t.Fatalf("locateCommitInGraph failed: query=%+v inspecting=%x want=%x", tab.query, tab.inspecting, targetHash)
+	}
+	retireTester(tt)
 }

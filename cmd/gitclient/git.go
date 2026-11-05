@@ -1,4 +1,4 @@
-// Package main 的 git 层只调用系统 git，用来读取提交图谱。
+// Package main 的 git 层只调用系统 git。
 // 解析走自定义分隔符，避免受用户语言和 core.quotepath 影响。
 package main
 
@@ -51,20 +51,28 @@ func gitPath() (string, error) {
 }
 
 func gitEnv() []string {
-	out := make([]string, 0, 32)
+	return mergeGitEnv(nil)
+}
+
+func mergeGitEnv(extra []string) []string {
+	drop := map[string]bool{
+		"LC_ALL": true, "LANG": true, "LC_MESSAGES": true,
+		"GIT_TERMINAL_PROMPT": true, "GIT_PAGER": true, "PAGER": true,
+	}
+	for _, e := range extra {
+		if i := strings.IndexByte(e, '='); i > 0 {
+			drop[e[:i]] = true
+		}
+	}
+	out := make([]string, 0, 32+len(extra))
 	for _, e := range os.Environ() {
-		switch {
-		case strings.HasPrefix(e, "LC_ALL="),
-			strings.HasPrefix(e, "LANG="),
-			strings.HasPrefix(e, "LC_MESSAGES="),
-			strings.HasPrefix(e, "GIT_TERMINAL_PROMPT="),
-			strings.HasPrefix(e, "GIT_PAGER="),
-			strings.HasPrefix(e, "PAGER="):
+		if i := strings.IndexByte(e, '='); i > 0 && drop[e[:i]] {
 			continue
 		}
 		out = append(out, e)
 	}
-	return append(out, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat")
+	out = append(out, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat")
+	return append(out, extra...)
 }
 
 func gitArgs(args ...string) []string {
@@ -109,6 +117,10 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func runGitLimit(ctx context.Context, dir string, limit int, args ...string) ([]byte, error) {
+	return runGitExtra(ctx, dir, limit, nil, args...)
+}
+
+func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, args ...string) ([]byte, error) {
 	if err := acquireGit(ctx); err != nil {
 		return nil, err
 	}
@@ -122,7 +134,7 @@ func runGitLimit(ctx context.Context, dir string, limit int, args ...string) ([]
 	cmd := exec.CommandContext(commandCtx, bin, gitArgs(args...)...)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
-	cmd.Env = gitEnv()
+	cmd.Env = mergeGitEnv(extraEnv)
 	stdout := limitedBuffer{limit: limit, cancel: cancel}
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stdout = &stdout
@@ -133,6 +145,13 @@ func runGitLimit(ctx context.Context, dir string, limit int, args ...string) ([]
 	}
 	if ctx.Err() != nil {
 		return stdout.Bytes(), fmt.Errorf("git 超时或已取消：%w", ctx.Err())
+	}
+	// git diff --no-index returns 1 for a successful comparison with changes.
+	if err != nil && len(args) > 1 && args[0] == "diff" && args[1] == "--no-index" {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && stderr.Len() == 0 {
+			return stdout.Bytes(), nil
+		}
 	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
@@ -153,9 +172,22 @@ func trimMsg(s string) string {
 }
 
 func repoRoot(ctx context.Context, dir string) (string, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", errors.New("找不到这个仓库")
+		}
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("不是 Git 仓库")
+	}
 	out, err := runGit(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", fmt.Errorf("不是 Git 仓库：%s", err.Error())
+		if strings.Contains(err.Error(), "找不到 git") {
+			return "", err
+		}
+		return "", errors.New("不是 Git 仓库")
 	}
 	root := strings.TrimSpace(string(out))
 	if root == "" {
@@ -403,9 +435,13 @@ type refInfo struct {
 }
 
 type repoMeta struct {
-	branch string
-	head   [20]byte
-	refs   map[[20]byte][]refInfo
+	branch      string
+	head        [20]byte
+	refs        map[[20]byte][]refInfo
+	ahead       int
+	behind      int
+	upstream    string
+	hasUpstream bool
 }
 
 func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
@@ -423,6 +459,11 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 			m.head = h
 		}
 	}
+	sync, _ := queryTrackingStatus(ctx, dir)
+	m.hasUpstream = sync.hasUpstream
+	m.upstream = sync.upstream
+	m.ahead = sync.ahead
+	m.behind = sync.behind
 	rawRefs, err := runGit(ctx, dir, "for-each-ref", "--format=%(objectname) %(refname) %(*objectname)")
 	if err != nil {
 		return m, err
@@ -480,9 +521,22 @@ func resolveCommit(ctx context.Context, dir, ref string) ([20]byte, error) {
 	}
 	out, err := runGit(ctx, dir, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	if err != nil {
+		if missingRevision(err) {
+			return zeroHash, fmt.Errorf("找不到「%s」这个提交、分支或标签", ref)
+		}
 		return zeroHash, err
 	}
 	return parseHash(string(out))
+}
+
+func missingRevision(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "Needed a single revision") ||
+		strings.Contains(s, "unknown revision") ||
+		strings.Contains(s, "Not a valid object") ||
+		strings.Contains(s, "bad revision") ||
+		strings.Contains(s, "ambiguous argument") ||
+		strings.Contains(s, "invalid object name")
 }
 
 func mergeBase(ctx context.Context, dir string, a, b [20]byte) ([20]byte, error) {
@@ -494,10 +548,15 @@ func mergeBase(ctx context.Context, dir string, a, b [20]byte) ([20]byte, error)
 }
 
 type fileChange struct {
-	status  string
-	path    string
-	oldPath string
-	extra   string
+	status         string
+	path           string
+	oldPath        string
+	extra          string
+	added, deleted int
+	binary         bool
+	hasStat        bool
+
+	worktreeVersion string
 }
 
 func (f fileChange) label() string {
@@ -507,7 +566,10 @@ func (f fileChange) label() string {
 	}
 	word := f.extra
 	if word == "" {
-		word = statusWord(f.status)
+		word = statusLetter(f.status)
+		if word == "?" {
+			word = ""
+		}
 	}
 	if word == "" {
 		return name
@@ -553,23 +615,36 @@ func displayPath(p string) string {
 }
 
 func compareFiles(ctx context.Context, dir, from, to string) ([]fileChange, error) {
-	out, err := runGit(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-M", "-z", from, to, "--")
-	if err != nil {
-		return nil, err
-	}
-	return parseNameStatusZ(out), nil
+	return loadFileChanges(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-M", "-z", from, to, "--")
 }
 
 // commitFiles 是一条提交相对第一父提交的文件列表。没有父提交时相对空树。
 func commitFiles(ctx context.Context, dir string, hash [20]byte, parents [][20]byte) ([]fileChange, error) {
 	if len(parents) == 0 {
-		out, err := runGit(ctx, dir, "diff-tree", "-r", "--root", "--no-commit-id", "--no-ext-diff", "--no-textconv", "--name-status", "-M", "-z", hashHex(hash), "--")
-		if err != nil {
-			return nil, err
-		}
-		return parseNameStatusZ(out), nil
+		return loadFileChanges(ctx, dir, "diff-tree", "-r", "--root", "--no-commit-id", "--no-ext-diff", "--no-textconv", "--name-status", "-M", "-z", hashHex(hash), "--")
 	}
 	return compareFiles(ctx, dir, hashHex(parents[0]), hashHex(hash))
+}
+
+// loadFileChanges 先读 --name-status，再用同一组参数读 --numstat，补上增减行数。
+func loadFileChanges(ctx context.Context, dir string, args ...string) ([]fileChange, error) {
+	out, err := runGit(ctx, dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	files := parseNameStatusZ(out)
+	statArgs := append([]string(nil), args...)
+	for i, a := range statArgs {
+		if a != "--name-status" {
+			continue
+		}
+		statArgs[i] = "--numstat"
+		if statOut, err := runGit(ctx, dir, statArgs...); err == nil {
+			applyNumStat(files, parseNumStatZ(statOut))
+		}
+		break
+	}
+	return files, nil
 }
 
 // parseNameStatusZ 解析 git diff --name-status -z。
@@ -600,6 +675,109 @@ func parseNameStatusZ(b []byte) []fileChange {
 		out = append(out, ch)
 	}
 	return out
+}
+
+type fileStat struct {
+	path, oldPath  string
+	added, deleted int
+	binary         bool
+}
+
+// parseNumStatZ 解析 git diff --numstat -z。
+// 普通文件是 增 TAB 删 TAB 路径 NUL。
+// 重命名是 增 TAB 删 TAB NUL 旧路径 NUL 新路径 NUL。
+// 二进制是 - TAB - TAB 路径 NUL。
+func parseNumStatZ(b []byte) []fileStat {
+	var out []fileStat
+	for i := 0; i < len(b); {
+		if b[i] == 0 {
+			i++
+			continue
+		}
+		n := bytes.IndexByte(b[i:], 0)
+		if n < 0 {
+			break
+		}
+		prefix := b[i : i+n]
+		i += n + 1
+		tab1 := bytes.IndexByte(prefix, '\t')
+		if tab1 < 0 {
+			continue
+		}
+		tab2 := bytes.IndexByte(prefix[tab1+1:], '\t')
+		if tab2 < 0 {
+			continue
+		}
+		tab2 += tab1 + 1
+		addedStr := string(prefix[:tab1])
+		deletedStr := string(prefix[tab1+1 : tab2])
+		rest := prefix[tab2+1:]
+		st := fileStat{}
+		switch {
+		case addedStr == "-" && deletedStr == "-":
+			st.binary = true
+		default:
+			var err1, err2 error
+			st.added, err1 = strconv.Atoi(addedStr)
+			st.deleted, err2 = strconv.Atoi(deletedStr)
+			if err1 != nil || err2 != nil {
+				continue
+			}
+		}
+		if len(rest) == 0 {
+			if i >= len(b) {
+				break
+			}
+			n1 := bytes.IndexByte(b[i:], 0)
+			if n1 < 0 {
+				break
+			}
+			st.oldPath = string(b[i : i+n1])
+			i += n1 + 1
+			n2 := bytes.IndexByte(b[i:], 0)
+			if n2 < 0 {
+				st.path = string(b[i:])
+				i = len(b)
+			} else {
+				st.path = string(b[i : i+n2])
+				i += n2 + 1
+			}
+		} else {
+			st.path = string(rest)
+		}
+		if st.path == "" {
+			continue
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+func applyNumStat(files []fileChange, stats []fileStat) {
+	byPath := make(map[string]int, len(files))
+	byRename := make(map[string]int)
+	for i, f := range files {
+		byPath[f.path] = i
+		if f.oldPath != "" {
+			byRename[f.oldPath+"\x00"+f.path] = i
+		}
+	}
+	for _, s := range stats {
+		i, ok := -1, false
+		if s.oldPath != "" {
+			i, ok = byRename[s.oldPath+"\x00"+s.path]
+		}
+		if !ok {
+			i, ok = byPath[s.path]
+		}
+		if !ok {
+			continue
+		}
+		files[i].added = s.added
+		files[i].deleted = s.deleted
+		files[i].binary = s.binary
+		files[i].hasStat = true
+	}
 }
 
 func statusLetter(st string) string {

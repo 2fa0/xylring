@@ -38,14 +38,20 @@ func (a *app) startAutoRefresh() {
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
+		var tickCount int
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				tickCount++
 				a.onMain(func() {
 					if a.win == nil || a.win.IsFocused() && !a.win.IsMinimized() {
 						a.checkActiveRepo()
+						a.maybeAutoFetch()
+						if tickCount%5 == 0 && a.showRepoSidebar() {
+							a.refreshRepoSummaries()
+						}
 					}
 				})
 			}
@@ -55,7 +61,7 @@ func (a *app) startAutoRefresh() {
 
 func (a *app) checkActiveRepo() {
 	t := a.activeTab()
-	if a.closed || t == nil || t.closed || t.loading || t.checking || !t.loaded || a.showCompare {
+	if a.closed || t == nil || t.closed || t.loading || t.checking || !t.loaded || a.showCompare || a.fetch.busy {
 		return
 	}
 	t.checking = true
@@ -119,6 +125,10 @@ func (a *app) focusRepo() {
 		t.refsChecked = time.Time{}
 	}
 	a.checkActiveRepo()
+	a.maybeAutoFetch()
+	if a.showRepoSidebar() {
+		a.refreshRepoSummaries()
+	}
 }
 
 // Unlike Window.Update, a no-op check must not schedule another UI frame.

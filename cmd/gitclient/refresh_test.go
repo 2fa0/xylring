@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,5 +88,60 @@ func TestHistoryIgnoresClosedAndObsoleteLoads(t *testing.T) {
 	fn()
 	if len(a.tabs) != 0 || !tab.closed {
 		t.Fatal("closed repository was restored")
+	}
+}
+
+func TestAutoRefreshUpdatesSameFileContents(t *testing.T) {
+	for _, untracked := range []bool{false, true} {
+		t.Run(fmt.Sprint(untracked), func(t *testing.T) {
+			dir, git := initTestRepo(t)
+			path := filepath.Join(dir, "a.txt")
+			os.WriteFile(path, []byte("base\n"), 0o600)
+			git("add", ".")
+			git("commit", "-m", "base")
+			if untracked {
+				path = filepath.Join(dir, "new.txt")
+			}
+			os.WriteFile(path, []byte("first\n"), 0o600)
+			os.WriteFile(filepath.Join(dir, "0-other.txt"), []byte("other dirty file\n"), 0o600)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tab := newTab(1, dir)
+			updates := make(chan func(), 64)
+			a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+			defer tab.cancel()
+			a.reload(tab)
+			waitUpdates(t, updates, func() bool { return !tab.loading })
+			a.showWorktree(tab)
+			waitUpdates(t, updates, func() bool { return !tab.compareLoading && !tab.diffLoading })
+			for i, f := range tab.compareFiles {
+				if f.path == filepath.Base(path) {
+					tab.fileSel = i
+					a.loadFileDiff(tab, i)
+					break
+				}
+			}
+			waitUpdates(t, updates, func() bool { return !tab.diffLoading })
+			// Equal-length edits and preserved timestamps must still refresh the preview.
+			for _, content := range []string{"other\n", "other\nmore\n"} {
+				os.WriteFile(path, []byte(content), 0o600)
+				if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+					t.Fatal(err)
+				}
+				a.checkActiveRepo()
+				waitUpdates(t, updates, func() bool { return !tab.checking && !tab.loading && !tab.compareLoading && !tab.diffLoading })
+				if tab.diff == nil || tab.diff.New.String() != content {
+					t.Fatalf("preview did not update to %q", content)
+				}
+			}
+			diff := tab.diff
+			a.checkActiveRepo()
+			waitUpdates(t, updates, func() bool { return !tab.checking })
+			if tab.diff != diff {
+				t.Fatal("unchanged worktree rebuilt its diff")
+			}
+		})
 	}
 }

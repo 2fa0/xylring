@@ -46,9 +46,19 @@ func (d *commitDetails) text() string {
 	return fmt.Sprintf("提交：%s\n父提交：%s\n作者：%s <%s>\n创作时间：%s\n提交者：%s <%s>\n提交时间：%s\n\n%s", d.hash, parents, d.author, d.authorEmail, d.authored, d.committer, d.commitEmail, d.at, d.message)
 }
 
-func (a *app) toggleDetails(t *repoTab) {
-	t.detailsOpen = !t.detailsOpen
-	if !t.detailsOpen || t.details != nil || t.detailsLoading || t.inspecting == zeroHash {
+func (d *commitDetails) body() string {
+	if d == nil {
+		return ""
+	}
+	_, rest, ok := strings.Cut(d.message, "\n")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(rest)
+}
+
+func (a *app) ensureDetails(t *repoTab) {
+	if t == nil || t.details != nil || t.detailsLoading || t.inspecting == zeroHash {
 		return
 	}
 	if t.detailsCancel != nil {
@@ -76,6 +86,14 @@ func (a *app) toggleDetails(t *repoTab) {
 	}()
 }
 
+func (a *app) toggleDetails(t *repoTab) {
+	t.detailsOpen = !t.detailsOpen
+	if !t.detailsOpen {
+		return
+	}
+	a.ensureDetails(t)
+}
+
 func (a *app) clearDetails(t *repoTab) {
 	t.detailsGen++
 	if t.detailsCancel != nil {
@@ -86,25 +104,43 @@ func (a *app) clearDetails(t *repoTab) {
 	t.detailsOpen, t.detailsLoading = false, false
 }
 
-func (a *app) detailsPopover(c *ui.Context, t *repoTab, anchor ui.Element) {
-	ui.Popover(c, anchor, &t.detailsOpen, func() {
-		ui.Column(c).Width(440).Height(260).Gap(8).Children(func() {
-			switch {
-			case t.detailsLoading:
-				ui.Text(c, "正在读取…").TextColor(c.Theme().TextMuted)
-			case t.detailsErr != "":
-				ui.Text(c, t.detailsErr).TextColor(c.Theme().Danger)
+func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
+	theme := c.Theme()
+	ui.Column(c.Key(fmt.Sprintf("commit-details-inline-%d", t.id))).FillWidth().Padding(6, 8).Gap(6).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Children(func() {
+		switch {
+		case t.detailsLoading:
+			ui.Text(c, "正在读取…").TextColor(theme.TextMuted)
+		case t.detailsErr != "":
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, t.detailsErr).TextColor(theme.Danger)
 				if ui.Button(c.Key("details-retry"), "重试").Clicked() {
 					t.detailsOpen = false
 					a.toggleDetails(t)
 				}
-			case t.details != nil:
-				if ui.Button(c.Key("copy-commit-info"), "复制完整信息").Clicked() {
+			})
+		case t.details != nil:
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "完整提交信息").Bold().FontSize(12).SingleLine().Grow(1).MinWidth(0)
+				if ui.Button(c.Key("copy-commit-info"), "复制完整信息").Shrink(0).Clicked() {
 					c.Services().WriteClipboard(t.details.text())
 					c.Toast("已复制提交信息")
 				}
-				editor.View(c.Key(fmt.Sprintf("commit-info-%d", t.id)), &t.details.view).Grow(1).MinHeight(0)
-			}
-		})
+				closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("close-commit-details-%d", t.id))).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Tooltip("收起信息")
+				closeBtn.Children(func() {
+					ui.Icon(c, iconClose).Size(12, 12).TextColor(theme.TextMuted)
+				})
+				if closeBtn.Clicked() {
+					t.detailsOpen = false
+				}
+			})
+			editor.View(c.Key(fmt.Sprintf("commit-info-%d", t.id)), &t.details.view).FillWidth().Height(160).MinHeight(80)
+		}
 	})
+}
+
+func (a *app) detailsPopover(c *ui.Context, t *repoTab, anchor ui.Element) {
+	if !t.detailsOpen {
+		return
+	}
+	a.commitDetailsInline(c, t)
 }

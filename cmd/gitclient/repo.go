@@ -21,6 +21,25 @@ func (a *app) post(fn func()) {
 	a.win.Update(fn)
 }
 
+func (a *app) setBanner(msg, path string) {
+	a.banner = msg
+	a.bannerPath = path
+}
+
+func (a *app) notifySuccess(tab *repoTab, msg string) {
+	if tab != nil {
+		tab.notice = msg
+	}
+	a.pendingToast = msg
+}
+
+func (a *app) bannerOnRecent() bool {
+	if a.banner == "" || a.bannerPath == "" {
+		return false
+	}
+	return slices.Contains(a.recent, a.bannerPath)
+}
+
 func (a *app) activeTab() *repoTab {
 	if a.active < 0 || a.active >= len(a.tabs) {
 		return nil
@@ -35,29 +54,50 @@ func (a *app) remember(path string) {
 			out = append(out, p)
 		}
 	}
-	a.recent = out
-	if a.persist {
-		if a.recentWrites == nil {
-			a.recentWrites = make(chan []string, 1)
-			writes := a.recentWrites
-			go func() {
-				for paths := range writes {
-					if err := saveRecent(paths); err != nil {
-						a.post(func() {
-							if !a.closed {
-								a.banner = "保存最近仓库失败：" + err.Error()
-							}
-						})
-					}
-				}
-			}()
+	a.setRecent(out)
+}
+
+func (a *app) forget(path string) {
+	out := make([]string, 0, len(a.recent))
+	for _, p := range a.recent {
+		if p != path {
+			out = append(out, p)
 		}
-		select {
-		case <-a.recentWrites:
-		default:
-		}
-		a.recentWrites <- out
 	}
+	if len(out) == len(a.recent) {
+		return
+	}
+	if a.bannerPath == path {
+		a.setBanner("", "")
+	}
+	a.setRecent(out)
+}
+
+func (a *app) setRecent(out []string) {
+	a.recent = out
+	if !a.persist {
+		return
+	}
+	if a.recentWrites == nil {
+		a.recentWrites = make(chan []string, 1)
+		writes := a.recentWrites
+		go func() {
+			for paths := range writes {
+				if err := saveRecent(paths); err != nil {
+					a.post(func() {
+						if !a.closed {
+							a.setBanner("保存最近仓库失败："+err.Error(), "")
+						}
+					})
+				}
+			}
+		}()
+	}
+	select {
+	case <-a.recentWrites:
+	default:
+	}
+	a.recentWrites <- out
 }
 
 func (a *app) pickRepo() {
@@ -71,7 +111,7 @@ func (a *app) pickRepo() {
 		a.post(func() {
 			a.picking = false
 			if err != nil {
-				a.banner = trimMsg(err.Error())
+				a.setBanner(trimMsg(err.Error()), "")
 				return
 			}
 			if len(paths) == 0 {
@@ -89,15 +129,21 @@ func (a *app) openRepo(path string) {
 		root, err := repoRoot(ctx, path)
 		a.post(func() {
 			if err != nil {
-				a.banner = trimMsg(err.Error())
+				a.setBanner(trimMsg(err.Error()), path)
 				return
 			}
 			a.openRoot(root)
+			// 导入目录会扫描它下面的仓库；最近仓库只留了一个路径，打开后补扫一次，
+			// 仓库里嵌套的仓库照旧列在左侧。
+			a.scanRepos(root, false)
 		})
 	}()
 }
 
-func (a *app) openPath(path string) { a.scanRepos(path, true) }
+func (a *app) openPath(path string) {
+	a.showHome = false
+	a.scanRepos(path, true)
+}
 
 func (a *app) refresh(t *repoTab) {
 	a.reload(t)
@@ -144,11 +190,11 @@ func (a *app) scanRepos(path string, open bool) {
 			if err != nil {
 				if open {
 					a.found, a.foundFrom = nil, ""
-					a.banner = trimMsg(err.Error())
+					a.setBanner(trimMsg(err.Error()), path)
 				}
 				return
 			}
-			a.banner = ""
+			a.setBanner("", "")
 			a.scanCache = cache
 			a.setFound(from, roots)
 			if open && len(roots) > 0 {
@@ -162,6 +208,7 @@ func (a *app) setFound(from string, roots []string) {
 	a.foundFrom = from
 	if len(roots) > 1 {
 		a.found = roots
+		a.refreshRepoSummaries()
 		return
 	}
 	a.found = nil
@@ -183,6 +230,7 @@ func (a *app) openRoot(root string) {
 	if a.closed {
 		return
 	}
+	a.showHome = false
 	for i, t := range a.tabs {
 		if t.path == root {
 			a.activate(i)
@@ -195,7 +243,7 @@ func (a *app) openRoot(root string) {
 	tab := newTab(a.nextID, root)
 	a.tabs = append(a.tabs, tab)
 	a.activate(len(a.tabs) - 1)
-	a.banner = ""
+	a.setBanner("", "")
 	a.remember(root)
 	if !tab.loading {
 		a.reload(tab)
@@ -233,6 +281,9 @@ func (a *app) closeTab(i int) {
 	if a.active < 0 {
 		a.active = 0
 	}
+	if len(a.tabs) == 0 {
+		a.recentSearch = ""
+	}
 	if t := a.activeTab(); !a.closed && t != nil {
 		if !t.loaded && !t.loading {
 			a.reload(t)
@@ -240,6 +291,19 @@ func (a *app) closeTab(i int) {
 			a.checkActiveRepo()
 		}
 	}
+}
+
+func (a *app) goHome() {
+	if a.scanCancel != nil {
+		a.scanCancel()
+		a.scanCancel, a.scanPath = nil, ""
+	}
+	a.setBanner("", "")
+	a.recentSearch = ""
+	a.showCompare = false
+	a.showWrite = false
+	a.stopFetch()
+	a.showHome = true
 }
 
 func (a *app) reload(t *repoTab) {
@@ -353,7 +417,7 @@ func (a *app) loadMore(t *repoTab) {
 	}
 	p := t.pager
 	base, authors, g, baseBytes := t.commits, t.authors, t.graph.clone(), t.historyBytes
-	meta := repoMeta{branch: t.branch, head: t.head, refs: t.refs}
+	meta := repoMeta{branch: t.branch, head: t.head, refs: t.refs, ahead: t.ahead, behind: t.behind, upstream: t.upstream, hasUpstream: t.hasUpstream}
 	n := min(4096, max(pageMore, len(base)/2))
 	remaining := t.historyBudget - t.historyBytes
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -421,12 +485,26 @@ func (a *app) installHistory(t *repoTab, meta repoMeta, p preparedHistory) {
 		selected = item.hash
 	}
 	t.branch, t.head, t.refs = meta.branch, meta.head, meta.refs
+	t.ahead, t.behind, t.upstream, t.hasUpstream = meta.ahead, meta.behind, meta.upstream, meta.hasUpstream
+	a.summaryMu.Lock()
+	if a.repoSummaries != nil {
+		a.repoSummaries[t.path] = repoSummary{
+			branch:      t.branch,
+			dirty:       t.worktreeCount > 0,
+			checked:     time.Now(),
+			ahead:       t.ahead,
+			behind:      t.behind,
+			upstream:    t.upstream,
+			hasUpstream: t.hasUpstream,
+		}
+	}
+	a.summaryMu.Unlock()
 	t.graph, t.authors, t.commitIndex, t.historyBytes = p.graph, p.authors, p.index, p.bytes
 	t.commits = p.commits
-	t.selected = t.indexOf(selected)
+	t.selected = t.rowIndex(selected)
 	for key := range t.selection.All() {
 		h, ok := key.([20]byte)
-		if !ok || t.indexOf(h) < 0 {
+		if !ok || t.rowIndex(h) < 0 {
 			t.selection.Remove(key)
 		}
 	}
@@ -467,7 +545,7 @@ func (a *app) locateRef(t *repoTab, ref string) {
 }
 
 func (a *app) jumpToHash(t *repoTab, hash [20]byte) {
-	if i := t.indexOf(hash); i >= 0 {
+	if i := t.rowIndex(hash); i >= 0 {
 		t.locateHash = zeroHash
 		a.selectCommit(t, i)
 		return
@@ -498,6 +576,14 @@ func (a *app) continueLocate(t *repoTab) {
 func (a *app) selectCommit(t *repoTab, i int) {
 	item := t.rowData(i)
 	if item == nil {
+		return
+	}
+	if a.sidebarHidden {
+		a.sidebarHidden = false
+	}
+	if item.hash == worktreeHash {
+		a.showWorktree(t)
+		t.list.ScrollIntoView(i)
 		return
 	}
 	t.worktree = false
