@@ -1,8 +1,9 @@
 #!/bin/bash
-# 双击本文件，打包两份可分发的安装包：
+# 双击本文件，打包可分发的安装包：
 #   macOS Apple 芯片（arm64）磁盘镜像
-#   Windows 11 x64 安装程序
-# 在 Intel Mac 上也可以交叉编译这两份。未配置发行签名和公证。
+#   macOS Intel 芯片（x86_64 / amd64）磁盘镜像
+#   Windows 10 & 11 x64 安装程序与免安装压缩包
+# 在 Mac 上交叉编译。未配置发行签名和公证。
 
 set -u
 
@@ -54,23 +55,24 @@ echo "Xylring ${version}"
 echo
 echo "将打包："
 echo "  • macOS Apple 芯片（arm64）磁盘镜像"
+echo "  • macOS Intel 芯片（amd64 / x86_64）磁盘镜像"
 if [ "$have_nsis" -eq 1 ]; then
-  echo "  • Windows 11 x64 安装程序"
+  echo "  • Windows 10 & 11 x64 安装程序与免安装压缩包"
 else
-  echo "  • Windows 11 x64 压缩包"
+  echo "  • Windows 10 & 11 x64 免安装压缩包"
   echo
   echo "未找到 makensis，这次不会生成 Windows 安装程序。"
   echo "安装后重新双击本文件即可：brew install makensis"
 fi
 echo
-echo "目标电脑需要已安装 Git。这两份都没有发行签名。"
+echo "目标电脑需要已安装 Git。这些包没有发行签名和公证。"
 echo
 
 cd "$APP_DIR" || fail "无法进入 cmd/gitclient/。"
 
 started=$(date +%s)
 # makensis 在 LANG 为空或 C 时写安装包会崩溃（NSIS bug 1165）。
-LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 go tool mygo build -platform windows/amd64,darwin/arm64 -skip-notarize
+LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 go tool mygo build -platform darwin/arm64,darwin/amd64,windows/amd64 -skip-notarize
 build_status=$?
 echo
 
@@ -86,18 +88,32 @@ cleanup() {
 trap cleanup EXIT
 
 found=0
-note_windows=""
+note_windows_installer=0
+note_windows_zip=0
 
+# macOS ARM64
 shopt -s nullglob
-dmgs=("$APP_DIR/build/darwin-arm64/"*.dmg)
+dmgs_arm=("$APP_DIR/build/darwin-arm64/"*.dmg)
 shopt -u nullglob
-if [ "${#dmgs[@]}" -eq 1 ]; then
-  cp -p "${dmgs[0]}" "$staging/"
+if [ "${#dmgs_arm[@]}" -eq 1 ]; then
+  cp -p "${dmgs_arm[0]}" "$staging/"
   found=1
-elif [ "${#dmgs[@]}" -gt 1 ]; then
+elif [ "${#dmgs_arm[@]}" -gt 1 ]; then
   fail "darwin-arm64 里有多份磁盘镜像，无法判断该交付哪一份。"
 fi
 
+# macOS AMD64 (Intel)
+shopt -s nullglob
+dmgs_intel=("$APP_DIR/build/darwin-amd64/"*.dmg)
+shopt -u nullglob
+if [ "${#dmgs_intel[@]}" -eq 1 ]; then
+  cp -p "${dmgs_intel[0]}" "$staging/"
+  found=1
+elif [ "${#dmgs_intel[@]}" -gt 1 ]; then
+  fail "darwin-amd64 里有多份磁盘镜像，无法判断该交付哪一份。"
+fi
+
+# Windows AMD64 (Windows 10 & 11 x86_64)
 win_dir="$APP_DIR/build/windows-amd64"
 if [ -d "$win_dir" ]; then
   shopt -s nullglob
@@ -106,10 +122,12 @@ if [ -d "$win_dir" ]; then
   if [ "${#setups[@]}" -eq 1 ]; then
     cp -p "${setups[0]}" "$staging/"
     found=1
-    note_windows="installer"
+    note_windows_installer=1
   elif [ "${#setups[@]}" -gt 1 ]; then
     fail "windows-amd64 里有多份安装程序，无法判断该交付哪一份。"
-  elif [ -f "$win_dir/Xylring.exe" ]; then
+  fi
+
+  if [ -f "$win_dir/Xylring.exe" ]; then
     payload="$(mktemp -d "${TMPDIR:-/tmp}/gitclient-win.XXXXXX")"
     inner="$payload/Xylring"
     mkdir -p "$inner"
@@ -127,7 +145,7 @@ if [ -d "$win_dir" ]; then
     fi
     rm -rf "$payload"
     found=1
-    note_windows="zip"
+    note_windows_zip=1
   fi
 fi
 
@@ -144,20 +162,23 @@ echo "可交付的包在 release/，用时 ${elapsed} 秒："
 echo
 ls -lh "$PACKAGES"
 echo
-if [ "${#dmgs[@]}" -eq 1 ]; then
-  echo "macOS：把磁盘镜像发给 Apple 芯片的 Mac。对方打开后把 Xylring 拖进“应用程序”。"
-  echo "其他 Mac 第一次可能会被系统拦截：在访达里对应用按住 Control 点按，选择“打开”。"
-else
-  echo "这次没有生成 macOS 磁盘镜像。"
+if [ "${#dmgs_arm[@]}" -eq 1 ]; then
+  echo "macOS Apple 芯片（ARM64）：把 arm64 磁盘镜像发给 M1/M2/M3/M4 系列 Mac。对方打开后把 Xylring 拖进“应用程序”。"
+fi
+if [ "${#dmgs_intel[@]}" -eq 1 ]; then
+  echo "macOS Intel 芯片（x86_64）：把 amd64 磁盘镜像发给 Intel 架构 Mac。对方打开后把 Xylring 拖进“应用程序”。"
+fi
+if [ "${#dmgs_arm[@]}" -gt 0 ] || [ "${#dmgs_intel[@]}" -gt 0 ]; then
+  echo "注：未签名公证的应用首次打开时若被拦截，在访达里对应用按住 Control 点按并选择“打开”。"
 fi
 echo
-if [ "$note_windows" = "installer" ]; then
-  echo "Windows 11 x64：运行安装程序。它安装到当前用户，不需要管理员权限。"
-  echo "第一次可能出现 SmartScreen 提示，选择“仍要运行”。"
-elif [ "$note_windows" = "zip" ]; then
-  echo "Windows 11 x64：解压后运行 Xylring.exe。这次没有安装程序。"
-  echo "装好 makensis 后重新双击本文件，即可改打安装包：brew install makensis"
-else
+if [ "$note_windows_installer" -eq 1 ]; then
+  echo "Windows 10 & 11 x64 安装版：运行安装程序（*setup*.exe）。安装到当前用户，无需管理员权限。"
+fi
+if [ "$note_windows_zip" -eq 1 ]; then
+  echo "Windows 10 & 11 x64 便携版：解压 zip 后直接双击运行 Xylring.exe。"
+fi
+if [ "$note_windows_installer" -eq 0 ] && [ "$note_windows_zip" -eq 0 ]; then
   echo "这次没有生成 Windows 包。"
 fi
 if [ "$build_status" -ne 0 ]; then

@@ -204,7 +204,9 @@ func openWithDefaultEditor(path string) error {
 	case "darwin":
 		return exec.Command("open", path).Start()
 	case "windows":
-		return exec.Command("cmd", "/c", "start", "", path).Start()
+		cmd := exec.Command("cmd", "/c", "start", "", path)
+		hideConsoleWindow(cmd)
+		return cmd.Start()
 	default:
 		return exec.Command("xdg-open", path).Start()
 	}

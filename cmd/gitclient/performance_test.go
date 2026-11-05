@@ -36,6 +36,7 @@ func fastHistoryRepo(t *testing.T, n int) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "fast-import", "--quiet")
+	hideConsoleWindow(cmd)
 	cmd.Stdin = strings.NewReader(input.String())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fast-import: %s %v", out, err)
