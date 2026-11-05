@@ -12,6 +12,13 @@ func (a *app) installMenu() {
 			a.pickRepo()
 		}},
 		mygo.Separator(),
+		{ID: "install-cli", Label: "在 PATH 中安装 'xylring' 命令行工具…", Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.installCLIMenu()
+		}},
+		{ID: "uninstall-cli", Label: "从 PATH 中卸载 'xylring' 命令行工具", Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.uninstallCLIMenu()
+		}},
+		mygo.Separator(),
 		{ID: "close-tab", Label: "关闭当前标签页或仓库", Accelerator: "CmdOrCtrl+W", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.closeCurrentTab()
 		}},

@@ -1,7 +1,7 @@
 {
   "name": "Xylring",
   "identifier": "dev.xylring.app",
-  "version": "0.4.1",
+  "version": "0.5.1",
   "icon": "resources/logo.png",
   "out": "build"
 }

@@ -2,6 +2,33 @@
 
 导入一个 Git 仓库，画出提交图谱，并比较任意两个分支或哈希。
 
+## 命令行（CLI）
+
+像 VS Code 的 `code .` 一样，在终端中直接打开 Git 仓库并唤醒 Xylring：
+
+```sh
+# 打开当前目录的 Git 仓库
+xylring .
+
+# 打开指定目录的 Git 仓库
+xylring /path/to/repository
+
+# 同时打开多个仓库
+xylring repoA repoB
+
+# 仅激活并聚焦 Xylring 窗口
+xylring
+```
+
+### 安装命令行工具
+
+- **方式一（GUI 菜单）**：在菜单栏中选择「文件」→「在 PATH 中安装 'xylring' 命令行工具…」。
+- **方式二（终端命令）**：在终端执行：
+  ```sh
+  xylring install-cli
+  ```
+  （卸载可选择菜单栏「从 PATH 中卸载 'xylring' 命令行工具」或执行 `xylring uninstall-cli`）。
+
 ## 本机运行
 
 需要 Go 1.27.3 和系统 Git，在 `cmd/gitclient/` 执行：

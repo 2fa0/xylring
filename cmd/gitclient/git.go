@@ -132,6 +132,7 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	commandCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(commandCtx, bin, gitArgs(args...)...)
+	hideConsoleWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
 	cmd.Env = mergeGitEnv(extraEnv)
@@ -305,6 +306,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 		return err
 	}
 	cmd := exec.CommandContext(ctx, bin, gitArgs(args...)...)
+	hideConsoleWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
 	cmd.Env = gitEnv()

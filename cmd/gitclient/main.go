@@ -1711,7 +1711,44 @@ func paintGraphNode(p *ui.Painter, x, y, radius float32, color, background ui.Co
 }
 
 func main() {
+	if handleCLIArgs(os.Args[1:]) {
+		return
+	}
+
 	a := newApp()
+
+	// 保证单实例运行：若已有正在运行的实例，将命令行参数与工作目录转发并立即退出
+	if !mygo.App.RequestSingleInstanceLock() {
+		return
+	}
+
+	// 监听后续实例发送的命令行唤醒（如终端中输入 xylring .）
+	mygo.App.OnSecondInstance(func(args []string, workingDir string) {
+		a.post(func() {
+			if a.win != nil {
+				a.win.Focus()
+			}
+			mygo.App.Focus()
+			paths := normalizePaths(args, workingDir)
+			for _, p := range paths {
+				a.openPath(p)
+			}
+		})
+	})
+
+	// 监听系统级文件/目录打开事件（如 macOS open -a Xylring <path> 或访达拖拽）
+	mygo.App.OnOpenFile(func(path string) {
+		a.post(func() {
+			if a.win != nil {
+				a.win.Focus()
+			}
+			mygo.App.Focus()
+			if path != "" {
+				a.openPath(path)
+			}
+		})
+	})
+
 	mygo.App.WhenReady(func() {
 		a.installMenu()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
@@ -1725,7 +1762,7 @@ func main() {
 			TitleBarHeight: chromeMinHeight,
 			Content:        ui.View(a.view),
 		})
-		for _, path := range os.Args[1:] {
+		for _, path := range normalizePaths(os.Args[1:], "") {
 			a.openPath(path)
 		}
 		a.startAutoRefresh()
