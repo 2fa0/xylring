@@ -37,11 +37,20 @@ func TestCommitDetailsAndClipboard(t *testing.T) {
 	if tt.Clipboard() != hashHex(hash) {
 		t.Fatalf("copied short hash: %q", tt.Clipboard())
 	}
-	if err := tt.Click("复制路径"); err != nil {
-		t.Fatal(err)
-	}
+	clickFileAction(t, tt, tab, "复制路径")
 	if tt.Clipboard() != "说明.txt" {
 		t.Fatalf("wrong path: %q", tt.Clipboard())
+	}
+	hoverSelectedFile(t, tt, tab)
+	if err := tt.ClickWith(ui.Alt, "复制路径"); err != nil {
+		t.Fatal(err)
+	}
+	wantAbs, err := filepath.Abs(filepath.Join(dir, "说明.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tt.Clipboard() != wantAbs {
+		t.Fatalf("wrong abs path: %q", tt.Clipboard())
 	}
 	if err := tt.Click("完整信息"); err != nil {
 		t.Fatal(err)

@@ -24,6 +24,7 @@ type historyLocation struct {
 	hash        [20]byte
 	top         [20]byte
 	file        string
+	source      *fileDiffSource
 	diff        *editor.DiffState
 	simpleDiff  *simpleDiff
 	note        string
@@ -39,12 +40,14 @@ func (t *repoTab) location() *historyLocation {
 	l := &historyLocation{query: t.query, hash: t.inspecting}
 	l.loaded = len(t.commits)
 	l.diff, l.note, l.from, l.to = t.diff, t.diffNote, t.diffFrom, t.diffTo
-	l.simpleDiff = t.simpleDiff
+	l.simpleDiff, l.source = t.simpleDiff, t.diffSource
 	l.comparison = t.comparison
 	l.details, l.detailsOpen = t.details, t.detailsOpen
 	l.worktree = t.worktree
-	if first, _ := t.list.Visible(); first >= 0 && first < len(t.commits) {
-		l.top = t.commits[first].hash
+	if first, _ := t.list.Visible(); first >= 0 {
+		if item := t.rowData(first); item != nil && item.hash != worktreeHash {
+			l.top = item.hash
+		}
 	}
 	if t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
 		l.file = t.compareFiles[t.fileSel].path
@@ -115,6 +118,7 @@ func queryTips(ctx context.Context, dir string, meta repoMeta, q historyQuery) (
 var searchKinds = []string{"说明", "作者", "文件路径"}
 
 func (a *app) searchHistory(t *repoTab) {
+	t.searchSuggestOpen = false
 	term := strings.TrimSpace(t.searchText)
 	if term == "" {
 		a.leaveSearch(t)
@@ -135,6 +139,9 @@ func (a *app) leaveSearch(t *repoTab) {
 	back := t.historyBack
 	t.historyBack = nil
 	t.searchText = ""
+	t.locate = ""
+	t.searchKind = "说明"
+	t.searchSuggestOpen = false
 	a.changeHistory(t, back.query)
 	t.restore = back
 }
@@ -169,7 +176,7 @@ func (a *app) continueRestore(t *repoTab) {
 	if !containsLocation(t.commits, l) {
 		t.notice = "原阅读位置已不在已加载范围内"
 	}
-	if i := t.indexOf(l.hash); i >= 0 {
+	if i := t.rowIndex(l.hash); i >= 0 {
 		t.restoreFile = l.file
 		t.restoreDiff = l
 		a.selectCommit(t, i)
@@ -183,7 +190,7 @@ func (a *app) continueRestore(t *repoTab) {
 		cmp := l.comparison
 		a.showComparison(t, cmp.from, cmp.to, cmp.fromLabel, cmp.toLabel, cmp.threeDot)
 	}
-	if i := t.indexOf(l.top); i >= 0 {
+	if i := t.rowIndex(l.top); i >= 0 {
 		t.list.ScrollTo(i, ui.Start)
 	}
 	if l.worktree {
@@ -191,46 +198,436 @@ func (a *app) continueRestore(t *repoTab) {
 	}
 }
 
+type omniSuggestItem struct {
+	kind     string
+	icon     *ui.SVG
+	title    string
+	subtitle string
+	action   func()
+}
+
+func isKnownRef(t *repoTab, text string) bool {
+	if text == "HEAD" || text == "@" {
+		return true
+	}
+	if text == t.branch {
+		return true
+	}
+	for _, refs := range t.refs {
+		for _, r := range refs {
+			if r.name == text || "refs/heads/"+r.name == text || "refs/remotes/"+r.name == text || "refs/tags/"+r.name == text {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isHexCommitHash(s string) bool {
+	if len(s) < 6 || len(s) > 40 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *app) omniSubmit(t *repoTab) {
+	text := strings.TrimSpace(t.searchText)
+	if text == "" {
+		if t.query.term != "" {
+			a.leaveSearch(t)
+		} else {
+			a.locateRef(t, "HEAD")
+		}
+		return
+	}
+	t.searchSuggestOpen = false
+
+	if t.searchKind != "说明" {
+		a.searchHistory(t)
+		return
+	}
+
+	for _, p := range []string{"author:", "作者:"} {
+		if after, ok := strings.CutPrefix(text, p); ok {
+			t.searchKind = "作者"
+			t.searchText = strings.TrimSpace(after)
+			a.searchHistory(t)
+			return
+		}
+	}
+	for _, p := range []string{"path:", "file:", "文件:", "路径:"} {
+		if after, ok := strings.CutPrefix(text, p); ok {
+			t.searchKind = "文件路径"
+			t.searchText = strings.TrimSpace(after)
+			a.searchHistory(t)
+			return
+		}
+	}
+
+	if isKnownRef(t, text) {
+		t.locate = text
+		a.locateRef(t, text)
+		return
+	}
+
+	if isHexCommitHash(text) {
+		t.locate = text
+		a.locateRef(t, text)
+		return
+	}
+
+	a.searchHistory(t)
+}
+
+func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
+	var items []omniSuggestItem
+	clean := strings.TrimSpace(term)
+	lower := strings.ToLower(clean)
+
+	matchedBranches := 0
+	matchedTags := 0
+	for _, refs := range t.refs {
+		for _, r := range refs {
+			rLower := strings.ToLower(r.name)
+			if clean == "" || strings.Contains(rLower, lower) {
+				refName := r.name
+				switch r.kind {
+				case refBranch:
+					if matchedBranches < 5 {
+						matchedBranches++
+						items = append(items, omniSuggestItem{
+							kind:     "分支",
+							icon:     iconGitBranch,
+							title:    refName,
+							subtitle: "本地分支 · 跳转定位",
+							action: func() {
+								t.searchSuggestOpen = false
+								t.searchText = refName
+								t.locate = refName
+								a.locateRef(t, refName)
+							},
+						})
+					}
+				case refRemote:
+					if !t.query.hideRemote && matchedBranches < 5 {
+						matchedBranches++
+						items = append(items, omniSuggestItem{
+							kind:     "远程分支",
+							icon:     iconGitBranch,
+							title:    refName,
+							subtitle: "远程分支 · 跳转定位",
+							action: func() {
+								t.searchSuggestOpen = false
+								t.searchText = refName
+								t.locate = refName
+								a.locateRef(t, refName)
+							},
+						})
+					}
+				case refTag:
+					if matchedTags < 3 {
+						matchedTags++
+						items = append(items, omniSuggestItem{
+							kind:     "标签",
+							icon:     iconLocate,
+							title:    refName,
+							subtitle: "标签 · 跳转定位",
+							action: func() {
+								t.searchSuggestOpen = false
+								t.searchText = refName
+								t.locate = refName
+								a.locateRef(t, refName)
+							},
+						})
+					}
+				}
+			}
+		}
+	}
+
+	if clean != "" && isHexCommitHash(clean) {
+		fullHex := strings.ToLower(clean)
+		matchedCommits := 0
+		for i := range t.commits {
+			c := &t.commits[i]
+			hHex := hashHex(c.hash)
+			if strings.HasPrefix(hHex, fullHex) {
+				commitHash := c.hash
+				subj := c.subject
+				matchedCommits++
+				items = append(items, omniSuggestItem{
+					kind:     "提交",
+					icon:     iconLocate,
+					title:    shortHash(commitHash) + " " + subj,
+					subtitle: fmt.Sprintf("%s · %s", c.author, c.whenText()),
+					action: func() {
+						t.searchSuggestOpen = false
+						t.searchText = shortHash(commitHash)
+						t.locate = hHex
+						a.jumpToHash(t, commitHash)
+					},
+				})
+				if matchedCommits >= 3 {
+					break
+				}
+			}
+		}
+	}
+
+	if clean != "" && len(t.authors) > 0 {
+		matchedAuthors := 0
+		for author := range t.authors {
+			if strings.Contains(strings.ToLower(author), lower) {
+				matchedAuthors++
+				aut := author
+				items = append(items, omniSuggestItem{
+					kind:     "作者",
+					icon:     iconSearch,
+					title:    aut,
+					subtitle: "按作者筛选提交历史",
+					action: func() {
+						t.searchSuggestOpen = false
+						t.searchKind = "作者"
+						t.searchText = aut
+						a.searchHistory(t)
+					},
+				})
+				if matchedAuthors >= 3 {
+					break
+				}
+			}
+		}
+	}
+
+	if clean != "" {
+		items = append(items, omniSuggestItem{
+			kind:     "搜索",
+			icon:     iconSearch,
+			title:    fmt.Sprintf("在提交说明中搜索 “%s”", clean),
+			subtitle: "按提交说明检索提交历史",
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchKind = "说明"
+				t.searchText = clean
+				a.searchHistory(t)
+			},
+		})
+		items = append(items, omniSuggestItem{
+			kind:     "搜索",
+			icon:     iconFolder,
+			title:    fmt.Sprintf("在修改文件路径中搜索 “%s”", clean),
+			subtitle: "按文件路径检索提交历史",
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchKind = "文件路径"
+				t.searchText = clean
+				a.searchHistory(t)
+			},
+		})
+	}
+
+	return items
+}
+
+func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Element) {
+	ui.Popover(c, anchor, &t.searchSuggestOpen, func() {
+		th := c.Theme()
+		items := a.omniSuggestions(t, t.searchText)
+		if len(items) == 0 {
+			ui.Row(c).Padding(8, 12).Children(func() {
+				ui.Text(c, "未找到匹配项，直接回车可搜索提交").FontSize(12).TextColor(th.TextMuted)
+			})
+			return
+		}
+		ui.Column(c).MaxHeight(320).Children(func() {
+			for idx, item := range items {
+				itemCopy := item
+				row := ui.ButtonBase(c.Key(fmt.Sprintf("suggest-item-%d-%d", t.id, idx))).
+					FillWidth().
+					Padding(6, 10).
+					Radius(th.Radius).
+					Cursor(ui.CursorPointer)
+				if row.Hovered() {
+					row.Background(th.SurfaceHover)
+				}
+				if row.Clicked() {
+					itemCopy.action()
+				}
+				row.Children(func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).FillWidth().Children(func() {
+						if itemCopy.icon != nil {
+							ui.Icon(c, itemCopy.icon).Size(14, 14).TextColor(th.TextMuted).Shrink(0)
+						}
+						ui.Column(c).Grow(1).Children(func() {
+							ui.Text(c, itemCopy.title).FontSize(13).FontWeight(500).SingleLine().TextColor(th.Text)
+							if itemCopy.subtitle != "" {
+								ui.Text(c, itemCopy.subtitle).FontSize(11).SingleLine().TextColor(th.TextMuted)
+							}
+						})
+						ui.Text(c, itemCopy.kind).FontSize(10).
+							Background(th.Border.Alpha(0.4)).
+							Padding(1, 6).
+							Radius(3).
+							TextColor(th.TextMuted).
+							Shrink(0)
+					})
+				})
+			}
+		})
+	})
+}
+
 func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 	if t.query.filePath != "" {
 		a.fileHistoryToolbar(c, t)
 		return
 	}
-	ui.Row(c).Padding(4, 12, 8, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
+	if t.locate != "" && t.searchText == "" {
+		t.searchText = t.locate
+	}
+
+	scopeControls := func() {
 		scope := 0
 		if !t.query.hideRemote {
 			scope = 1
 		}
-		if ui.Segmented(c.Key("branch-visibility"), &scope, "本地分支", "全部分支").Label("分支显示范围").Changed() {
+		if ui.Segmented(c.Key("branch-visibility"), &scope, "本地分支", "全部分支").Label("分支显示范围").Shrink(0).Changed() {
 			q := t.query
 			q.ref, q.hideRemote = "", scope == 0
 			a.changeScope(t, q)
 		}
 		a.scopeMenu(c, t)
-		locate := ui.TextInput(c.Key(fmt.Sprintf("locate-%d", t.id)), &t.locate).Placeholder("HEAD、分支、标签或哈希").Grow(1).MinWidth(80)
-		if ui.Button(c.Key("locate-ref"), "跳到").Clicked() || locate.Submitted() {
-			a.locateRef(t, t.locate)
+	}
+
+	omniSearchBox := func() {
+		searchBox := ui.Row(c.Key(fmt.Sprintf("search-container-%d", t.id))).
+			Grow(1).
+			MinWidth(160).
+			AlignItems(ui.Center).
+			Gap(4)
+
+		searchBox.Children(func() {
+			ui.Select(c.Key(fmt.Sprintf("search-kind-%d", t.id)), &t.searchKind, searchKinds).MinWidth(72).Shrink(0)
+
+			input := ui.TextInput(c.Key(fmt.Sprintf("search-%d", t.id)), &t.searchText).
+				Placeholder("搜索提交、分支、标签或哈希… (⌘P)").
+				Bind(&t.searchInput).
+				Grow(1).
+				MinWidth(80).
+				Error(t.locateErr)
+
+			if input.Changed() {
+				t.locate = t.searchText
+				t.locateErr = ""
+				t.locateGen++
+				t.searchSuggestOpen = true
+			}
+
+			if t.searchKind != "作者" && t.searchKind != "文件路径" {
+				jumpBtn := iconButton(c, "locate-ref", "跳到", iconLocate).Shrink(0).Tooltip("跳到所填分支/标签/哈希 (Enter)")
+				if jumpBtn.Clicked() {
+					t.searchSuggestOpen = false
+					t.locate = t.searchText
+					a.locateRef(t, t.searchText)
+				}
+			}
+
+			busy := t.loading && strings.TrimSpace(t.searchText) == t.query.term && t.searchKind == t.query.kind
+			searchBtn := iconButton(c, "search-history", "搜索", iconSearch).Shrink(0).Disabled(busy).Tooltip("搜索提交历史 (Enter)")
+			if searchBtn.Clicked() || (input.Submitted() && !busy) {
+				a.omniSubmit(t)
+			}
+
+			if t.query.term != "" {
+				if ui.Button(c.Key("search-locate"), "定位到此提交").Shrink(0).Disabled(t.inspecting == zeroHash).Clicked() {
+					a.locateCommitInGraph(t, t.inspecting)
+				}
+				backBtn := ui.ButtonBase(c.Key("search-clear")).
+					Label("返回").
+					Tooltip("返回完整提交历史 (Esc)").
+					Padding(2, 8).
+					Radius(c.Theme().Radius).
+					Background(c.Theme().SurfaceHover).
+					Shrink(0).
+					Cursor(ui.CursorPointer)
+				backBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, iconBack).Size(13, 13)
+						ui.Text(c, "返回").FontSize(12)
+					})
+				})
+				if backBtn.Clicked() {
+					a.leaveSearch(t)
+				}
+			}
+		})
+
+		if t.searchSuggestOpen {
+			a.omniSuggestionsPopover(c, t, searchBox)
 		}
-		if ui.Button(c.Key("refresh"), "刷新").Disabled(t.loading).Clicked() {
+	}
+
+	actionButtons := func() {
+		fetchBtn := iconButton(c, "fetch", "获取", iconDownload).Shrink(0).Disabled(t.loading || a.fetch.busy)
+		fetchBtn.ContextMenu(func(m *ui.Menu) {
+			if m.Item("立即获取 (Fetch)").Chosen() {
+				a.quickFetch(t)
+			}
+			if m.Item("获取选项…").Chosen() {
+				a.openFetch(t)
+			}
+		})
+		if fetchBtn.Clicked() {
+			a.quickFetch(t)
+		}
+		if ui.Button(c.Key("fetch-options"), "⋯").Label("获取选项").Tooltip("获取选项（清理远端已删除引用）").Shrink(0).Disabled(t.loading || a.fetch.busy).Clicked() {
+			a.openFetch(t)
+		}
+		if iconButton(c, "refresh", "刷新", iconRefresh).Shrink(0).Disabled(t.loading).Clicked() {
 			a.refresh(t)
 		}
-		if ui.Button(c.Key("compare"), "比较").Disabled(t.loading).Clicked() {
+		if iconButton(c, "compare", "比较", iconGitCompare).Shrink(0).Disabled(t.loading).Clicked() {
 			a.openCompareModal(t)
 		}
-	})
-	ui.Row(c).Padding(0, 12, 8, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
-		ui.Select(c.Key(fmt.Sprintf("search-kind-%d", t.id)), &t.searchKind, searchKinds).MinWidth(96)
-		input := ui.TextInput(c.Key(fmt.Sprintf("search-%d", t.id)), &t.searchText).Bind(&t.searchInput).Grow(1).MinWidth(80)
-		busy := t.loading && strings.TrimSpace(t.searchText) == t.query.term && t.searchKind == t.query.kind
-		if ui.Button(c.Key("search-history"), "搜索").Disabled(busy).Clicked() || (input.Submitted() && !busy) {
-			a.searchHistory(t)
+	}
+
+	winW, _ := c.Size()
+	mainW := winW
+	if a.showRepoSidebar() {
+		split := a.repoSplit
+		if split <= 0 {
+			split = 320
 		}
-		if t.query.term != "" {
-			if ui.Button(c.Key("search-clear"), "返回").Clicked() {
-				a.leaveSearch(t)
-			}
-		}
-	})
+		mainW -= split
+	}
+	singleRow := mainW >= 660
+	if singleRow {
+		ui.Row(c).Padding(4, 12, 8, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+			scopeControls()
+			omniSearchBox()
+			actionButtons()
+		})
+	} else {
+		ui.Row(c).Padding(4, 12, 4, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+			scopeControls()
+			actionButtons()
+		})
+		ui.Row(c).Padding(0, 12, 8, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+			omniSearchBox()
+		})
+	}
+	if t.locateErr != "" {
+		ui.Row(c).Padding(0, 12, 6, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+			ui.Icon(c, iconAlertCircle).Size(14, 14).TextColor(c.Theme().Danger)
+			ui.Text(c, t.locateErr).FontSize(12).TextColor(c.Theme().Danger).Grow(1).MinWidth(0).SingleLine()
+		})
+	}
 }
 
 func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
@@ -240,40 +637,80 @@ func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
 	} else if t.query.ref != "" {
 		label = strings.TrimPrefix(strings.TrimPrefix(t.query.ref, "refs/heads/"), "refs/remotes/")
 	}
-	ui.MenuButton(c.Key("history-scope"), label, func(m *ui.Menu) {
-		for _, opt := range []struct{ label, ref string }{{"范围内全部分支", ""}, {"当前分支", "HEAD"}} {
-			if m.Item(opt.label).Checked(t.query.ref == opt.ref).Chosen() {
-				q := t.query
-				q.ref = opt.ref
-				a.changeScope(t, q)
+	th := c.Theme()
+	sel := ui.SelectBase(c.Key("history-scope"), &t.query.ref)
+	bg := th.Surface
+	if sel.Trigger.Pressed() {
+		bg = th.SurfacePressed
+	} else if sel.Trigger.Hovered() {
+		bg = th.SurfaceHover
+	}
+	sel.Trigger.Padding(th.Space(1.5), th.Space(3)).Gap(th.Space(1.5)).Radius(th.Radius).
+		Background(bg).Border(1, th.Border).Justify(ui.SpaceBetween).MinWidth(88).MaxWidth(148).Shrink(0).Label("筛选分支")
+	sel.Trigger.Children(func() {
+		ui.Text(c, label).SingleLine().MinWidth(0)
+		ui.Box(c).Size(th.Space(2.5), th.Space(2.5)).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
+			var path ui.Path
+			path.MoveTo(r.X+r.W*0.1, r.Y+r.H*0.3).LineTo(r.X+r.W*0.5, r.Y+r.H*0.7).LineTo(r.X+r.W*0.9, r.Y+r.H*0.3)
+			p.StrokePath(&path, 1.5, th.TextMuted)
+		})
+	})
+	maxH := th.Space(70)
+	sel.Popup(func(panel ui.Element) {
+		panel.Margin(th.Space(1), 0, 0, 0).Padding(th.Space(1.5)).Radius(th.Radius+2).Background(th.Background).Border(1, th.Border).MinWidth(220)
+		panel.Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18))
+		ui.SearchField(c.Key(fmt.Sprintf("branch-filter-%d", t.id)), &t.branchFilter).Placeholder("搜索分支…").Margin(0, 0, th.Space(1), 0)
+		filter := strings.ToLower(strings.TrimSpace(t.branchFilter))
+		ui.Scroll(c).MaxHeight(maxH).Children(func() {
+			add := func(name, ref string) {
+				item := sel.Item(ref).Padding(th.Space(1.5), th.Space(2.5)).Radius(th.Radius).Shrink(0)
+				switch {
+				case item.Highlighted():
+					item.Background(th.Accent).TextColor(th.AccentText)
+				case t.query.ref == ref:
+					item.Background(th.Surface)
+				}
+				item.Children(func() { ui.Text(c, name).SingleLine() })
 			}
-		}
-		m.Separator()
-		var branches []string
-		for _, refs := range t.refs {
-			for _, ref := range refs {
-				if ref.kind == refBranch {
-					branches = append(branches, "refs/heads/"+ref.name)
-				} else if ref.kind == refRemote && !t.query.hideRemote {
-					branches = append(branches, "refs/remotes/"+ref.name)
+			if filter == "" {
+				add("范围内全部分支", "")
+				add("当前分支", "HEAD")
+				ui.Box(c).Height(1).Margin(th.Space(1), th.Space(2)).Background(th.Border).Shrink(0)
+			}
+			var branches []string
+			for _, refs := range t.refs {
+				for _, ref := range refs {
+					if ref.kind == refBranch {
+						branches = append(branches, "refs/heads/"+ref.name)
+					} else if ref.kind == refRemote && !t.query.hideRemote {
+						branches = append(branches, "refs/remotes/"+ref.name)
+					}
 				}
 			}
-		}
-		sort.Strings(branches)
-		for _, ref := range branches {
-			name := strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/remotes/")
-			if strings.HasPrefix(ref, "refs/remotes/") {
-				name = "远程 · " + name
-			} else {
-				name = "本地 · " + name
+			sort.Strings(branches)
+			matched := 0
+			for _, ref := range branches {
+				rawName := strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/remotes/")
+				if filter != "" && !strings.Contains(strings.ToLower(rawName), filter) {
+					continue
+				}
+				name := rawName
+				if strings.HasPrefix(ref, "refs/remotes/") {
+					name = "远程 · " + name
+				} else {
+					name = "本地 · " + name
+				}
+				add(name, ref)
+				matched++
 			}
-			if m.Item(name).Checked(t.query.ref == ref).Chosen() {
-				q := t.query
-				q.ref = ref
-				a.changeScope(t, q)
+			if filter != "" && matched == 0 {
+				ui.Text(c, "无匹配分支").FontSize(12).TextColor(th.TextMuted).Padding(th.Space(1.5), th.Space(2.5))
 			}
-		}
-	}).MinWidth(120).MaxWidth(240)
+		})
+	})
+	if sel.Trigger.Changed() {
+		a.changeScope(t, t.query)
+	}
 }
 
 func (a *app) changeScope(t *repoTab, q historyQuery) {

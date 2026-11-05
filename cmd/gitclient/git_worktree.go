@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -16,15 +17,83 @@ func worktreeStatus(ctx context.Context, dir string) ([]fileChange, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parsePorcelainZ(out), nil
+	files := parsePorcelainZ(out)
+	applyWorktreeNumStat(ctx, dir, files)
+	for i := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Hash the bounded preview content so edits with unchanged status or timestamps are noticed.
+		data, note, err := readWorktreeFile(dir, files[i].path)
+		h := sha256.New()
+		h.Write(data)
+		h.Write([]byte{0})
+		h.Write([]byte(note))
+		if err != nil {
+			h.Write([]byte{0})
+			h.Write([]byte(err.Error()))
+		}
+		files[i].worktreeVersion = fmt.Sprintf("%x", h.Sum(nil))
+	}
+	return files, nil
+}
+
+func applyWorktreeNumStat(ctx context.Context, dir string, files []fileChange) {
+	if len(files) == 0 {
+		return
+	}
+	statOut, err := runGit(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "HEAD", "--")
+	if err != nil {
+		statOut, err = runGit(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "--cached", "--")
+	}
+	if err == nil {
+		applyNumStat(files, parseNumStatZ(statOut))
+	}
+	for i := range files {
+		if files[i].hasStat || files[i].extra != "未跟踪" {
+			continue
+		}
+		added, binary, ok := worktreeUntrackedStat(dir, files[i].path)
+		if !ok {
+			continue
+		}
+		files[i].added = added
+		files[i].binary = binary
+		files[i].hasStat = true
+	}
+}
+
+func worktreeUntrackedStat(dir, rel string) (added int, binary, ok bool) {
+	data, note, err := readWorktreeFile(dir, rel)
+	if err != nil {
+		return 0, false, false
+	}
+	if note != "" {
+		if strings.HasPrefix(note, "二进制文件") {
+			return 0, true, true
+		}
+		return 0, false, false
+	}
+	return countTextLines(data), false, true
+}
+
+func countTextLines(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	n := bytes.Count(data, []byte{'\n'})
+	if data[len(data)-1] != '\n' {
+		n++
+	}
+	return n
 }
 
 func worktreeKey(files []fileChange) string {
 	parts := make([]string, 0, len(files))
 	for _, f := range files {
-		parts = append(parts, f.status+"|"+f.extra+"|"+f.oldPath+"|"+f.path)
+		parts = append(parts, fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%t\x00%t", f.status, f.extra, f.oldPath, f.path, f.worktreeVersion, f.added, f.deleted, f.binary, f.hasStat))
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\x00")
 }
 
 // parsePorcelainZ 解析 git status --porcelain=v1 -z。
@@ -55,8 +124,8 @@ func parsePorcelainZ(b []byte) []fileChange {
 		ch := fileChange{path: path}
 		if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
 			if i < len(parts) {
-				ch.oldPath = path
-				ch.path = string(parts[i])
+				// Porcelain -z emits the destination first, then the source.
+				ch.oldPath = string(parts[i])
 				i++
 			}
 		}

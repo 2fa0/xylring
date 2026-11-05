@@ -212,3 +212,39 @@ func TestGraphCrossingsAndNodeHalos(t *testing.T) {
 		})
 	}
 }
+
+func TestGraphSidebarClosedSpacing(t *testing.T) {
+	tab := newTab(1, "/tmp/graph-closed-gap")
+	tab.loaded = true
+	tab.branch = "main"
+	tab.commits = []commit{
+		{hash: hashN(1), subject: "commit-spacing-check", author: "A", when: 1700000000},
+	}
+	tab.graph.add(&tab.commits[0])
+	tab.head = tab.commits[0].hash
+
+	a := &app{
+		tabs:          []*repoTab{tab},
+		sidebarHidden: true,
+	}
+
+	tt := ui.NewTester(a.view, 900, 500)
+	tt.Frame()
+	defer retireTester(tt)
+
+	header, ok := tt.Find("图谱")
+	if !ok {
+		t.Fatal("未找到图谱列头")
+	}
+	if header.X < 12 {
+		t.Fatalf("关闭侧栏后图谱列过于靠近边框: X = %v, want >= 12", header.X)
+	}
+
+	row, ok := tt.Find("commit-spacing-check")
+	if !ok {
+		t.Fatal("未找到提交行")
+	}
+	if row.X < 12 {
+		t.Fatalf("关闭侧栏后提交行过于靠近边框: X = %v, want >= 12", row.X)
+	}
+}

@@ -21,8 +21,9 @@ func (a *app) trimInactiveHistory() {
 	for _, t := range tabs {
 		kept += t.cachedBytes()
 		if kept > historyMemoryStep && t.loaded {
-			kept -= t.cachedBytes()
+			before := t.cachedBytes()
 			t.evictHistory()
+			kept -= before - t.cachedBytes()
 		}
 	}
 }
@@ -30,7 +31,11 @@ func (a *app) trimInactiveHistory() {
 func (t *repoTab) cachedBytes() int64 {
 	n := t.historyBytes
 	seen := map[*editor.DiffState]bool{}
-	for _, d := range []*editor.DiffState{t.diff, savedDiff(t.historyBack), savedDiff(t.fileBack), savedDiff(t.restoreDiff)} {
+	diffs := []*editor.DiffState{t.diff, savedDiff(t.historyBack), savedDiff(t.fileBack), savedDiff(t.restoreDiff)}
+	for _, tab := range t.fileTabs {
+		diffs = append(diffs, tab.diff)
+	}
+	for _, d := range diffs {
 		if d == nil || seen[d] {
 			continue
 		}
@@ -40,6 +45,22 @@ func (t *repoTab) cachedBytes() int64 {
 		}
 		if d.New != nil {
 			n += int64(d.New.Len())
+		}
+	}
+	seenSources := map[*fileDiffSource]bool{}
+	sources := []*fileDiffSource{t.diffSource}
+	for _, saved := range []*historyLocation{t.historyBack, t.fileBack, t.restoreDiff} {
+		if saved != nil {
+			sources = append(sources, saved.source)
+		}
+	}
+	for _, tab := range t.fileTabs {
+		sources = append(sources, tab.source)
+	}
+	for _, source := range sources {
+		if source != nil && !seenSources[source] {
+			seenSources[source] = true
+			n += int64(len(source.old) + len(source.new))
 		}
 	}
 	return n
@@ -60,7 +81,7 @@ func (t *repoTab) evictHistory() {
 	t.cancel()
 	for _, saved := range []*historyLocation{l, t.historyBack, t.fileBack} {
 		if saved != nil {
-			saved.diff, saved.simpleDiff, saved.details = nil, nil, nil
+			saved.diff, saved.simpleDiff, saved.source, saved.details = nil, nil, nil, nil
 		}
 	}
 	t.restore = l
@@ -72,11 +93,14 @@ func (t *repoTab) evictHistory() {
 	t.historyBytes = 0
 	t.list, t.fileList = ui.ListState{}, ui.ListState{}
 	t.selected, t.fileSel = -1, -1
+	t.resetFileTree()
+	t.resetWorktreeTree()
 	t.selection.Clear()
 	t.inspecting = zeroHash
 	t.worktree = false
 	t.comparison = nil
-	t.diff, t.simpleDiff, t.details = nil, nil, nil
+	t.diff, t.simpleDiff, t.diffSource, t.details = nil, nil, nil, nil
 	t.compareFiles, t.worktreeFiles = nil, nil
+	t.worktreeCount, t.worktreeKey = 0, ""
 	t.loading, t.loaded, t.compareLoading, t.diffLoading, t.detailsLoading = false, false, false, false, false
 }

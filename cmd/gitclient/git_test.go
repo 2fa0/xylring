@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -272,6 +273,86 @@ func TestOpenPathSingleOpens(t *testing.T) {
 	}
 }
 
+func TestRecentRepoRestoresRepoList(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "网关代码")
+	initGitDir(t, parent)
+	initGitDir(t, filepath.Join(parent, "gateway-source"))
+	ready := make(chan func(), 16)
+	a := &app{
+		recent:   []string{parent},
+		persist:  false,
+		dispatch: func(fn func()) { ready <- fn },
+	}
+	a.openRepo(parent)
+	want, err := repoRoot(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, tab := range a.tabs {
+			tab.cancel()
+		}
+	}()
+	deadline := time.After(5 * time.Second)
+	for len(a.found) != 2 {
+		select {
+		case fn := <-ready:
+			fn()
+		case <-deadline:
+			t.Fatalf("found=%v from=%q", a.found, a.foundFrom)
+		}
+	}
+	if len(a.tabs) != 1 || a.tabs[a.active].path != want {
+		t.Fatalf("tabs=%d active=%q", len(a.tabs), a.tabs[a.active].path)
+	}
+	if a.foundFrom != want {
+		t.Fatalf("foundFrom=%q want %q", a.foundFrom, want)
+	}
+	if !a.showRepoSidebar() {
+		t.Fatal("没有列出仓库")
+	}
+}
+
+func TestRepoRootMissing(t *testing.T) {
+	_, err := repoRoot(context.Background(), filepath.Join(t.TempDir(), "gone"))
+	if err == nil || err.Error() != "找不到这个仓库" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestRepoRootNotGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip(err)
+	}
+	_, err := repoRoot(context.Background(), t.TempDir())
+	if err == nil || err.Error() != "不是 Git 仓库" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestOpenMissingRecentRepo(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone")
+	ready := make(chan func(), 16)
+	a := &app{
+		recent:   []string{missing},
+		persist:  false,
+		dispatch: func(fn func()) { ready <- fn },
+	}
+	a.openRepo(missing)
+	select {
+	case fn := <-ready:
+		fn()
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
+	}
+	if a.banner != "找不到这个仓库" || a.bannerPath != missing {
+		t.Fatalf("banner=%q path=%q", a.banner, a.bannerPath)
+	}
+	if len(a.tabs) != 0 {
+		t.Fatalf("tabs=%d", len(a.tabs))
+	}
+}
+
 func TestRefreshDiscoversNestedRepo(t *testing.T) {
 	root := t.TempDir()
 	alpha := filepath.Join(root, "alpha")
@@ -394,6 +475,9 @@ func TestCommitFiles(t *testing.T) {
 	if len(root) != 1 || root[0].status != "A" || root[0].path != "a.txt" {
 		t.Fatalf("root %+v", root)
 	}
+	if !root[0].hasStat || root[0].added != 1 || root[0].deleted != 0 {
+		t.Fatalf("root stats %+v", root[0])
+	}
 	mid, err := commitFiles(ctx, dir, change, byHash[change].parents)
 	if err != nil {
 		t.Fatal(err)
@@ -401,11 +485,39 @@ func TestCommitFiles(t *testing.T) {
 	if len(mid) != 1 || mid[0].status != "M" || mid[0].path != "a.txt" {
 		t.Fatalf("change %+v", mid)
 	}
+	if !mid[0].hasStat || mid[0].added != 1 || mid[0].deleted != 1 {
+		t.Fatalf("change stats %+v", mid[0])
+	}
 	merged, err := commitFiles(ctx, dir, merge, byHash[merge].parents)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(merged) != 1 || merged[0].status != "A" || merged[0].path != "b.txt" {
 		t.Fatalf("merge first-parent %+v", merged)
+	}
+	if !merged[0].hasStat || merged[0].added != 1 || merged[0].deleted != 0 {
+		t.Fatalf("merge stats %+v", merged[0])
+	}
+}
+
+func TestResolveCommitMissing(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("commit", "--allow-empty", "-m", "base")
+	_, err := resolveCommit(context.Background(), dir, "111111111111111111111111")
+	if err == nil || !strings.Contains(err.Error(), "找不到") || strings.Contains(err.Error(), "fatal") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestGitNoIndexDistinguishesChangesFromErrors(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "old"), []byte("before\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "new"), []byte("after\n"), 0o600)
+	out, err := runGit(context.Background(), dir, "diff", "--no-index", "--", "old", "new")
+	if err != nil || !strings.Contains(string(out), "+after") {
+		t.Fatalf("valid diff: %s %v", out, err)
+	}
+	if _, err := runGit(context.Background(), dir, "diff", "--no-index", "--", "missing", "new"); err == nil {
+		t.Fatal("missing-file error was swallowed")
 	}
 }

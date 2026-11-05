@@ -219,8 +219,8 @@ func TestHistoryByteBudgetAndContinuation(t *testing.T) {
 	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
 	defer tab.cancel()
 	tt := ui.NewTester(a.view, 1100, 720)
-	if tab.loading || !tt.HasText("继续加载") {
-		t.Fatal("memory budget did not pause automatic loading")
+	if tab.loading || !tt.HasText("继续加载") || !tt.HasText("已加载 1 条提交 · 还有更多历史") {
+		t.Fatalf("memory budget did not pause automatic loading or missing footer hint: %q", tt.Texts())
 	}
 	if err := tt.Click("继续加载"); err != nil {
 		t.Fatal(err)
@@ -228,6 +228,29 @@ func TestHistoryByteBudgetAndContinuation(t *testing.T) {
 	waitUpdates(t, updates, func() bool { return !tab.loading })
 	if tab.historyBudget != 2*historyMemoryStep {
 		t.Fatal("explicit continuation did not extend the budget")
+	}
+}
+
+func TestCommitTableFooterStates(t *testing.T) {
+	tab := newTab(1, "/tmp/footer-repo")
+	tab.loaded = true
+	tab.commits = []commit{{hash: perfHash(1), subject: "commit 1"}}
+	a := &app{tabs: []*repoTab{tab}}
+	tt := ui.NewTester(a.view, 1100, 720)
+
+	// 1. Loading state shows loading text in table footer
+	tab.loading = true
+	tt.Frame()
+	if !tt.HasText("正在加载更多历史提交…") {
+		t.Fatalf("加载中状态未显示底部提示，文本：%q", tt.Texts())
+	}
+
+	// 2. Error state shows error and retry button
+	tab.loading = false
+	tab.err = "网络超时"
+	tt.Frame()
+	if !tt.HasText("网络超时") || !tt.HasText("重试") {
+		t.Fatalf("错误状态未显示重试提示，文本：%q", tt.Texts())
 	}
 }
 

@@ -72,6 +72,14 @@ func streamFileHistory(ctx context.Context, dir string, q historyQuery, skip, n 
 	})
 }
 
+func (a *app) openFileHistoryAt(t *repoTab, i int) {
+	if i < 0 || i >= len(t.compareFiles) {
+		return
+	}
+	t.fileSel = i
+	a.openFileHistory(t)
+}
+
 func (a *app) openFileHistory(t *repoTab) {
 	if t.fileSel < 0 || t.fileSel >= len(t.compareFiles) || t.query.filePath != "" {
 		return
@@ -99,20 +107,30 @@ func (a *app) leaveFileHistory(t *repoTab) {
 	t.restore = back
 }
 
-func (a *app) locateFileCommit(t *repoTab) {
-	h := t.inspecting
+func (a *app) locateCommitInGraph(t *repoTab, h [20]byte) {
 	if h == zeroHash {
 		return
 	}
 	q := historyQuery{extraTip: h}
-	if t.fileBack != nil {
+	switch {
+	case t.fileBack != nil:
 		q.ref = t.fileBack.query.ref
 		q.hideRemote = t.fileBack.query.hideRemote
+	case t.historyBack != nil:
+		q.ref = t.historyBack.query.ref
+		q.hideRemote = t.historyBack.query.hideRemote
+	default:
+		q.ref = t.query.ref
+		q.hideRemote = t.query.hideRemote
 	}
 	t.fileBack, t.historyBack = nil, nil
 	t.searchText = ""
 	a.changeHistory(t, q)
 	t.restore = &historyLocation{query: q, hash: h, top: h}
+}
+
+func (a *app) locateFileCommit(t *repoTab) {
+	a.locateCommitInGraph(t, t.inspecting)
 }
 
 func (a *app) fileHistoryToolbar(c *ui.Context, t *repoTab) {
@@ -121,7 +139,7 @@ func (a *app) fileHistoryToolbar(c *ui.Context, t *repoTab) {
 		if ui.Button(c.Key("file-history-locate"), "在图谱中定位").Disabled(t.inspecting == zeroHash).Clicked() {
 			a.locateFileCommit(t)
 		}
-		if ui.Button(c.Key("file-history-back"), "返回").Clicked() {
+		if iconButton(c, "file-history-back", "返回", iconBack).Clicked() {
 			a.leaveFileHistory(t)
 		}
 	})

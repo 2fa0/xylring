@@ -99,9 +99,7 @@ func TestFileHistoryReadsHistoricalPathsAndReturns(t *testing.T) {
 	originalDiff, originalHash := tab.diff, tab.inspecting
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if err := tt.Click("文件历史"); err != nil {
-		t.Fatal(err)
-	}
+	clickFileAction(t, tt, tab, "文件历史")
 	waitUpdates(t, updates, func() bool { return !tab.loading })
 	tt.Frame()
 	if slices.Contains(tt.Texts(), "图谱") || !tt.HasText("新名.txt") || len(tab.commits) != 4 {
@@ -164,5 +162,35 @@ func TestFileHistoryLocateKeepsScope(t *testing.T) {
 	waitUpdates(t, updates, func() bool { return !tab.loading })
 	if tab.query.ref != "HEAD" || tab.query.filePath != "" || tab.query.hideRemote {
 		t.Fatalf("locate dropped scope: %+v", tab.query)
+	}
+}
+
+func TestFileHistoryFromLaterFile(t *testing.T) {
+	dir, git := initTestRepo(t)
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o600)
+	}
+	git("add", ".")
+	git("commit", "-m", "four files")
+	tab := newTab(1, dir)
+	updates := make(chan func(), 64)
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+	defer tab.cancel()
+	a.reload(tab)
+	waitUpdates(t, updates, func() bool { return !tab.loading })
+	a.selectCommit(tab, 0)
+	waitUpdates(t, updates, func() bool { return !tab.compareLoading && !tab.diffLoading })
+	if len(tab.compareFiles) < 4 {
+		t.Fatalf("need 4 files, got %d", len(tab.compareFiles))
+	}
+	tab.fileSel = 3
+	want := tab.compareFiles[3].path
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+	clickFileAction(t, tt, tab, "文件历史")
+	waitUpdates(t, updates, func() bool { return !tab.loading })
+	tt.Frame()
+	if tab.query.filePath != want {
+		t.Fatalf("file history path=%q want=%q", tab.query.filePath, want)
 	}
 }
