@@ -688,6 +688,7 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 			})
 			return
 		}
+		tab.fullContent.RenderFindBar = renderFindBar
 		editor.View(c.Key(fmt.Sprintf("full-editor-%d", tab.id)), &tab.fullContent).Grow(1).MinHeight(0)
 	})
 }

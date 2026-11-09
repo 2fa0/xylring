@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -491,16 +493,38 @@ func TestDiffFindInView(t *testing.T) {
 	tt.Frame()
 
 	// 2. Type query in find bar
+	assertFindBarVisible(t, tt)
 	tt.Type("xylring")
 	tt.Frame()
+	if tab.diff.Cursor() != len("hello xylring") || !tt.HasText("1 of 1") {
+		t.Fatalf("查找未选中匹配: cursor=%d, texts=%v", tab.diff.Cursor(), tt.Texts())
+	}
+	if path := os.Getenv("XYLRING_FIND_PNG"); path != "" {
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tt.Click("关闭查找"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tt.HasText("查找内容") {
+		t.Fatal("关闭后查找框仍然显示")
+	}
 
 	// 3. Test Cmd+F shortcut focuses/reopens find when inspecting diff
 	tt.Key(commandModifier(), ui.KeyF)
 	tt.Frame()
+	assertFindBarVisible(t, tt)
 
 	// 4. Test file tab find button
 	fileTab := &fileDiffTab{
-		id:   1,
+		id: 1,
 		diff: &editor.DiffState{
 			Old: editor.NewBuffer("tab old\n"),
 			New: editor.NewBuffer("tab new\n"),
@@ -517,6 +541,20 @@ func TestDiffFindInView(t *testing.T) {
 		t.Fatalf("点击标签页在 Diff 中查找失败: %v", err)
 	}
 	tt.Frame()
+	assertFindBarVisible(t, tt)
+
+	// Large-file fallback uses the same bar in its independent editors.
+	fileTab.diff = nil
+	fileTab.simple = &simpleDiff{
+		old: editor.State{Buffer: editor.NewBuffer("old\n"), ReadOnly: true},
+		new: editor.State{Buffer: editor.NewBuffer("new\n"), ReadOnly: true},
+	}
+	tt.Frame()
+	if err := tt.Click("在 Diff 中查找"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	assertFindBarVisible(t, tt)
 
 	// 5. Test full file tab find button
 	fullTab := &fileDiffTab{
@@ -537,6 +575,140 @@ func TestDiffFindInView(t *testing.T) {
 		t.Fatalf("点击在文件中查找失败: %v", err)
 	}
 	tt.Frame()
+	assertFindBarVisible(t, tt)
 
 	retireTester(tt)
+}
+
+func assertFindBarVisible(t *testing.T, tt *ui.Tester) {
+	t.Helper()
+	field, ok := tt.Find("查找内容")
+	if !ok || field.W < 60 || field.H < 20 || !tt.Focused("查找内容") {
+		t.Fatalf("查找输入框未完整显示或未获得焦点: %+v", field)
+	}
+	for _, name := range []string{"区分大小写", "全字匹配", "正则表达式", "在选区中查找", "上一个匹配", "下一个匹配", "关闭查找"} {
+		r, ok := tt.Find(name)
+		if !ok || r.W < 12 || r.H < 12 || r.X < field.X-8 || r.X+r.W > field.X+field.W+8 {
+			t.Fatalf("查找控件 %s 被裁剪: %+v", name, r)
+		}
+	}
+}
+
+func TestDiffFindAboveCollapsedLines(t *testing.T) {
+	for _, layout := range []editor.DiffLayout{editor.DiffSplit, editor.DiffUnified} {
+		t.Run(fmt.Sprint(layout), func(t *testing.T) {
+			common := strings.Repeat("unchanged line\n", 92)
+			diff := &editor.DiffState{
+				Old:           editor.NewBuffer(common + "old\n" + common),
+				New:           editor.NewBuffer(common + "new\n" + common),
+				Layout:        layout,
+				RenderFindBar: renderFindBar,
+			}
+			tt := ui.NewTester(func(c *ui.Context) {
+				editor.DiffView(c, diff).Fill()
+			}, 1000, 500)
+			defer retireTester(tt)
+			tt.Frame()
+			diff.Run(editor.Find)
+			tt.Frame()
+			if !tt.HasText("89 unmodified lines") {
+				t.Fatal("缺少顶部折叠条")
+			}
+			field, ok := tt.Find("查找内容")
+			if !ok {
+				t.Fatal("缺少查找输入框")
+			}
+			img := tt.Image()
+			x := int(field.X + field.W - 40)
+			if img.RGBAAt(x, int(field.Y+6)) != img.RGBAAt(x, int(field.Y+field.H-6)) {
+				t.Fatal("查找输入框上半部被折叠条绘制覆盖")
+			}
+			// The first collapsed-line separator crosses the top of the input.
+			tt.ClickAt(field.X+20, field.Y+2)
+			tt.Frame()
+			if !tt.HasText("89 unmodified lines") {
+				t.Fatal("点击查找框却展开了顶部折叠条")
+			}
+			if !tt.Focused("查找内容") {
+				t.Fatal("折叠条遮挡查找框，点击被折叠条接收")
+			}
+			tt.Key(commandModifier(), ui.KeyA)
+			tt.Type("new")
+			tt.Frame()
+			if !tt.HasText("1 of 1") {
+				t.Fatalf("查找未匹配新内容: %v", tt.Texts())
+			}
+			if path := os.Getenv("XYLRING_FIND_PNG"); path != "" {
+				f, err := os.Create(fmt.Sprintf("%s-%d.png", path, layout))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				if err := png.Encode(f, tt.Image()); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestDiffFindBothSidesAcceptInput(t *testing.T) {
+	var queries []*string
+	diff := &editor.DiffState{
+		Old: editor.NewBuffer("leftneedle\nold text\n"),
+		New: editor.NewBuffer("rightneedle\nnew text\n"),
+		RenderFindBar: func(c *ui.Context, anchor ui.Element, f *editor.FindBar) {
+			queries = append(queries, f.Query())
+			renderFindBar(c, anchor, f)
+		},
+	}
+	tt := ui.NewTester(func(c *ui.Context) {
+		queries = nil
+		editor.DiffView(c, diff).Fill()
+	}, 1100, 500)
+	defer retireTester(tt)
+	tt.Frame()
+	for _, side := range []string{"Old text", "New text"} {
+		if err := tt.Click(side); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		diff.Run(editor.Find)
+		tt.Frame()
+	}
+	if len(queries) != 2 {
+		t.Fatalf("应同时显示左右查找框，实际 %d", len(queries))
+	}
+	leftQuery, rightQuery := queries[0], queries[1]
+	left, ok := tt.Find("查找内容")
+	if !ok {
+		t.Fatal("缺少左侧查找框")
+	}
+	tt.ClickAt(left.X+30, left.Y+left.H/2)
+	tt.Key(commandModifier(), ui.KeyA)
+	tt.Type("leftneedle")
+	tt.Frame()
+	if *leftQuery != "leftneedle" {
+		t.Fatalf("左侧查找框无法独立输入：left=%q, right=%q", *leftQuery, *rightQuery)
+	}
+	// The right pane occupies the second half of the same split view.
+	tt.ClickAt(left.X+550.5+30, left.Y+left.H/2)
+	tt.Key(commandModifier(), ui.KeyA)
+	tt.Type("rightneedle")
+	tt.Frame()
+	if *rightQuery != "rightneedle" || *leftQuery != "leftneedle" {
+		t.Fatalf("左右查找内容串扰：left=%q, right=%q", *leftQuery, *rightQuery)
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if len(queries) != 1 || queries[0] != leftQuery {
+		t.Fatal("关闭右侧查找框影响了左侧")
+	}
+	tt.ClickAt(left.X+30, left.Y+left.H/2)
+	tt.Key(commandModifier(), ui.KeyA)
+	tt.Type("old text")
+	tt.Frame()
+	if *leftQuery != "old text" {
+		t.Fatal("关闭右侧后左侧无法继续输入")
+	}
 }
