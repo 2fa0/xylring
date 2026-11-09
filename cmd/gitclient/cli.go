@@ -101,6 +101,7 @@ func printCLIHelp() {
   xylring stamp --agent NAME [--model NAME] [--ttl 30m] [--once]
   xylring stamp --show|--clear
   xylring ring install|uninstall|status|snippet|script
+  xylring ring strict install|uninstall|status|script
   旧版启动器用户请重新执行 install-cli。
   xylring [选项] [路径...]
 

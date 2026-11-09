@@ -46,6 +46,9 @@ func (t *provenanceTable) intern(p provenance) uint16 {
 	p.agent, p.model, p.attribution = strings.Clone(p.agent), strings.Clone(p.model), strings.Clone(p.attribution)
 	key = provKey{p.agent, p.model, p.attribution}
 	p.badge = "◎ " + p.agent
+	if strings.EqualFold(p.agent, "human") {
+		p.badge = "人工"
+	}
 	if p.model != "" {
 		p.badge += " · " + normalizeModel(p.model)
 	}
@@ -123,6 +126,9 @@ func (p provenance) description() string {
 		return ""
 	}
 	label := p.agent
+	if strings.EqualFold(p.agent, "human") {
+		label = "人工"
+	}
 	if p.model != "" {
 		label += " · " + normalizeModel(p.model)
 	}

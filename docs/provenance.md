@@ -46,6 +46,40 @@ XYLRING_RING=0 git commit --amend -m '修订说明'
 GUI 的 Amend 不受这个限制。merge、squash source 也跳过。
 Hook 写入失败会静默放行，不阻止 Git 提交。
 
+### 可选严格模式
+
+宽松模式保持上述行为。严格模式另行安装 `commit-msg` 检查，不依赖自动盖章：
+
+```sh
+xylring ring strict install
+xylring ring strict status
+xylring ring strict uninstall
+```
+
+已有 `commit-msg` 会被备份并先执行；其非零退出码原样保留，卸载后恢复。
+严格检查覆盖普通、GUI、amend、merge 和 squash 的提交，不因 `XYLRING_GUI=1`
+或 `XYLRING_RING=0` 放行。GUI 可在 Agent 输入框填写 `human` 显式声明人工。
+已配置 `core.hooksPath` 时需手动将 `xylring ring strict script` 输出的脚本
+保存到独立文件，再在现有 `commit-msg` 最后调用，传入原参数并保留退出码。
+
+每条新增提交必须有唯一的非空 `AI-Agent`；`AI-Model` 仍为可选，未知时省略。
+重复、空值、模板占位值及无效归因来源会被拒绝。`Assisted-by` 不能代替标准字段。
+完全人工提交显式写 `AI-Agent: human`，不能同时带模型、AI 归因来源或已识别的 AI 原生签名；
+普通人类 `Co-authored-by` 不受影响。未标注的历史提交保留现有展示行为，不回写历史。
+失败时会输出具体原因、提交说明模板、AI/人工重试命令和提交后核对步骤。
+检查只能保证声明格式，不能证明自报身份真实。
+
+本仓库的 `Commit provenance` 工作流检查 PR 相对目标分支的所有新增提交，包含中间提交，
+使用与 Hook 同一份脚本，不检查既有历史。也可本地运行：
+
+```sh
+sh cmd/gitclient/ring_check.sh --range BASE..HEAD
+```
+
+本地 Hook 可被绕过。仓库管理员还需将 `Check commit provenance` 设为目标分支的
+必需检查，要求通过 PR 合入，并限制直接推送及绕过权限。
+工作流与检查脚本的改动也应接受审核；squash 合并时需保留最终提交的年轮字段。
+
 ### 自定义 Hook 路径
 
 已设置 `core.hooksPath` 时，本版保守采用手动集成，包含仓库外个人目录。
