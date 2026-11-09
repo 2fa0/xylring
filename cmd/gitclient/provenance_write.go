@@ -13,11 +13,25 @@ import (
 	"time"
 )
 
+func validateProvenanceModel(p provenance) error {
+	if strings.EqualFold(strings.TrimSpace(p.agent), "human") {
+		if p.model != "" {
+			return errors.New("人工提交不能填写 AI 模型")
+		}
+	} else if strings.TrimSpace(p.agent) != "" && strings.TrimSpace(p.model) == "" {
+		return errors.New("AI 提交必须填写实际模型名，模型未知时请先确认")
+	}
+	return nil
+}
+
 func applyProvenanceTrailers(ctx context.Context, dir, msg string, p provenance) (string, error) {
 	for _, s := range []string{p.agent, p.model, p.attribution} {
 		if strings.ContainsAny(s, "\r\n\x00") {
 			return "", errors.New("年轮字段不能包含换行")
 		}
+	}
+	if err := validateProvenanceModel(p); err != nil {
+		return "", err
 	}
 	if p.attribution == "native" {
 		p.attribution = ""
@@ -106,6 +120,9 @@ func readStamp(ctx context.Context, dir string) (ringStamp, error) {
 	return s, nil
 }
 func writeStamp(ctx context.Context, dir string, s ringStamp) error {
+	if err := validateProvenanceModel(s.p); err != nil {
+		return err
+	}
 	if strings.TrimSpace(s.p.agent) == "" || strings.ContainsAny(s.p.agent+s.p.model, "\r\n\x00") {
 		return errors.New("请填写有效 Agent，字段不能包含换行")
 	}
@@ -194,7 +211,10 @@ func installProvenanceHook(ctx context.Context, dir, name, marker, script string
 		return err
 	}
 	if strings.Contains(string(b), marker) {
-		return nil
+		if string(b) == script {
+			return nil
+		}
+		return os.WriteFile(path, []byte(script), 0755)
 	}
 	if _, err := os.Lstat(path + ".xylring-orig"); err == nil {
 		return fmt.Errorf("备份 Hook 已存在，请先检查 %s.xylring-orig", name)
@@ -263,12 +283,8 @@ fi
     done < "$stamp"
     case "$expires" in ''|*[!0-9]*) exit 0 ;; esac
     now=$(date +%s) || exit 0
-    [ "$expires" -gt "$now" ] && [ -n "$agent" ] || exit 0
-    if [ -n "$model" ]; then
-        git interpret-trailers --in-place --if-exists replace --trailer "AI-Agent: $agent" --trailer "AI-Model: $model" --trailer 'AI-Attribution: stamp' "$1" || exit 0
-    else
-        git interpret-trailers --in-place --if-exists replace --trailer "AI-Agent: $agent" --trailer 'AI-Attribution: stamp' "$1" || exit 0
-    fi
+    [ "$expires" -gt "$now" ] && [ -n "$agent" ] && [ -n "$model" ] || exit 0
+    git interpret-trailers --in-place --if-exists replace --trailer "AI-Agent: $agent" --trailer "AI-Model: $model" --trailer 'AI-Attribution: stamp' "$1" || exit 0
     [ "$once" != 1 ] || rm -f "$stamp"
 ) 2>/dev/null
 exit 0
@@ -282,15 +298,15 @@ When you run git commit, append these Git trailers after a blank line:
 AI-Agent: <your agent/product name>
 AI-Model: <your exact model name>
 
-Only include AI-Model if you are certain of your exact model name; never guess.
-Use exactly one nonempty AI-Agent and at most one nonempty AI-Model.
+AI-assisted commits require exactly one nonempty AI-Agent and one nonempty AI-Model.
+Use your actual model name; if unknown, confirm it before committing. Never guess.
 Assisted-by and Co-authored-by do not replace the AI-Agent trailer.
 After committing, inspect git log -1 --format=%B and fix missing or invalid
 trailers on this task's own commit before reporting completion.
 If a provenance hook rejects the message, follow its template and retry normally.
 Never bypass it with --no-verify, core.hooksPath overrides, or hook changes.
 Never declare AI-Agent: human for AI-assisted work. Strict mode reserves that
-value for explicitly human-only commits; an unknown model is omitted instead.
+value for explicitly human-only commits, which must omit AI-Model and AI-Attribution.
 Do not add these trailers to commits the user authored without your help.
 If you ran xylring stamp during this task, run xylring stamp --clear when finished.
 <!-- xylring:provenance:end -->

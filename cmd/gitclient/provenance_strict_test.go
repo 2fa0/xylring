@@ -25,7 +25,7 @@ func TestStrictProvenanceCommits(t *testing.T) {
 	}{
 		{"missing", "", false},
 		{"native only", "Assisted-by: Cindy (https://cindy.app)", false},
-		{"AI without model", "AI-Agent: Cindy", true},
+		{"AI without model", "AI-Agent: Cindy", false},
 		{"AI with model", "AI-Agent: Cindy\nAI-Model: exact-model", true},
 		{"case insensitive", "ai-agent: Codex\nai-model: exact-model", true},
 		{"human", "AI-Agent: human", true},
@@ -39,7 +39,8 @@ func TestStrictProvenanceCommits(t *testing.T) {
 		{"human model", "AI-Agent: human\nAI-Model: exact-model", false},
 		{"human stamp", "AI-Agent: human\nAI-Attribution: stamp", false},
 		{"false human", "AI-Agent: human\nAssisted-by: Cindy (https://cindy.app)", false},
-		{"stamp", "AI-Agent: Cindy\nAI-Attribution: stamp", true},
+		{"stamp without model", "AI-Agent: Cindy\nAI-Attribution: stamp", false},
+		{"stamp", "AI-Agent: Cindy\nAI-Model: exact-model\nAI-Attribution: stamp", true},
 		{"invalid source", "AI-Agent: Cindy\nAI-Attribution: nonsense", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,7 +56,7 @@ func TestStrictProvenanceCommits(t *testing.T) {
 				if string(git("rev-parse", "HEAD")) != before {
 					t.Fatal("rejected commit changed HEAD")
 				}
-				for _, instruction := range []string{"年轮错误", "提交说明模板", "git commit -m", "AI-Agent: human", "模型名确知", "git log -1 --format=%B", "不要使用 --no-verify"} {
+				for _, instruction := range []string{"年轮错误", "提交说明模板", "git commit -m", "AI-Agent: human", "必须填写真实的 AI-Model", "git log -1 --format=%B", "不要使用 --no-verify"} {
 					if !strings.Contains(string(out), instruction) {
 						t.Fatalf("missing guidance %q: %s", instruction, out)
 					}
@@ -70,7 +71,7 @@ func TestStrictProvenanceCommits(t *testing.T) {
 	if err := installRingHook(ctx, dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeStamp(ctx, dir, ringStamp{p: provenance{agent: "Cindy"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
+	if err := writeStamp(ctx, dir, ringStamp{p: provenance{agent: "Cindy", model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
 		t.Fatal(err)
 	}
 	git("commit", "--allow-empty", "-m", "stamped")
@@ -127,7 +128,7 @@ func TestStrictProvenanceRangeAndHooks(t *testing.T) {
 	}
 	check(true) // Historical unmarked commits are outside the checked range.
 	git("-c", "core.hooksPath="+t.TempDir(), "commit", "--allow-empty", "-m", "bypassed locally")
-	git("commit", "--allow-empty", "-m", "valid tip\n\nAI-Agent: Cindy")
+	git("commit", "--allow-empty", "-m", "valid tip\n\nAI-Agent: Cindy\nAI-Model: exact-model")
 	check(false) // An unmarked intermediate commit must still fail CI.
 	git("config", "core.hooksPath", ".managed-hooks")
 	if err := runRingCLI(ctx, dir, []string{"ring", "strict", "install"}, &output); err == nil {
@@ -145,5 +146,88 @@ func TestHumanProvenanceDisplay(t *testing.T) {
 	p := pool.get(pool.intern(provenance{agent: "human"}))
 	if p.badge != "人工" || p.description() != "人工（显式）" {
 		t.Fatalf("%+v: %s", p, p.description())
+	}
+}
+
+func TestProvenanceModelRequiredOnWrite(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := ringTestRepo(t)
+	for _, tc := range []struct {
+		name  string
+		p     provenance
+		valid bool
+	}{
+		{"AI missing model", provenance{agent: "Cindy"}, false},
+		{"AI blank model", provenance{agent: "Cindy", model: "  "}, false},
+		{"AI with model", provenance{agent: "Cindy", model: "exact-model"}, true},
+		{"human", provenance{agent: "human"}, true},
+		{"human with model", provenance{agent: "human", model: "exact-model"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := applyProvenanceTrailers(ctx, dir, "change", tc.p); (err == nil) != tc.valid {
+				t.Fatalf("GUI write: valid=%t, err=%v", tc.valid, err)
+			}
+			if err := writeStamp(ctx, dir, ringStamp{p: tc.p, expires: time.Now().Add(time.Minute).Unix()}); (err == nil) != tc.valid {
+				t.Fatalf("stamp write: valid=%t, err=%v", tc.valid, err)
+			}
+		})
+	}
+	var out bytes.Buffer
+	if err := runRingCLI(ctx, dir, []string{"stamp", "--agent", "Cindy"}, &out); err == nil {
+		t.Fatal("CLI accepted an AI stamp without a model")
+	}
+}
+
+func TestLegacyStampWithoutModelIsIgnored(t *testing.T) {
+	ctx := context.Background()
+	dir, git := ringTestRepo(t)
+	if err := installRingHook(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	path, err := gitFile(ctx, dir, "xylring-stamp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte("agent=Cindy\nmodel=\nexpires=9999999999\nonce=1\n")
+	if err := os.WriteFile(path, legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "--allow-empty", "-m", "legacy stamp")
+	if p := parseProvenance(string(git("log", "-1", "--format=%B"))); p.agent != "" {
+		t.Fatalf("legacy stamp applied: %+v", p)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, legacy) {
+		t.Fatalf("ignored stamp was consumed: %v", err)
+	}
+}
+
+func TestProvenanceHookUpgrade(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := ringTestRepo(t)
+	path, err := provenanceHookPath(ctx, dir, "commit-msg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("#!/bin/sh\nexit 0\n")
+	if err := os.WriteFile(path, original, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldScript := "#!/bin/sh\n" + strictHookMarker + "\nexit 0\n"
+	if err := installProvenanceHook(ctx, dir, "commit-msg", strictHookMarker, oldScript); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := installProvenanceHook(ctx, dir, "commit-msg", strictHookMarker, strictRingScript); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != strictRingScript {
+		t.Fatalf("hook not upgraded: %v", err)
+	}
+	if err := uninstallProvenanceHook(ctx, dir, "commit-msg", strictHookMarker); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("original hook not preserved: %v", err)
 	}
 }

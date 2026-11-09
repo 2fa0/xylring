@@ -226,7 +226,7 @@ func TestRingLinkedWorktree(t *testing.T) {
 	if err := installRingHook(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeStamp(ctx, other, ringStamp{p: provenance{agent: "Cindy"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
+	if err := writeStamp(ctx, other, ringStamp{p: provenance{agent: "Cindy", model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runGit(ctx, other, "commit", "--allow-empty", "-m", "linked"); err != nil {
@@ -326,7 +326,7 @@ func TestRingHookSourceSkipsAndFailure(t *testing.T) {
 	if err := installRingHook(ctx, dir); err != nil {
 		t.Fatal(err)
 	}
-	writeStamp(ctx, dir, ringStamp{p: provenance{agent: "Cindy"}, expires: time.Now().Add(time.Minute).Unix()})
+	writeStamp(ctx, dir, ringStamp{p: provenance{agent: "Cindy", model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()})
 	msg := filepath.Join(dir, "message")
 	for _, source := range []string{"commit", "merge", "squash"} {
 		os.WriteFile(msg, []byte("human\n"), 0600)
