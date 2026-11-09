@@ -66,6 +66,40 @@ func (t *repoTab) cachedBytes() int64 {
 			addBuffer(d.New)
 		}
 	}
+	seenData := map[*byte]bool{}
+	addData := func(data []byte) {
+		if len(data) > 0 && !seenData[&data[0]] {
+			seenData[&data[0]] = true
+			n += int64(len(data))
+		}
+	}
+	seenImages := map[*imageInfo]bool{}
+	addImage := func(info *imageInfo) {
+		if info != nil && !seenImages[info] {
+			seenImages[info] = true
+			addData(info.data)
+			// Reserve RGBA pixels as well as the compressed source bytes.
+			if info.img != nil {
+				n += int64(info.width) * int64(info.height) * 4
+			}
+		}
+	}
+	addImageDiff := func(diff *imageDiff) {
+		if diff != nil {
+			addImage(diff.old)
+			addImage(diff.new)
+		}
+	}
+	addImageDiff(t.imageDiff)
+	for _, saved := range []*historyLocation{t.historyBack, t.fileBack, t.restoreDiff, t.restore} {
+		if saved != nil {
+			addImageDiff(saved.imageDiff)
+		}
+	}
+	for _, tab := range t.fileTabs {
+		addImage(tab.fullImage)
+		addImageDiff(tab.imageDiff)
+	}
 	seenSources := map[*fileDiffSource]bool{}
 	sources := []*fileDiffSource{t.diffSource}
 	for _, saved := range []*historyLocation{t.historyBack, t.fileBack, t.restoreDiff} {
@@ -79,7 +113,8 @@ func (t *repoTab) cachedBytes() int64 {
 	for _, source := range sources {
 		if source != nil && !seenSources[source] {
 			seenSources[source] = true
-			n += int64(len(source.old) + len(source.new))
+			addData(source.old)
+			addData(source.new)
 		}
 	}
 	return n

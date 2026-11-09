@@ -11,13 +11,18 @@ import (
 )
 
 type savedRepo struct {
-	Path   string
-	Draft  string
-	Amend  bool
-	Commit string
-	File   string
+	Path             string
+	Draft            string
+	Amend            bool
+	Commit           string
+	File             string
+	Provenance       savedProvenance `json:"provenance,omitempty"`
+	ProvenanceEdited bool            `json:"provenance_edited,omitempty"`
 }
-type savedProvenance struct{ Agent, Model string }
+type savedProvenance struct {
+	Agent, Model string
+	Attribution  string `json:"Attribution,omitempty"`
+}
 type savedSession struct {
 	RingSkipNotice   bool              `json:"ring_skip_notice,omitempty"`
 	RecentProvenance []savedProvenance `json:"recent_provenance,omitempty"`
@@ -65,7 +70,7 @@ func (a *app) queueSession() {
 		FoundFrom:       a.foundFrom,
 	}
 	for _, p := range a.recentProvenance {
-		s.RecentProvenance = append(s.RecentProvenance, savedProvenance{p.agent, p.model})
+		s.RecentProvenance = append(s.RecentProvenance, savedProvenance{Agent: p.agent, Model: p.model})
 	}
 	for _, t := range a.tabs {
 		f := ""
@@ -86,7 +91,11 @@ func (a *app) queueSession() {
 			commit = t.pendingSession.Commit
 			f = t.pendingSession.File
 		}
-		s.Repos = append(s.Repos, savedRepo{t.path, t.commitMsg, t.commitAmend, commit, f})
+		s.Repos = append(s.Repos, savedRepo{
+			Path: t.path, Draft: t.commitMsg, Amend: t.commitAmend, Commit: commit, File: f,
+			Provenance:       savedProvenance{Agent: t.commitProv.agent, Model: t.commitProv.model, Attribution: t.commitProv.attribution},
+			ProvenanceEdited: t.commitProvEdited,
+		})
 	}
 	if t := a.activeTab(); t != nil {
 		s.Active = t.path
@@ -208,6 +217,8 @@ func (a *app) restoreSession() {
 					}
 					t.commitMsg = r.Draft
 					t.commitAmend = r.Amend
+					t.commitProv = provenance{agent: r.Provenance.Agent, model: r.Provenance.Model, attribution: r.Provenance.Attribution}
+					t.commitProvEdited = r.ProvenanceEdited
 					t.pendingSession = &r
 				}
 				for i, t := range a.tabs {

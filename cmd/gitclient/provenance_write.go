@@ -126,6 +126,7 @@ func writeStamp(ctx context.Context, dir string, s ringStamp) error {
 	if strings.TrimSpace(s.p.agent) == "" || strings.ContainsAny(s.p.agent+s.p.model, "\r\n\x00") {
 		return errors.New("请填写有效 Agent，字段不能包含换行")
 	}
+	s.p.agent = strings.TrimSpace(s.p.agent)
 	path, err := gitFile(ctx, dir, "xylring-stamp")
 	if err != nil {
 		return err
@@ -283,8 +284,17 @@ fi
     done < "$stamp"
     case "$expires" in ''|*[!0-9]*) exit 0 ;; esac
     now=$(date +%s) || exit 0
-    [ "$expires" -gt "$now" ] && [ -n "$agent" ] && [ -n "$model" ] || exit 0
-    git interpret-trailers --in-place --if-exists replace --trailer "AI-Agent: $agent" --trailer "AI-Model: $model" --trailer 'AI-Attribution: stamp' "$1" || exit 0
+    [ "$expires" -gt "$now" ] && [ -n "$agent" ] || exit 0
+    case "$agent" in
+        [hH][uU][mM][aA][nN])
+            [ -z "$model" ] || exit 0
+            git interpret-trailers --in-place --if-exists replace --trim-empty --trailer 'AI-Agent: human' --trailer 'AI-Model:' --trailer 'AI-Attribution:' "$1" || exit 0
+            ;;
+        *)
+            [ -n "$model" ] || exit 0
+            git interpret-trailers --in-place --if-exists replace --trailer "AI-Agent: $agent" --trailer "AI-Model: $model" --trailer 'AI-Attribution: stamp' "$1" || exit 0
+            ;;
+    esac
     [ "$once" != 1 ] || rm -f "$stamp"
 ) 2>/dev/null
 exit 0
