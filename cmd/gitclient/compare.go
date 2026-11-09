@@ -1461,7 +1461,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 	scrolling := takeScrollMove(&t.fileTreeScroll, &t.fileTreeScrollY)
 	tree := t.prepareFileTree()
 	if len(tree.roots) == 0 && len(t.compareFiles) > 0 {
-		noMatchingFiles(c, &t.fileTreeFilter)
+		noMatchingFiles(c, &t.fileFilter)
 		return
 	}
 	t.fileOutline.Indent = theme.Space(1.5)

@@ -608,12 +608,12 @@ func (a *app) openFullFileTab(t *repoTab, filePath, rev, revLabel string) {
 		}
 		var imgInfo *imageInfo
 		var state editor.State
-		if isImageFile(filePath) && len(content) > 0 && err == nil {
+		if isImageFile(filePath) && len(content) > 0 && err == nil && note == "" {
 			imgInfo, err = decodeImageInfo(content, filePath)
 			if err != nil {
 				note = fmt.Sprintf("图片解码失败：%v", err)
 			}
-		} else {
+		} else if err == nil && note == "" {
 			buf := editor.NewBuffer(string(content))
 			buf.SetLanguage(editor.LanguageFor(filePath))
 			state = editor.State{

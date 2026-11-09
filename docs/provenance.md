@@ -31,6 +31,7 @@ xylring ring uninstall
 印章默认有效 30 分钟，覆盖有效期内多次终端提交；`--ttl 10m` 可修改期限，
 `--once` 表示单次消费。Linked worktree 各自持有印章。
 创建 AI 印章必须同时提供 `--agent` 和 `--model`。旧的无模型印章不再自动盖章。
+完全人工提交可创建 `xylring stamp --agent human` 印章，只写入 `AI-Agent: human`，不填写模型或 AI 归因来源。
 只有显式安装 Hook 才会自动盖章，默认不推断进程、IDE、环境变量或模型。
 Hook 为独立 POSIX sh 脚本，不依赖 Xylring 二进制。
 

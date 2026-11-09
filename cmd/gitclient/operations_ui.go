@@ -392,12 +392,12 @@ func (a *app) runOperation() {
 				return
 			}
 			a.op.busy = false
+			a.op.confirmed = false
 			a.op.output = out
 			if err != nil {
 				a.op.err = err.Error()
 			} else {
 				a.pendingToast = d.action + "完成"
-				a.op.confirmed = false
 				if d.action == "审阅并暂存" || d.action == "审阅并取消暂存" {
 					a.showOperation = false
 				}
@@ -436,15 +436,14 @@ func (a *app) runHubAction(action string, requireConfirm bool) {
 		a.op.name = a.op.newRemote
 		a.op.value = a.op.newURL
 	case "推送标签":
-		if a.op.refName != "" {
-			a.op.name = a.op.refName
+		if strings.TrimSpace(a.op.refName) == "" {
+			a.op.err = "请填写标签名"
+			return
 		}
+		a.op.name = a.op.refName
 	}
 	a.op.action = action
 	a.op.err = ""
-	if !requireConfirm {
-		a.op.confirmed = true
-	}
 	a.runOperation()
 }
 

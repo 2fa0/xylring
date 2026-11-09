@@ -668,7 +668,7 @@ func (a *app) loadAmendMessage(t *repoTab) {
 			if strings.TrimSpace(t.commitMsg) == "" {
 				t.commitMsg = message
 			}
-			if t.commitProv == initialProv {
+			if !t.commitProvEdited && t.commitProv == initialProv {
 				t.commitProv = prov
 			}
 		})
