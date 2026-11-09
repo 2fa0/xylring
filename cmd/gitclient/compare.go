@@ -455,7 +455,7 @@ func (a *app) startDiff(t *repoTab, from, to [20]byte, list func(context.Context
 	t.compareFiles = nil
 	t.compareErr = ""
 	t.compareLoading = true
-	t.diff, t.simpleDiff, t.diffSource = nil, nil, nil
+	t.diff, t.simpleDiff, t.imageDiff, t.diffSource = nil, nil, nil, nil
 	t.diffNote = ""
 	t.diffLoading = false
 	t.openFileTabAfterLoad = false
@@ -464,8 +464,8 @@ func (a *app) startDiff(t *repoTab, from, to [20]byte, list func(context.Context
 	t.fileListScroll, t.fileListScrollY = ui.ScrollState{}, 0
 	t.fileHoverID, t.fileHoverY = "", 0
 	t.resetFileTree()
-	if t.fileSplit == 0 {
-		t.fileSplit = 28
+	if t.fileSplit <= 100 {
+		t.fileSplit = a.defaultFileSplit()
 	}
 	path := t.path
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -537,7 +537,7 @@ func (a *app) clearDiff(t *repoTab) {
 	t.compareFiles = nil
 	t.compareLoading = false
 	t.compareErr = ""
-	t.diff, t.simpleDiff, t.diffSource = nil, nil, nil
+	t.diff, t.simpleDiff, t.imageDiff, t.diffSource = nil, nil, nil, nil
 	t.diffNote = ""
 	t.diffLoading = false
 	t.fileSel = -1
@@ -583,55 +583,70 @@ func readFileDiffSource(ctx context.Context, dir, fromRev, toRev string, f fileC
 	return s, ctx.Err()
 }
 
-func (s *fileDiffSource) prepare(ctx context.Context, path string, ignoreWhitespace bool) (*editor.DiffState, *simpleDiff, string, error) {
+func (s *fileDiffSource) prepare(ctx context.Context, path string, ignoreWhitespace bool) (*editor.DiffState, *simpleDiff, *imageDiff, string, error) {
 	if s.note != "" {
-		return nil, nil, s.note, nil
+		return nil, nil, nil, s.note, nil
+	}
+	if isImageFile(path) {
+		var oldInfo, newInfo *imageInfo
+		var oldErr, newErr error
+		if len(s.old) > 0 {
+			oldInfo, oldErr = decodeImageInfo(s.old, path)
+		}
+		if len(s.new) > 0 {
+			newInfo, newErr = decodeImageInfo(s.new, path)
+		}
+		if oldErr != nil && len(s.old) > 0 && newErr != nil && len(s.new) > 0 {
+			return nil, nil, nil, fmt.Sprintf("图片解码失败：%v", newErr), nil
+		}
+		if oldErr != nil && len(s.old) > 0 {
+			return nil, nil, nil, fmt.Sprintf("历史图片解码失败：%v", oldErr), nil
+		}
+		if newErr != nil && len(s.new) > 0 {
+			return nil, nil, nil, fmt.Sprintf("新图片解码失败：%v", newErr), nil
+		}
+		if oldInfo == nil && newInfo == nil {
+			return nil, nil, nil, "图片文件为空", nil
+		}
+		return nil, nil, &imageDiff{old: oldInfo, new: newInfo}, "", nil
 	}
 	if !ignoreWhitespace {
 		diff, simple := prepareDiff(s.old, s.new, path)
-		return diff, simple, "", ctx.Err()
+		return diff, simple, nil, "", ctx.Err()
 	}
 	dir, err := os.MkdirTemp("", "xylring-diff-")
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, "", err
 	}
 	defer os.RemoveAll(dir)
 	for name, data := range map[string][]byte{"old": s.old, "new": s.new} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
-			return nil, nil, "", err
+			return nil, nil, nil, "", err
 		}
 	}
 	out, err := runGitLimit(ctx, dir, 16<<20, "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-w", "-p", "--", "old", "new")
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, "", err
 	}
 	patches, err := editor.ParsePatch(string(out))
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, "", err
 	}
 	if len(patches) > 0 && patches[0].Binary {
-		return nil, nil, "二进制文件，已忽略差异", nil
+		return nil, nil, nil, "二进制文件，已忽略差异", nil
 	}
 	if len(patches) == 0 || len(patches[0].Hunks) == 0 {
-		return nil, nil, "无改动（空白字符改动已忽略）", nil
+		return nil, nil, nil, "无改动（空白字符改动已忽略）", nil
 	}
 	d := &editor.DiffState{}
 	d.SetPatch(patches[0])
-	return d, nil, "", nil
+	return d, nil, nil, "", nil
 }
 
 func (a *app) loadFileDiff(t *repoTab, i int) {
 	if i < 0 || i >= len(t.compareFiles) {
-		t.diff, t.simpleDiff, t.diffSource, t.diffNote, t.diffLoading = nil, nil, nil, "", false
+		t.diff, t.simpleDiff, t.imageDiff, t.diffSource, t.diffNote, t.diffLoading = nil, nil, nil, nil, "", false
 		return
-	}
-	if t.worktree && i >= 0 && i < len(t.compareFiles) {
-		for wi, wf := range t.worktreeFiles {
-			if wf.path == t.compareFiles[i].path {
-				t.worktreeSel = wi
-				break
-			}
-		}
 	}
 	if t.compareCancel != nil {
 		t.compareCancel()
@@ -641,13 +656,13 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 	f := t.compareFiles[i]
 	if saved := t.restoreDiff; saved != nil {
 		t.restoreDiff = nil
-		if saved.from == t.diffFrom && saved.to == t.diffTo && saved.file == f.path && (saved.diff != nil || saved.note != "") {
-			t.diff, t.simpleDiff, t.diffSource, t.diffNote, t.diffLoading = saved.diff, saved.simpleDiff, saved.source, saved.note, false
+		if saved.from == t.diffFrom && saved.to == t.diffTo && saved.file == f.path && (saved.diff != nil || saved.imageDiff != nil || saved.note != "") {
+			t.diff, t.simpleDiff, t.imageDiff, t.diffSource, t.diffNote, t.diffLoading = saved.diff, saved.simpleDiff, saved.imageDiff, saved.source, saved.note, false
 			a.finishOpenFileTab(t)
 			return
 		}
 	}
-	t.diffLoading, t.diff, t.simpleDiff, t.diffSource, t.diffNote = true, nil, nil, nil, ""
+	t.diffLoading, t.diff, t.simpleDiff, t.imageDiff, t.diffSource, t.diffNote = true, nil, nil, nil, nil, ""
 	fromRev, toRev := "", ""
 	if t.diffFrom != zeroHash {
 		fromRev = hashHex(t.diffFrom)
@@ -662,10 +677,11 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 		defer cancel()
 		var diff *editor.DiffState
 		var simple *simpleDiff
+		var imgDiff *imageDiff
 		var note string
 		source, err := readFileDiffSource(ctx, path, fromRev, toRev, f, worktree)
 		if err == nil {
-			diff, simple, note, err = source.prepare(ctx, f.path, ignoreWhitespace && f.status != "A" && f.status != "D")
+			diff, simple, imgDiff, note, err = source.prepare(ctx, f.path, ignoreWhitespace && f.status != "A" && f.status != "D")
 		}
 		if err == nil {
 			err = ctx.Err()
@@ -686,7 +702,7 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 				a.finishOpenFileTab(t)
 				return
 			}
-			t.diff, t.simpleDiff = diff, simple
+			t.diff, t.simpleDiff, t.imageDiff = diff, simple, imgDiff
 			a.finishOpenFileTab(t)
 			a.trimInactiveHistory()
 		})
@@ -746,10 +762,6 @@ func (a *app) maybeCompareSelection(t *repoTab) {
 	a.showComparison(t, from, to, t.refLabel(from), t.refLabel(to), false)
 }
 
-func (a *app) inspectPane(c *ui.Context, t *repoTab) {
-	a.fileDiffPane(c, t)
-}
-
 func fileViewToggleWidget(c *ui.Context, key, label string, view *int) {
 	theme := c.Theme()
 	seg := ui.SegmentedBase(c.Key(key), view, 2)
@@ -758,7 +770,7 @@ func fileViewToggleWidget(c *ui.Context, key, label string, view *int) {
 		icons := [2]*ui.SVG{iconList, iconListTree}
 		names := [2]string{"列表", "树"}
 		for i, ic := range icons {
-			s := seg.Segment(i).Label(names[i]).Tooltip(names[i]).Padding(theme.Space(1), theme.Space(1.5)).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center()
+			s := seg.Segment(i).Label(names[i]).Tooltip(names[i]).Padding(theme.Space(1), theme.Space(1.5)).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
 			if i == *view {
 				bg := theme.Background
 				if theme.Dark {
@@ -775,15 +787,13 @@ func (a *app) fileViewToggle(c *ui.Context) {
 	fileViewToggleWidget(c, "file-view", "文件视图", &a.fileView)
 }
 
-func (a *app) sidebarFileViewToggle(c *ui.Context) {
-	fileViewToggleWidget(c, "sidebar-file-view", "工作区视图", &a.sidebarFileView)
-}
-
 func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).BorderWidth(0, 1, 0, 0).BorderColor(theme.Border).Children(func() {
 		a.fileListHeader(c, t)
-		a.commitSummaryCard(c, t)
+		if !t.worktree {
+			a.commitSummaryCard(c, t)
+		}
 		a.fileFilterBar(c, t)
 		if t.compareLoading && len(t.compareFiles) == 0 {
 			ui.Column(c).Grow(1).Center().Children(func() {
@@ -807,6 +817,9 @@ func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 				ui.Text(c, "没有文件变化").Padding(12).TextColor(theme.TextMuted)
 			}
 		})
+		if t.worktree {
+			a.worktreeCommitCard(c, t)
+		}
 	})
 }
 
@@ -830,7 +843,7 @@ func (a *app) fileDiffPane(c *ui.Context, t *repoTab) {
 	}
 	ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		a.fileDiffHeader(c, t)
-		a.fileDiffContent(c, t.diff, t.simpleDiff, t.diffNote, t.diffLoading)
+		a.fileDiffContent(c, t.diff, t.simpleDiff, t.imageDiff, t.diffNote, t.diffLoading, t.imageViewMode, t.imageFitActual)
 	})
 }
 
@@ -851,7 +864,7 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 			ui.Text(c, item.whenText()).FontSize(12).TextColor(theme.TextMuted).SingleLine()
 			ui.Text(c, "·").FontSize(12).TextColor(theme.TextMuted)
 			ui.Text(c, shortHash(item.hash)).Font("monospace").FontSize(12).TextColor(theme.TextMuted).SingleLine()
-			copyBtn := ui.ButtonBase(c.Key("copy-commit-hash")).Label("复制哈希").Tooltip("复制哈希").Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0)
+			copyBtn := ui.ButtonBase(c.Key("copy-commit-hash")).Label("复制哈希").Tooltip("复制哈希").Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
 			switch {
 			case copyBtn.Pressed():
 				copyBtn.Background(theme.SurfacePressed)
@@ -869,7 +882,7 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 			if t.detailsOpen {
 				label = "收起信息"
 			}
-			btn := ui.ButtonBase(c.Key("commit-details")).Label(label).Tooltip(label).Padding(1, 6).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0)
+			btn := ui.ButtonBase(c.Key("commit-details")).Label(label).Tooltip(label).Padding(1, 6).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
 			if t.detailsOpen {
 				btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 			} else {
@@ -886,7 +899,7 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 					pIdx := pi
 					label := fmt.Sprintf("父提交 %d", pi+1)
 					btn := ui.ButtonBase(c.Key(fmt.Sprintf("parent-%d", pi))).Padding(1, 6).Radius(theme.Radius).Cursor(ui.CursorPointer).
-						Tooltip("对比父提交 " + shortHash(item.parents[pi]))
+						Tooltip("对比父提交 " + shortHash(item.parents[pi])).Transition(colorMotion())
 					if t.inspectParent == pi {
 						btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 					} else {
@@ -916,6 +929,14 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
 	ui.Row(c).FillWidth().Padding(4, 8).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
 		a.fileListTitle(c, t)
+		if t.worktree && len(t.compareFiles) > 0 {
+			paneIconButton(c, "inspect-stage-all", "全部暂存", iconPlus).Tooltip("全部暂存").OnClick(func() {
+				a.stageAllWorktree(t)
+			})
+			paneIconButton(c, "inspect-unstage-all", "全部取消暂存", iconMinus).Tooltip("全部取消暂存").OnClick(func() {
+				a.unstageAllWorktree(t)
+			})
+		}
 		if t.comparison != nil {
 			if iconButton(c, "compare-close", "返回", iconBack).Shrink(0).Clicked() {
 				a.endComparison(t)
@@ -940,14 +961,15 @@ func (a *app) fileFilterBar(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	ui.Row(c.Key(fmt.Sprintf("file-filter-bar-%d", t.id))).FillWidth().Padding(2, 8, 4, 8).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 		ui.TextInput(c.Key(fmt.Sprintf("filter-files-input-%d", t.id)), &t.fileFilter).
-			Placeholder("过滤文件 (Filter files...)").
+			Label("过滤文件").
+			Placeholder("过滤文件").
 			Bind(&t.fileFilterInput).
 			Grow(1).MinWidth(60)
 		if t.fileFilter != "" {
 			indices := t.filteredFileIndices()
 			ui.Text(c, fmt.Sprintf("%d/%d", len(indices), len(t.compareFiles))).
 				FontSize(11).TextColor(theme.TextMuted).Shrink(0)
-			clearBtn := ui.ButtonBase(c.Key(fmt.Sprintf("clear-file-filter-%d", t.id))).Label("清除过滤").Tooltip("清除过滤").Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0)
+			clearBtn := ui.ButtonBase(c.Key(fmt.Sprintf("clear-file-filter-%d", t.id))).Label("清除过滤").Tooltip("清除过滤").Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
 			clearBtn.Children(func() {
 				ui.Icon(c, iconClose).Size(12, 12).TextColor(theme.TextMuted)
 			})
@@ -987,11 +1009,22 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 				}
 			})
 		} else if t.worktree {
-			ui.Text(c, "工作区代码").Bold().FontSize(12).TextColor(theme.TextMuted).SingleLine().Shrink(0)
+			ui.Text(c, "选择文件").Bold().FontSize(12).TextColor(theme.TextMuted).SingleLine().Shrink(0)
 		}
 		ui.Box(c).Grow(1)
-		a.diffLayoutToggle(c)
-		a.diffIgnoreWhitespaceToggle(c, t)
+		if t.imageDiff != nil {
+			a.imageDiffControls(c, t.id, t.imageDiff, &t.imageViewMode, &t.imageFitActual)
+		} else {
+			a.diffLayoutToggle(c)
+			a.diffIgnoreWhitespaceToggle(c, t)
+		}
+		fullWidthTip := "全宽展示 (展开至整窗宽度)"
+		if a.bottomFullWidth {
+			fullWidthTip = "侧栏旁展示 (还原底栏宽度)"
+		}
+		if paneToggleIconButton(c, "toggle-bottom-width", "切换底栏全宽", fullWidthTip, iconPanelBottom, a.bottomFullWidth).Clicked() {
+			a.toggleBottomFullWidth()
+		}
 		if paneIconButton(c, "toggle-diff-max", maxLabel, maxIcon).Clicked() {
 			t.diffMaximized = !t.diffMaximized
 		}
@@ -1017,7 +1050,7 @@ func (a *app) diffLayoutToggle(c *ui.Context) {
 		names := [2]string{"并排", "内联"}
 		tips := [2]string{"左右分栏 (Split)", "内联展示 (Unified)"}
 		for i := 0; i < 2; i++ {
-			s := seg.Segment(i).Label(names[i]).Tooltip(tips[i]).Padding(0, 6).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center()
+			s := seg.Segment(i).Label(names[i]).Tooltip(tips[i]).Padding(0, 6).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
 			if i == a.diffLayout {
 				bg := theme.Background
 				if theme.Dark {
@@ -1038,7 +1071,7 @@ func (a *app) diffLayoutToggle(c *ui.Context) {
 
 func (a *app) diffIgnoreWhitespaceToggle(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
-	btn := ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label("忽略空白").Tooltip("忽略空白字符改动").Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center()
+	btn := ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label("忽略空白").Tooltip("忽略空白字符改动").Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
 	if a.diffIgnoreWhitespace {
 		btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 	} else {
@@ -1086,7 +1119,7 @@ func (a *app) comparisonBanner(c *ui.Context, tab *repoTab) {
 	fromText := a.formatCompareRef(tab, cmp.from, cmp.fromLabel)
 	toText := a.formatCompareRef(tab, cmp.to, cmp.toLabel)
 
-	ui.Row(c.Key("comparison-banner")).FillWidth().Padding(6, 12).Gap(10).AlignItems(ui.Center).Shrink(0).Background(t.Accent.Alpha(0.08)).Border(1, t.Accent.Alpha(0.2)).Children(func() {
+	ui.Row(c.Key("comparison-banner")).FillWidth().Padding(6, 12).Gap(10).AlignItems(ui.Center).Shrink(0).Background(t.Accent.Alpha(0.08)).Border(1, t.Accent.Alpha(0.2)).Transition(fadeEnter()).Children(func() {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(1).MinWidth(0).Children(func() {
 			ui.Text(c, "对比模式").Bold().FontSize(12).TextColor(t.Accent).Shrink(0)
 			ui.Text(c, "·").TextColor(t.TextMuted).Shrink(0)
@@ -1153,7 +1186,7 @@ func (a *app) fileListTitle(c *ui.Context, t *repoTab) {
 
 func fileIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 	theme := c.Theme()
-	btn := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(theme.Radius).Cursor(ui.CursorPointer)
+	btn := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(theme.Radius).Cursor(ui.CursorPointer).Transition(colorMotion())
 	switch {
 	case btn.Pressed():
 		btn.Background(theme.SurfacePressed)
@@ -1209,6 +1242,9 @@ func (a *app) fileHoverActions(c *ui.Context, t *repoTab, i int, hovered bool) {
 	}
 	f := t.compareFiles[i]
 	ui.Row(c).Gap(2).AlignItems(ui.Center).Padding(4, 8).Background(bg).Radius(0, theme.Radius, theme.Radius, 0).Label("文件操作").Absolute().Top(0).Right(0).Bottom(0).Children(func() {
+		if t.worktree {
+			a.worktreeStageHoverButtons(c, t, f)
+		}
 		copy := fileIconButton(c, "copy-file-path-"+f.path, "复制路径", iconCopy).Tooltip(copyPathTip(c))
 		if copy.Clicked() {
 			copyFilePath(c, t.path, f.path, copy.ClickModifiers())
@@ -1246,11 +1282,15 @@ func statusTip(f fileChange) string {
 }
 
 func fileStatusMark(c *ui.Context, f fileChange) {
+	theme := c.Theme()
+	if f.extra == "未跟踪" {
+		ui.Text(c, "U").Font("monospace").FontSize(12).FontWeight(600).TextColor(theme.Success).TextAlign(ui.End).MinWidth(16).Shrink(0).Tooltip(statusTip(f))
+		return
+	}
 	mark := statusLetter(f.status)
 	if mark == "" || mark == "?" {
 		return
 	}
-	theme := c.Theme()
 	ui.Text(c, mark).Font("monospace").FontSize(12).FontWeight(600).TextColor(statusColor(theme, f.status)).TextAlign(ui.End).MinWidth(16).Shrink(0).Tooltip(statusTip(f))
 }
 
@@ -1277,18 +1317,6 @@ func (t *repoTab) fileRowMoving(c *ui.Context, row ui.Element, id string, hovere
 	moving := t.fileHoverID == id && t.fileHoverY != 0 && y != t.fileHoverY
 	t.fileHoverID = id
 	t.fileHoverY = y
-	return moving
-}
-
-func (t *repoTab) worktreeRowMoving(c *ui.Context, row ui.Element, id string, hovered bool) bool {
-	if !hovered || id == "" {
-		return false
-	}
-	row.Bind(&t.worktreeHover)
-	y := t.worktreeHover.Bounds(c).Y
-	moving := t.worktreeHoverID == id && t.worktreeHoverY != 0 && y != t.worktreeHoverY
-	t.worktreeHoverID = id
-	t.worktreeHoverY = y
 	return moving
 }
 
@@ -1333,16 +1361,16 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 	selectedRow := currentSel
 	t.fileList.Selected = &selectedRow
 	t.fileList.Key = func(i int) any {
-		if i >= 0 && i < len(indices) {
+		if i >= 0 && i < len(indices) && indices[i] >= 0 && indices[i] < len(t.compareFiles) {
 			return t.compareFiles[indices[i]].path
 		}
 		return i
 	}
 	t.fileList.Label = func(i int) string {
-		if i < 0 || i >= len(indices) {
-			return ""
+		if i >= 0 && i < len(indices) && indices[i] >= 0 && indices[i] < len(t.compareFiles) {
+			return t.compareFiles[indices[i]].label()
 		}
-		return t.compareFiles[indices[i]].label()
+		return ""
 	}
 	list := ui.List(c.Key(fmt.Sprintf("compare-files-%d", t.id)), &t.fileList, len(indices), func(i int) {
 		if i < 0 || i >= len(indices) {
@@ -1369,7 +1397,10 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 			a.fileRowMenu(c, m, t, origIdx)
 		})
 		row.Children(func() {
-			ui.Row(c).Gap(8).MinWidth(0).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(6).MinWidth(0).AlignItems(ui.Center).Children(func() {
+				if t.worktree {
+					a.worktreeStageCheckbox(c, t, f, "wt-stage-list")
+				}
 				ui.Text(c, filepath.Base(f.path)).FontSize(13).SingleLine().Grow(1).MinWidth(0)
 				fileTrailingMeta(c, f, hovered)
 			})
@@ -1423,6 +1454,9 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 			})
 		}
 		row.Children(func() {
+			if t.worktree && !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
+				a.worktreeStageCheckbox(c, t, t.compareFiles[n.file], "wt-stage-tree")
+			}
 			ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).MinWidth(0)
 			if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
 				f := t.compareFiles[n.file]
@@ -1451,6 +1485,16 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) {
 	f := t.compareFiles[idx]
 	if m.Item("在新标签页打开").Chosen() {
 		a.openFileTabAt(t, idx)
+	}
+	if t.worktree {
+		a.worktreeFileMenu(c, m, t, f)
+	}
+	if !t.worktree {
+		for _, action := range []string{"Blame", "行历史", "恢复历史文件"} {
+			if m.Item(action + "…").Chosen() {
+				a.openOperation(action, hashHex(t.diffTo), f.path)
+			}
+		}
 	}
 	if m.Item("查看此版本完整文件").Chosen() {
 		rev := hashHex(t.diffTo)
@@ -1495,13 +1539,15 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) {
 	}
 }
 
-func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *simpleDiff, note string, loading bool) {
+func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *simpleDiff, imgDiff *imageDiff, note string, loading bool, viewMode int, fitActual bool) {
 	theme := c.Theme()
 	switch {
 	case loading:
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Text(c, "正在读取文件…").TextColor(theme.TextMuted)
 		})
+	case imgDiff != nil:
+		a.imageDiffView(c, imgDiff, viewMode, fitActual)
 	case note != "":
 		ui.Column(c).Grow(1).Padding(16).Children(func() {
 			ui.Text(c, note).TextColor(theme.TextMuted)

@@ -26,12 +26,25 @@ func (a *app) installMenu() {
 	if runtime.GOOS != "darwin" {
 		file = append(file, mygo.Separator(), &mygo.MenuItem{Role: mygo.RoleQuit})
 	}
+	operations := []*mygo.MenuItem{
+		{Label: "新建仓库", Submenu: []*mygo.MenuItem{
+			{Label: "克隆仓库…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("克隆仓库", "", "") }},
+			{Label: "初始化仓库…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("初始化仓库", "", "") }},
+		}},
+		{Label: "Stash…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("Stash", "", "") }},
+		{Label: "远程…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("远程", "", "") }},
+		{Label: "设置身份…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("设置身份", "", "") }},
+	}
 	items := []*mygo.MenuItem{
+		{Label: "仓库", Submenu: operations},
 		{Label: "文件", Submenu: file},
 		{Role: mygo.RoleEditMenu},
 		{Label: "显示", Submenu: []*mygo.MenuItem{
 			{ID: "toggle-sidebar", Label: "切换侧边栏", Accelerator: "CmdOrCtrl+B", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.toggleSidebar()
+			}},
+			{ID: "toggle-bottom-full-width", Label: "切换底栏全宽展示", Click: func(*mygo.MenuItem, *mygo.Window) {
+				a.toggleBottomFullWidth()
 			}},
 			mygo.Separator(),
 			{ID: "fetch", Label: "获取远程…", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
@@ -70,6 +83,7 @@ func (a *app) syncMenu() {
 	busy := has && tab.loading
 	empty := tab == nil && len(a.found) <= 1
 	a.setMenuEnabled("toggle-sidebar", !empty)
+	a.setMenuEnabled("toggle-bottom-full-width", has)
 	a.setMenuEnabled("fetch", has && !a.fetch.busy && !a.write.busy)
 	a.setMenuEnabled("refresh", has && !busy)
 	a.setMenuEnabled("compare", has && !busy)

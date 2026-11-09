@@ -142,12 +142,12 @@ func TestCommitGraphView(t *testing.T) {
 	a := &app{tabs: []*repoTab{tab}}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	for _, text := range []string{"画出提交图谱", "图谱", "main", "HEAD", "导入仓库"} {
+	for _, text := range []string{"画出提交图谱", "图谱", "main", "HEAD", "首页"} {
 		if !tt.HasText(text) {
 			t.Fatalf("缺少 %q，当前文本：%q", text, tt.Texts())
 		}
 	}
-	if tt.HasText("拉取") || tt.HasText("Stash") {
+	if tt.HasText("Stash") {
 		t.Fatal("图谱视图还留着已删除的操作")
 	}
 	if err := tt.Click("返回首页"); err != nil {
@@ -304,13 +304,6 @@ func TestChromeClearsTitleBarControls(t *testing.T) {
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.SetTitleBar(ui.TitleBar{Height: 28, Left: 72, Right: 10})
 	tt.Frame()
-	r, ok := tt.Find("导入仓库")
-	if !ok {
-		t.Fatalf("没有导入仓库：%q", tt.Texts())
-	}
-	if r.X < 72 {
-		t.Fatalf("导入仓库还在红绿灯下面：x=%.0f", r.X)
-	}
 	toggle, ok := tt.Find("切换侧边栏")
 	if !ok {
 		t.Fatalf("没有切换侧边栏按钮：%q", tt.Texts())
@@ -330,8 +323,8 @@ func TestSingleRepoShowsSidebarByDefault(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if !tt.HasText("仓库") || !tt.HasText("工作区代码") {
-		t.Fatalf("侧边栏未展示仓库或工作区代码：%q", tt.Texts())
+	if !tt.HasText("仓库") {
+		t.Fatalf("侧边栏未展示仓库：%q", tt.Texts())
 	}
 }
 
@@ -346,7 +339,7 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if !a.showRepoSidebar() {
 		t.Fatal("单个仓库默认应展示侧边栏")
 	}
-	if !tt.HasText("仓库") || !tt.HasText("工作区代码") {
+	if !tt.HasText("仓库") {
 		t.Fatalf("初始时应展示侧边栏：%q", tt.Texts())
 	}
 
@@ -358,8 +351,8 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if a.showRepoSidebar() {
 		t.Fatal("点击后侧边栏应被隐藏")
 	}
-	if _, ok := tt.Find("工作区代码"); ok {
-		t.Fatalf("隐藏后不应再展示工作区代码：%q", tt.Texts())
+	if _, ok := tt.Find("仓库"); ok {
+		t.Fatalf("隐藏后不应再展示侧边栏：%q", tt.Texts())
 	}
 
 	// 2. 再次点击切换按钮恢复显示侧边栏
@@ -370,8 +363,8 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if !a.showRepoSidebar() {
 		t.Fatal("再次点击后侧边栏应恢复显示")
 	}
-	if _, ok := tt.Find("工作区代码"); !ok {
-		t.Fatalf("恢复后应展示工作区代码：%q", tt.Texts())
+	if _, ok := tt.Find("仓库"); !ok {
+		t.Fatalf("恢复后应展示侧边栏：%q", tt.Texts())
 	}
 
 	// 3. 快捷键 CmdOrCtrl+B 隐藏
@@ -380,8 +373,8 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if a.showRepoSidebar() {
 		t.Fatal("快捷键后侧边栏应被隐藏")
 	}
-	if _, ok := tt.Find("工作区代码"); ok {
-		t.Fatalf("快捷键隐藏后不应展示工作区代码：%q", tt.Texts())
+	if _, ok := tt.Find("仓库"); ok {
+		t.Fatalf("快捷键隐藏后不应展示侧边栏：%q", tt.Texts())
 	}
 
 	// 4. 快捷键 CmdOrCtrl+B 恢复
@@ -390,8 +383,8 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if !a.showRepoSidebar() {
 		t.Fatal("快捷键后侧边栏应恢复显示")
 	}
-	if _, ok := tt.Find("工作区代码"); !ok {
-		t.Fatalf("快捷键恢复后应展示工作区代码：%q", tt.Texts())
+	if _, ok := tt.Find("仓库"); !ok {
+		t.Fatalf("快捷键恢复后应展示侧边栏：%q", tt.Texts())
 	}
 }
 

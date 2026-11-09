@@ -59,33 +59,45 @@ func (a *app) commitRowMenu(c *ui.Context, m *ui.Menu, tab *repoTab, row int) {
 			}
 		}
 	}
-	if tab.comparison != nil {
-		if m.Item("检视此提交").Chosen() {
-			a.selectCommit(tab, row)
-		}
-	}
 	if m.Item("检出此提交").Chosen() {
 		a.runCheckoutCommit(tab, commit.hash)
 	}
-	if tab.inspecting != zeroHash && tab.inspecting != commit.hash {
-		if m.Item("与当前选中提交比较").Chosen() {
-			a.compareCommitPair(tab, tab.inspecting, commit.hash)
-		}
+	if m.Item("新建分支…").Chosen() {
+		a.openCommitWrite(tab, writeBranch, commit)
 	}
-	if tab.head != zeroHash && tab.head != commit.hash {
-		if m.Item("与 HEAD 比较").Chosen() {
-			a.compareCommitPair(tab, commit.hash, tab.head)
+	m.Submenu("比较", func(sm *ui.Menu) {
+		if tab.comparison != nil {
+			if sm.Item("检视此提交").Chosen() {
+				a.selectCommit(tab, row)
+			}
 		}
+		if tab.inspecting != zeroHash && tab.inspecting != commit.hash {
+			if sm.Item("与当前选中提交比较").Chosen() {
+				a.compareCommitPair(tab, tab.inspecting, commit.hash)
+			}
+		}
+		if tab.head != zeroHash && tab.head != commit.hash {
+			if sm.Item("与 HEAD 比较").Chosen() {
+				a.compareCommitPair(tab, commit.hash, tab.head)
+			}
+		}
+		if sm.Item("以此提交进行比较…").Chosen() {
+			a.openCompareModalWith(tab, hashHex(commit.hash), "")
+		}
+	})
+	if m.Item("复制哈希").Chosen() {
+		c.Services().WriteClipboard(hashHex(commit.hash))
+		c.Toast("已复制哈希")
 	}
-	if m.Item("以此提交进行比较…").Chosen() {
-		a.openCompareModalWith(tab, hashHex(commit.hash), "")
+	if m.Item("复制提交信息").Chosen() {
+		a.copyCommitInfo(c, tab, commit.hash)
 	}
 	m.Separator()
 	if m.Item("添加标签…").Chosen() {
 		a.openCommitWrite(tab, writeTag, commit)
 	}
-	if m.Item("新建分支…").Chosen() {
-		a.openCommitWrite(tab, writeBranch, commit)
+	if m.Item("修改说明…").Chosen() {
+		a.openCommitWrite(tab, writeMessage, commit)
 	}
 	for _, ref := range refs {
 		switch ref.kind {
@@ -104,18 +116,21 @@ func (a *app) commitRowMenu(c *ui.Context, m *ui.Menu, tab *repoTab, row int) {
 			}
 		}
 	}
+	m.Submenu("应用到当前分支", func(sm *ui.Menu) {
+		for _, action := range []string{"合并", "变基", "拣选", "撤销提交"} {
+			if sm.Item(action + "…").Chosen() {
+				a.openOperation(action, hashHex(commit.hash), "")
+			}
+		}
+	})
 	m.Separator()
-	if m.Item("修改说明…").Chosen() {
-		a.openCommitWrite(tab, writeMessage, commit)
-	}
-	m.Separator()
-	if m.Item("复制哈希").Chosen() {
-		c.Services().WriteClipboard(hashHex(commit.hash))
-		c.Toast("已复制哈希")
-	}
-	if m.Item("复制提交信息").Chosen() {
-		a.copyCommitInfo(c, tab, commit.hash)
-	}
+	m.Submenu("重置当前分支", func(sm *ui.Menu) {
+		for _, action := range []string{"软重置", "混合重置", "硬重置"} {
+			if sm.Item(action + "…").Chosen() {
+				a.openOperation(action, hashHex(commit.hash), "")
+			}
+		}
+	})
 }
 
 func (a *app) branchBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item commit, branchName string) {
@@ -210,7 +225,7 @@ func (a *app) tagBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item commit,
 }
 
 func (a *app) runCheckoutBranch(tab *repoTab, name string) {
-	if a.write.busy || a.fetch.busy {
+	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -244,7 +259,7 @@ func (a *app) runCheckoutBranch(tab *repoTab, name string) {
 }
 
 func (a *app) runCheckoutCommit(tab *repoTab, hash [20]byte) {
-	if a.write.busy || a.fetch.busy {
+	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -273,7 +288,7 @@ func (a *app) runCheckoutCommit(tab *repoTab, hash [20]byte) {
 }
 
 func (a *app) openRefWrite(tab *repoTab, kind string, item commit, refName string) {
-	if a.write.busy || a.fetch.busy {
+	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -318,7 +333,7 @@ func (a *app) copyCommitInfo(c *ui.Context, tab *repoTab, hash [20]byte) {
 }
 
 func (a *app) openCommitWrite(tab *repoTab, kind string, item commit) {
-	if a.write.busy || a.fetch.busy {
+	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -495,6 +510,10 @@ func (a *app) commitWriteModal(c *ui.Context) {
 
 func (a *app) runCommitWrite() {
 	d := &a.write
+	if t := a.tabByPath(d.repo); t != nil && (t.commitBusy || t.syncBusy) {
+		d.err = "请等待当前仓库操作完成"
+		return
+	}
 	if d.preparing || d.busy {
 		return
 	}

@@ -34,25 +34,27 @@ func (c commit) whenText() string {
 
 // repoTab 是一个已导入的仓库。当前只保留读历史和画图谱需要的状态。
 type repoTab struct {
-	id          int
-	path        string
-	title       string
-	generation  int
-	loading     bool
-	loaded      bool
-	err         string
-	holdAuto    bool
-	closed      bool
-	checking    bool
-	metaKey     string
-	refWatch    refWatch
-	refsChecked time.Time
-	usedAt      time.Time
-	notice      string
-	lastFetch   time.Time
-	fetching    bool
-	fetchGen    int
-	fetchCancel context.CancelFunc
+	pendingSession *savedRepo
+	operation      string
+	id             int
+	path           string
+	title          string
+	generation     int
+	loading        bool
+	loaded         bool
+	err            string
+	holdAuto       bool
+	closed         bool
+	checking       bool
+	metaKey        string
+	refWatch       refWatch
+	refsChecked    time.Time
+	usedAt         time.Time
+	notice         string
+	lastFetch      time.Time
+	fetching       bool
+	fetchGen       int
+	fetchCancel    context.CancelFunc
 
 	historyCancel  context.CancelFunc
 	historyStarted time.Time
@@ -70,14 +72,16 @@ type repoTab struct {
 	upstream    string
 	hasUpstream bool
 	syncBusy    bool
-	commitMsg   string
-	commitAmend bool
-	commitBusy  bool
-	commitErr   string
+	commitMsg    string
+	commitAmend  bool
+	amendGen     int
+	commitBusy   bool
+	commitErr    string
+	commitPinned bool
 	commits     []commit
-	graph   graph
-	hasMore bool
-	authors map[string]string
+	graph       graph
+	hasMore     bool
+	authors     map[string]string
 
 	list      ui.ListState
 	selection ui.Selection[any]
@@ -108,26 +112,12 @@ type repoTab struct {
 	restoreFile       string
 	restoreDiff       *historyLocation
 
-	worktree            bool
-	worktreeCount       int
-	worktreeKey         string
-	worktreeFiles       []fileChange
-	worktreeRow         commit
-	worktreeList        ui.ListState
-	worktreeListScroll  ui.ScrollState
-	worktreeListScrollY float32
-	worktreeSel         int
-	worktreeFilter      string
-	worktreeFilterInput ui.Handle
-	worktreeOutline     ui.OutlineState[string]
-	worktreeOutlineSel  int
-	worktreeTreeScroll  ui.ScrollState
-	worktreeTreeScrollY float32
-	worktreeHover       ui.Handle
-	worktreeHoverID     string
-	worktreeHoverY      float32
-	worktreeTreeKey     string
-	worktreeTreeData    fileTree
+	worktree      bool
+	worktreeCount int
+	worktreeKey   string
+	worktreeCache *worktreeStatusCache
+	worktreeFiles []fileChange
+	worktreeRow   commit
 
 	comparison           *commitComparison
 	compareFiles         []fileChange
@@ -149,11 +139,17 @@ type repoTab struct {
 	fileHoverY           float32
 	fileOutlineSel       int
 	fileTreeKey          string
+	fileTreeFilter       string
+	fileTreeInput        *fileChange
+	fileTreeCount        int
 	fileTreeData         fileTree
 	fileSplit            float32
 	diffSource           *fileDiffSource
 	diff                 *editor.DiffState
 	simpleDiff           *simpleDiff
+	imageDiff            *imageDiff
+	imageViewMode        int
+	imageFitActual       bool
 	diffNote             string
 	diffLoading          bool
 	openFileTabAfterLoad bool
@@ -175,17 +171,15 @@ type repoTab struct {
 
 func newTab(id int, path string) *repoTab {
 	return &repoTab{
-		id:                 id,
-		path:               path,
-		title:              repoTitle(path),
-		selected:           -1,
-		fileSel:            -1,
-		fileOutlineSel:     -1,
-		worktreeSel:        -1,
-		worktreeOutlineSel: -1,
-		authors:            map[string]string{},
-		refs:               map[[20]byte][]refInfo{},
-		searchKind:         "说明",
+		id:             id,
+		path:           path,
+		title:          repoTitle(path),
+		selected:       -1,
+		fileSel:        -1,
+		fileOutlineSel: -1,
+		authors:        map[string]string{},
+		refs:           map[[20]byte][]refInfo{},
+		searchKind:     "说明",
 	}
 }
 
@@ -332,16 +326,39 @@ func (t *repoTab) stopHistory() {
 
 var userConfigDir = os.UserConfigDir
 
+const (
+	appConfigName    = "Xylring"
+	legacyConfigName = "GitClientPrototype"
+)
+
 func configFile(name string) (string, error) {
 	dir, err := userConfigDir()
 	if err != nil {
 		return "", err
 	}
-	dir = filepath.Join(dir, "GitClientPrototype")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	cur := filepath.Join(dir, appConfigName)
+	if err := migrateConfigDir(filepath.Join(dir, legacyConfigName), cur); err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, name), nil
+	if err := os.MkdirAll(cur, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(cur, name), nil
+}
+
+func migrateConfigDir(legacy, cur string) error {
+	if _, err := os.Stat(cur); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return os.Rename(legacy, cur)
 }
 
 func writeJSON(path string, value any) error {

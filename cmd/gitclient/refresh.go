@@ -10,7 +10,7 @@ import (
 )
 
 func (m repoMeta) key() string {
-	parts := []string{m.branch, hashHex(m.head)}
+	parts := []string{m.branch, hashHex(m.head), m.operation}
 	for h, refs := range m.refs {
 		for _, ref := range refs {
 			parts = append(parts, hashHex(h)+refPrefix(ref.kind)+ref.name)
@@ -45,11 +45,12 @@ func (a *app) startAutoRefresh() {
 				return
 			case <-ticker.C:
 				tickCount++
+				refreshSummaries := tickCount%5 == 0
 				a.onMain(func() {
 					if a.win == nil || a.win.IsFocused() && !a.win.IsMinimized() {
 						a.checkActiveRepo()
 						a.maybeAutoFetch()
-						if tickCount%5 == 0 && a.showRepoSidebar() {
+						if refreshSummaries && a.showRepoSidebar() {
 							a.refreshRepoSummaries()
 						}
 					}
@@ -61,12 +62,13 @@ func (a *app) startAutoRefresh() {
 
 func (a *app) checkActiveRepo() {
 	t := a.activeTab()
-	if a.closed || t == nil || t.closed || t.loading || t.checking || !t.loaded || a.showCompare || a.fetch.busy {
+	if a.closed || t == nil || t.closed || t.loading || t.checking || !t.loaded || a.showCompare || a.fetch.busy || a.write.busy || t.commitBusy || t.syncBusy {
 		return
 	}
 	t.checking = true
 	gen, path := t.generation, t.path
 	watch, lastCheck := t.refWatch, t.refsChecked
+	cachedStatus := t.worktreeCache
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -81,7 +83,7 @@ func (a *app) checkActiveRepo() {
 		}
 		var dirty []fileChange
 		if err == nil {
-			dirty, err = worktreeStatus(ctx, path)
+			dirty, cachedStatus, err = pollWorktreeStatus(ctx, path, cachedStatus)
 		}
 		dirtyKey := worktreeKey(dirty)
 		a.onMain(func() {
@@ -100,6 +102,7 @@ func (a *app) checkActiveRepo() {
 				changed, t.err = t.err != msg, msg
 				return
 			}
+			t.worktreeCache = cachedStatus
 			if strings.HasPrefix(t.err, "检查仓库更新失败：") {
 				t.err = ""
 				changed = true

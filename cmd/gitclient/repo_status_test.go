@@ -9,6 +9,19 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func activateWorktreeInspect(tab *repoTab) {
+	tab.worktree = true
+	tab.inspecting = zeroHash
+	tab.comparison = nil
+	tab.compareFiles = tab.worktreeFiles
+	tab.worktreeCount = len(tab.worktreeFiles)
+	tab.selected = 0
+	tab.selection.Clear()
+	tab.selection.Add(worktreeHash)
+	tab.fileSplit = 50
+	tab.detailSplit = 45
+}
+
 func TestSidebarBranchDisplay(t *testing.T) {
 	cases := []struct {
 		branch string
@@ -113,7 +126,7 @@ func TestRepoSidebarShowsBranchAndDirty(t *testing.T) {
 		},
 	}
 
-	tt := ui.NewTester(a.view, 1100, 720)
+	tt := ui.NewTester(a.view, 1100, 900)
 	tt.Frame()
 
 	// Both repo labels should be present
@@ -223,12 +236,12 @@ func TestSidebarWorktreeShowsActiveRepoFiles(t *testing.T) {
 		foundFrom: "/tmp/work",
 	}
 
+	activateWorktreeInspect(tab1)
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
 
-	// Should show "工作区代码" and file count 2
-	if !tt.HasText("工作区代码") {
-		t.Fatalf("侧栏应显示工作区代码：%q", tt.Texts())
+	if !tt.HasText("相对 HEAD") {
+		t.Fatalf("未提交场景应显示文件列表：%q", tt.Texts())
 	}
 	if !tt.HasText(".DS_Store") || !tt.HasText("main.go") {
 		t.Fatalf("侧栏应展示改动的文件：%q", tt.Texts())
@@ -237,11 +250,10 @@ func TestSidebarWorktreeShowsActiveRepoFiles(t *testing.T) {
 		t.Fatalf("侧栏应展示子目录路径：%q", tt.Texts())
 	}
 
-	// Switch to tab2 (clean)
 	a.active = 1
 	tt.Frame()
-	if !tt.HasText("工作区无改动") {
-		t.Fatalf("切换到干净仓库应显示工作区无改动：%q", tt.Texts())
+	if tt.HasText(".DS_Store") || tt.HasText("main.go") {
+		t.Fatalf("切换到干净仓库后不应再显示上一仓库的改动文件：%q", tt.Texts())
 	}
 }
 
@@ -264,6 +276,7 @@ func TestSidebarWorktreeClickOpensDiffTab(t *testing.T) {
 		dispatch:  func(fn func()) { updates <- fn },
 	}
 
+	activateWorktreeInspect(tab)
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
 
@@ -272,8 +285,8 @@ func TestSidebarWorktreeClickOpensDiffTab(t *testing.T) {
 	}
 	tt.Frame()
 
-	if !tab.worktree || tab.worktreeSel != 1 {
-		t.Fatalf("单击侧边栏工作区文件后应激活工作区并选中文件: worktree=%v sel=%d", tab.worktree, tab.worktreeSel)
+	if !tab.worktree || tab.fileSel != 1 {
+		t.Fatalf("单击未提交文件后应选中该文件: worktree=%v sel=%d", tab.worktree, tab.fileSel)
 	}
 
 	a.openWorktreeFileTab(tab, tab.worktreeFiles[1])
@@ -314,12 +327,12 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 		dispatch:  func(fn func()) { updates <- fn },
 	}
 
-	tt := ui.NewTester(a.view, 1100, 720)
+	activateWorktreeInspect(tab)
+	tt := ui.NewTester(a.view, 1100, 900)
 	tt.Frame()
 
-	// In list mode, both "列表" and "树" are present
-	if !tt.HasText("工作区代码") || !tt.HasText("列表") || !tt.HasText("树") {
-		t.Fatalf("侧栏缺少工作区切换按钮：%q", tt.Texts())
+	if !tt.HasText("相对 HEAD") || !tt.HasText("列表") || !tt.HasText("树") {
+		t.Fatalf("未提交场景缺少文件视图切换：%q", tt.Texts())
 	}
 	// Initially in list mode, dir is shown under file
 	if !tt.HasText("zaec-image") || !tt.HasText("Dockerfile.jdk8-2") {
@@ -331,8 +344,8 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.sidebarFileView != 1 {
-		t.Fatalf("点击树后 sidebarFileView 应为 1，实际为 %d", a.sidebarFileView)
+	if a.fileView != 1 {
+		t.Fatalf("点击树后 fileView 应为 1，实际为 %d", a.fileView)
 	}
 
 	// In tree mode, directory names and file names should be visible
@@ -343,21 +356,21 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 	}
 
 	// Verify directory node is open by default
-	if !tab.worktreeOutline.Open.Has("zaec-image/") {
+	if !tab.fileOutline.Open.Has("zaec-image/") {
 		t.Fatalf("zaec-image/ 应该默认展开")
 	}
-	initialRows := tab.worktreeOutline.Rows()
+	initialRows := tab.fileOutline.Rows()
 	// Collapse directory
-	tab.worktreeOutline.Open.Remove("zaec-image/")
+	tab.fileOutline.Open.Remove("zaec-image/")
 	tt.Frame()
 	if tt.HasText("Dockerfile.jdk8-2") {
 		t.Fatalf("折叠 zaec-image 后不应显示内部文件")
 	}
-	if tab.worktreeOutline.Rows() >= initialRows {
-		t.Fatalf("折叠后行数应减少: was %d, now %d", initialRows, tab.worktreeOutline.Rows())
+	if tab.fileOutline.Rows() >= initialRows {
+		t.Fatalf("折叠后行数应减少: was %d, now %d", initialRows, tab.fileOutline.Rows())
 	}
 	// Re-expand directory
-	tab.worktreeOutline.Open.Add("zaec-image/")
+	tab.fileOutline.Open.Add("zaec-image/")
 	tt.Frame()
 	if !tt.HasText("Dockerfile.jdk8-2") {
 		t.Fatalf("重新展开后应显示内部文件")
@@ -369,8 +382,8 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 	}
 	tt.Frame()
 
-	if tab.worktreeSel != 0 {
-		t.Fatalf("选中文件索引应为 0，实际为 %d", tab.worktreeSel)
+	if tab.fileSel != 0 {
+		t.Fatalf("选中文件索引应为 0，实际为 %d", tab.fileSel)
 	}
 	if !tab.worktree {
 		t.Fatalf("点击后应激活工作区视图")
@@ -386,17 +399,19 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 		t.Fatalf("打开标签页异常：%+v", tab.fileTabs)
 	}
 
+	tab.contentTab = 0
+	tt.Frame()
 	// Switch back to list mode
 	if err := tt.Click("列表"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.sidebarFileView != 0 {
-		t.Fatalf("点击列表后 sidebarFileView 应为 0，实际为 %d", a.sidebarFileView)
+	if a.fileView != 0 {
+		t.Fatalf("点击列表后 fileView 应为 0，实际为 %d", a.fileView)
 	}
 	// Selection should be preserved
-	if tab.worktreeSel != 0 {
-		t.Fatalf("切回列表后工作区选中丢失: %d", tab.worktreeSel)
+	if tab.fileSel != 0 {
+		t.Fatalf("切回列表后工作区选中丢失: %d", tab.fileSel)
 	}
 }
 
@@ -421,7 +436,8 @@ func TestSidebarWorktreeFeatures(t *testing.T) {
 		dispatch:  func(fn func()) { updates <- fn },
 	}
 
-	tt := ui.NewTester(a.view, 1100, 720)
+	activateWorktreeInspect(tab)
+	tt := ui.NewTester(a.view, 1100, 900)
 	tt.Frame()
 
 	// 1. Root directory placeholder
@@ -430,12 +446,12 @@ func TestSidebarWorktreeFeatures(t *testing.T) {
 	}
 
 	// 2. Filter input is present
-	if !tt.HasText("过滤文件 (Filter files...)") {
+	if !tt.HasText("过滤文件") {
 		t.Fatalf("缺少文件过滤输入框：%q", tt.Texts())
 	}
 
 	// 3. Filter test
-	tab.worktreeFilter = "core"
+	tab.fileFilter = "core"
 	tt.Frame()
 	if !tt.HasText("2/3") || !tt.HasText("清除过滤") {
 		t.Fatalf("过滤后未展示匹配统计或清除按钮：%q", tt.Texts())
@@ -452,8 +468,8 @@ func TestSidebarWorktreeFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tab.worktreeFilter != "" {
-		t.Fatalf("点击清除过滤后 worktreeFilter 应为空，实际为 %q", tab.worktreeFilter)
+	if tab.fileFilter != "" {
+		t.Fatalf("点击清除过滤后 fileFilter 应为空，实际为 %q", tab.fileFilter)
 	}
 	if !tt.HasText("README.md") {
 		t.Fatalf("清除过滤后应恢复 README.md：%q", tt.Texts())
@@ -471,14 +487,14 @@ func TestSidebarWorktreeFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tab.worktreeOutline.Open.Has("pkg/") {
+	if tab.fileOutline.Open.Has("pkg/") {
 		t.Fatalf("全部收起后 pkg/ 目录不应处于展开状态")
 	}
 	if err := tt.Click("全部展开"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tab.worktreeOutline.Open.Has("pkg/") {
+	if !tab.fileOutline.Open.Has("pkg/") {
 		t.Fatalf("全部展开后 pkg/ 目录应处于展开状态")
 	}
 }

@@ -275,7 +275,7 @@ func TestLocateRefShowsErrorNearInput(t *testing.T) {
 	tab.locate = "111111111111111111111111"
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if err := tt.Click("跳到"); err != nil {
+	if err := tt.Click("搜索"); err != nil {
 		t.Fatal(err)
 	}
 	waitUpdates(t, updates, func() bool { return tab.locateErr != "" })
@@ -283,10 +283,10 @@ func TestLocateRefShowsErrorNearInput(t *testing.T) {
 	if !tt.HasText("找不到") || tt.HasText("fatal") {
 		t.Fatalf("texts=%q err=%q", tt.Texts(), tab.locateErr)
 	}
-	jump, ok := tt.Find("跳到")
+	jump, ok := tt.Find("搜索")
 	msg, found := tt.Find(tab.locateErr)
 	if !ok || !found {
-		t.Fatalf("missing jump or error: jump=%v msg=%v texts=%q", ok, found, tt.Texts())
+		t.Fatalf("missing search or error: jump=%v msg=%v texts=%q", ok, found, tt.Texts())
 	}
 	if msg.Y < jump.Y || msg.Y > jump.Y+80 {
 		t.Fatalf("error not under toolbar: jump=%+v msg=%+v", jump, msg)

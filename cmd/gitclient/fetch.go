@@ -68,7 +68,7 @@ func (a *app) quickFetch(tab *repoTab) {
 		return
 	}
 	tab.stopAutoFetch()
-	if a.write.busy || a.fetch.busy {
+	if a.write.busy || a.fetch.busy || tab.commitBusy || tab.syncBusy {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -120,7 +120,7 @@ func (a *app) openFetch(tab *repoTab) {
 		return
 	}
 	tab.stopAutoFetch()
-	if a.write.busy || a.fetch.busy {
+	if a.write.busy || a.fetch.busy || tab.commitBusy || tab.syncBusy {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"sort"
+	"unsafe"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
@@ -10,6 +11,9 @@ import (
 // Keep inactive repository data within one shared budget. Positions survive
 // eviction so switching back reloads the same query, selection and file.
 func (a *app) trimInactiveHistory() {
+	if active := a.activeTab(); active != nil && active.cachedBytes()-active.historyBytes > historyMemoryStep {
+		a.spillFileTabs(active)
+	}
 	var tabs []*repoTab
 	for _, t := range a.tabs {
 		if t != a.activeTab() {
@@ -20,17 +24,32 @@ func (a *app) trimInactiveHistory() {
 	var kept int64
 	for _, t := range tabs {
 		kept += t.cachedBytes()
-		if kept > historyMemoryStep && t.loaded {
+		if kept > historyMemoryStep {
 			before := t.cachedBytes()
-			t.evictHistory()
+			if t.loaded {
+				t.evictHistory()
+			}
+			a.spillFileTabs(t)
 			kept -= before - t.cachedBytes()
 		}
 	}
 }
 
 func (t *repoTab) cachedBytes() int64 {
-	n := t.historyBytes
+	n := t.historyBytes + t.metadataBytes()
 	seen := map[*editor.DiffState]bool{}
+	seenBuffers := map[*editor.Buffer]bool{}
+	addBuffer := func(b *editor.Buffer) {
+		if b != nil && !seenBuffers[b] {
+			seenBuffers[b] = true
+			n += int64(b.Len()) + int64(unsafe.Sizeof(*b))
+			// Reserve per-line space for diff/syntax indexes owned by MyGo.
+			n += int64(b.LineCount()) * 32
+		}
+	}
+	for _, tab := range t.fileTabs {
+		addBuffer(tab.fullContent.Buffer)
+	}
 	diffs := []*editor.DiffState{t.diff, savedDiff(t.historyBack), savedDiff(t.fileBack), savedDiff(t.restoreDiff)}
 	for _, tab := range t.fileTabs {
 		diffs = append(diffs, tab.diff)
@@ -41,10 +60,10 @@ func (t *repoTab) cachedBytes() int64 {
 		}
 		seen[d] = true
 		if d.Old != nil {
-			n += int64(d.Old.Len())
+			addBuffer(d.Old)
 		}
 		if d.New != nil {
-			n += int64(d.New.Len())
+			addBuffer(d.New)
 		}
 	}
 	seenSources := map[*fileDiffSource]bool{}
@@ -66,6 +85,53 @@ func (t *repoTab) cachedBytes() int64 {
 	return n
 }
 
+// This is a cache estimate, not a process heap limit. Shared objects are counted once.
+func (t *repoTab) metadataBytes() int64 {
+	var n int64
+	seenFiles := map[*fileChange]bool{}
+	for _, files := range [][]fileChange{t.compareFiles, t.worktreeFiles} {
+		if len(files) == 0 || seenFiles[&files[0]] {
+			continue
+		}
+		seenFiles[&files[0]] = true
+		n += int64(cap(files)) * int64(unsafe.Sizeof(fileChange{}))
+		for _, f := range files {
+			n += int64(len(f.path) + len(f.oldPath) + len(f.worktreeVersion))
+		}
+	}
+	tree := t.fileTreeData
+	n += int64(cap(tree.roots)) * 16
+	for key, node := range tree.nodes {
+		n += int64(len(key)+len(node.name)) + int64(unsafe.Sizeof(node)) + 48
+	}
+	for key, kids := range tree.kids {
+		n += int64(len(key) + cap(kids)*16 + 64)
+	}
+	for _, refs := range t.refs {
+		n += 64 + int64(cap(refs))*int64(unsafe.Sizeof(refInfo{}))
+		for _, ref := range refs {
+			n += int64(len(ref.name))
+		}
+	}
+	seenDetails := map[*commitDetails]bool{}
+	details := []*commitDetails{t.details}
+	for _, saved := range []*historyLocation{t.historyBack, t.fileBack, t.restoreDiff, t.restore} {
+		if saved != nil {
+			details = append(details, saved.details)
+		}
+	}
+	for _, d := range details {
+		if d != nil && !seenDetails[d] {
+			seenDetails[d] = true
+			n += int64(unsafe.Sizeof(*d)) + int64(len(d.formatted)+len(d.message))
+			if d.view.Buffer != nil {
+				n += int64(d.view.Buffer.Len())
+			}
+		}
+	}
+	return n
+}
+
 func savedDiff(l *historyLocation) *editor.DiffState {
 	if l == nil {
 		return nil
@@ -81,7 +147,7 @@ func (t *repoTab) evictHistory() {
 	t.cancel()
 	for _, saved := range []*historyLocation{l, t.historyBack, t.fileBack} {
 		if saved != nil {
-			saved.diff, saved.simpleDiff, saved.source, saved.details = nil, nil, nil, nil
+			saved.diff, saved.simpleDiff, saved.imageDiff, saved.source, saved.details = nil, nil, nil, nil, nil
 		}
 	}
 	t.restore = l
@@ -94,13 +160,13 @@ func (t *repoTab) evictHistory() {
 	t.list, t.fileList = ui.ListState{}, ui.ListState{}
 	t.selected, t.fileSel = -1, -1
 	t.resetFileTree()
-	t.resetWorktreeTree()
 	t.selection.Clear()
 	t.inspecting = zeroHash
 	t.worktree = false
 	t.comparison = nil
-	t.diff, t.simpleDiff, t.diffSource, t.details = nil, nil, nil, nil
+	t.diff, t.simpleDiff, t.imageDiff, t.diffSource, t.details = nil, nil, nil, nil, nil
 	t.compareFiles, t.worktreeFiles = nil, nil
 	t.worktreeCount, t.worktreeKey = 0, ""
+	t.worktreeCache = nil
 	t.loading, t.loaded, t.compareLoading, t.diffLoading, t.detailsLoading = false, false, false, false, false
 }

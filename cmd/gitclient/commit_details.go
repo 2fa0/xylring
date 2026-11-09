@@ -125,7 +125,7 @@ func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
 					c.Services().WriteClipboard(t.details.text())
 					c.Toast("已复制提交信息")
 				}
-				closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("close-commit-details-%d", t.id))).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Tooltip("收起信息")
+				closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("close-commit-details-%d", t.id))).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Tooltip("收起信息").Transition(colorMotion())
 				closeBtn.Children(func() {
 					ui.Icon(c, iconClose).Size(12, 12).TextColor(theme.TextMuted)
 				})
@@ -136,11 +136,4 @@ func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
 			editor.View(c.Key(fmt.Sprintf("commit-info-%d", t.id)), &t.details.view).FillWidth().Height(160).MinHeight(80)
 		}
 	})
-}
-
-func (a *app) detailsPopover(c *ui.Context, t *repoTab, anchor ui.Element) {
-	if !t.detailsOpen {
-		return
-	}
-	a.commitDetailsInline(c, t)
 }

@@ -30,10 +30,9 @@ func queryRepoSummary(ctx context.Context, dir string) repoSummary {
 	} else {
 		s.branch = "尚无提交"
 	}
-	out, err := runGit(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=normal")
+	out, err := runGit(ctx, dir, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	if err == nil {
-		files := parsePorcelainZ(out)
-		s.dirty = len(files) > 0
+		s.dirty = len(out) > 0
 	}
 	sync, _ := queryTrackingStatus(ctx, dir)
 	s.hasUpstream = sync.hasUpstream
@@ -66,86 +65,114 @@ func (a *app) repoStatus(path string) (branch string, dirty bool, ahead, behind 
 	if tab := a.activeTab(); tab != nil && tab.path == path && tab.loaded {
 		return tab.branch, tab.worktreeCount > 0, tab.ahead, tab.behind
 	}
+	a.summaryMu.Lock()
+	s, ok := a.repoSummaries[path]
+	a.summaryMu.Unlock()
+	if ok {
+		return s.branch, s.dirty, s.ahead, s.behind
+	}
 	for _, tab := range a.tabs {
 		if tab.path == path && tab.loaded {
 			return tab.branch, tab.worktreeCount > 0, tab.ahead, tab.behind
 		}
 	}
-	a.summaryMu.Lock()
-	defer a.summaryMu.Unlock()
-	if s, ok := a.repoSummaries[path]; ok {
-		return s.branch, s.dirty, s.ahead, s.behind
-	}
+
 	return "", false, 0, 0
 }
+
+const repoSummaryInterval = 10 * time.Second
 
 func (a *app) isRepoSummaryFresh(path string) bool {
 	a.summaryMu.Lock()
 	defer a.summaryMu.Unlock()
-	if a.repoSummaries == nil {
-		return false
-	}
 	s, ok := a.repoSummaries[path]
-	return ok && !s.checked.IsZero()
+	return ok && time.Since(s.checked) < repoSummaryInterval
 }
 
 func (a *app) ensureRepoSummary(path string) {
-	if a.closed || path == "" {
-		return
+	if !a.isRepoSummaryFresh(path) {
+		a.refreshRepoSummary(path)
 	}
-	a.summaryMu.Lock()
-	running := a.summaryRunning[path]
-	s, ok := a.repoSummaries[path]
-	a.summaryMu.Unlock()
-	if running {
-		return
-	}
-	if ok && time.Since(s.checked) < 3*time.Second {
-		return
-	}
-	a.refreshRepoSummary(path)
 }
 
-func (a *app) refreshRepoSummaries() {
+// Only visible rows need periodic status. A batch uses one worker and one UI update.
+func (a *app) visibleRepoPaths() []string {
+	items := a.repoItems()
+	first, last := a.repoListState.Visible()
+	if first < 0 || last < first {
+		first, last = 0, min(32, len(items))-1
+	}
+	return items[min(first, len(items)):min(last+1, len(items))]
+}
+
+func (a *app) refreshRepoSummaries() { a.refreshSummaryBatch(a.visibleRepoPaths()) }
+
+func (a *app) refreshRepoSummary(path string) {
+	paths := append([]string{path}, a.visibleRepoPaths()...)
+	a.refreshSummaryBatch(paths)
+}
+
+func (a *app) refreshSummaryBatch(paths []string) {
 	if a.closed {
 		return
 	}
-	for _, p := range a.repoItems() {
-		a.refreshRepoSummary(p)
-	}
-}
-
-func (a *app) refreshRepoSummary(path string) {
-	if a.closed || path == "" {
-		return
-	}
 	a.summaryMu.Lock()
-	if a.summaryRunning[path] {
+	if len(a.summaryRunning) != 0 {
 		a.summaryMu.Unlock()
 		return
 	}
-	if a.summaryRunning == nil {
-		a.summaryRunning = make(map[string]bool)
+	pending := make(map[string]bool)
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if tab := a.activeTab(); tab != nil && tab.path == path && tab.loaded {
+			continue
+		}
+		if s, ok := a.repoSummaries[path]; ok && time.Since(s.checked) < repoSummaryInterval {
+			continue
+		}
+		pending[path] = true
 	}
-	a.summaryRunning[path] = true
+	if len(pending) == 0 {
+		a.summaryMu.Unlock()
+		return
+	}
+	a.summaryRunning = pending
+	batchCtx, batchCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	a.summaryCancel = batchCancel
 	a.summaryMu.Unlock()
-
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s := queryRepoSummary(ctx, path)
-		a.post(func() {
+		defer batchCancel()
+		results := make(map[string]repoSummary, len(pending))
+		for path := range pending {
+			if batchCtx.Err() != nil {
+				break
+			}
+			ctx, cancel := context.WithTimeout(batchCtx, 5*time.Second)
+			results[path] = queryRepoSummary(ctx, path)
+			cancel()
+		}
+		a.onMain(func() {
+			a.summaryMu.Lock()
+			a.summaryRunning = nil
+			a.summaryCancel = nil
 			if a.closed {
+				a.summaryMu.Unlock()
 				return
 			}
-			a.summaryMu.Lock()
 			if a.repoSummaries == nil {
 				a.repoSummaries = make(map[string]repoSummary)
 			}
-			a.repoSummaries[path] = s
-			delete(a.summaryRunning, path)
+			changed := false
+			for path, result := range results {
+				old, ok := a.repoSummaries[path]
+				old.checked = result.checked
+				changed = changed || !ok || old != result
+				a.repoSummaries[path] = result
+			}
 			a.summaryMu.Unlock()
-			if a.win != nil {
+			if changed && a.win != nil {
 				a.win.Invalidate()
 			}
 		})

@@ -92,13 +92,13 @@ func TestWorktreeShowsUncommittedAndKeepsGraph(t *testing.T) {
 	}
 	waitUpdates(t, updates, func() bool { return tab.worktree && !tab.compareLoading && !tab.diffLoading })
 	tt.Frame()
-	for _, text := range []string{"未提交改动", "工作区代码", "a.txt", "b.txt", "+1", "-1", "-0", "图谱", "base", "并排", "内联"} {
+	for _, text := range []string{"未提交改动", "相对 HEAD", "提交改动", "a.txt", "b.txt", "+1", "-1", "-0", "图谱", "base", "并排", "内联"} {
 		if !tt.HasText(text) {
 			t.Fatalf("缺少 %q，当前文本：%q", text, tt.Texts())
 		}
 	}
-	if tt.HasText("相对 HEAD") {
-		t.Fatalf("工作区未提交改动不应再显示多余的左侧文件列表（标号1）：%q", tt.Texts())
+	if tt.HasText("工作区代码") {
+		t.Fatalf("未提交场景不应再占用侧栏工作区列表：%q", tt.Texts())
 	}
 	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
@@ -266,17 +266,14 @@ func TestWorktreeDiffTakesFullBottomWidthWithoutInspectFilesPane(t *testing.T) {
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 
-	// Sidebar has the worktree section
-	if !tt.HasText("工作区代码") {
-		t.Fatalf("侧边栏应展示工作区代码：%q", tt.Texts())
+	if !tt.HasText("相对 HEAD") || !tt.HasText("提交改动") {
+		t.Fatalf("未提交场景应展示文件列表和提交框：%q", tt.Texts())
 	}
-	// Bottom area displays diff view directly
 	if !tt.HasText("并排") || !tt.HasText("内联") || !tt.HasText("测试差异") {
-		t.Fatalf("底栏应直接展示 diff 视图：%q", tt.Texts())
+		t.Fatalf("底栏应展示 diff 视图：%q", tt.Texts())
 	}
-	// Mark 1 (relative to HEAD in file list header) must NOT be present
-	if tt.HasText("相对 HEAD") {
-		t.Fatalf("未提交改动底栏不应再显示标号1的中间文件列表面板：%q", tt.Texts())
+	if tt.HasText("工作区代码") {
+		t.Fatalf("侧栏不应再钉着工作区文件列表：%q", tt.Texts())
 	}
 
 	// Now switch to normal commit inspection: Mark 1 MUST be present
@@ -293,5 +290,84 @@ func TestWorktreeDiffTakesFullBottomWidthWithoutInspectFilesPane(t *testing.T) {
 	}
 	if !tt.HasText("feat: something") {
 		t.Fatalf("常规提交详情应正常显示提交信息面板：%q", tt.Texts())
+	}
+}
+
+func TestWorktreeCommitCardExpandOnHoverAndPin(t *testing.T) {
+	tab := newTab(1, "/tmp/test-repo")
+	tab.loaded = true
+	tab.branch = "main"
+	tab.commits = []commit{
+		{hash: hashN(1), author: "Ada", subject: "初始提交", when: 1700000000},
+	}
+	tab.head = hashN(1)
+	tab.graph.add(&tab.commits[0])
+	tab.selected = 0
+	tab.selection.Add(worktreeHash)
+	tab.inspecting = zeroHash
+	tab.worktree = true
+	tab.worktreeFiles = []fileChange{
+		{status: "M", path: "main.go"},
+	}
+	tab.compareFiles = []fileChange{
+		{status: "M", path: "main.go"},
+	}
+	tab.fileSel = 0
+	tab.diffNote = "测试差异"
+
+	a := newApp()
+	a.tabs = []*repoTab{tab}
+	a.dispatch = func(func()) {}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+
+	// 1. Inactive state by default: only single line (header) is shown
+	if !tt.HasText("提交改动") || !tt.HasText("未暂存任何文件") {
+		t.Fatalf("单行状态应展示标题和状态：%q", tt.Texts())
+	}
+	if tt.HasText("修改上次提交") {
+		t.Fatalf("非活动状态不应展示扩展内容：%q", tt.Texts())
+	}
+
+	// 2. Hover over the card -> expands
+	cardRect, ok := tt.Find("提交改动")
+	if !ok {
+		t.Fatal("未找到提交改动卡片")
+	}
+	tt.Move(cardRect.X+2, cardRect.Y+2)
+	tt.Frame()
+	if !tt.HasText("修改上次提交") {
+		t.Fatalf("鼠标移动到卡片上后应展开面板：%q", tt.Texts())
+	}
+
+	// 3. Move mouse away while no text -> collapses
+	tt.Move(10, 10)
+	tt.Frame()
+	if tt.HasText("修改上次提交") {
+		t.Fatalf("鼠标移开且无输入时应自动折叠：%q", tt.Texts())
+	}
+
+	// 4. If commitMsg is drafted, it stays expanded even with mouse away
+	tab.commitMsg = "feat: some changes"
+	tt.Frame()
+	if !tt.HasText("修改上次提交") {
+		t.Fatalf("有输入说明时即使鼠标移开也应保持展开：%q", tt.Texts())
+	}
+
+	// 5. Clear commitMsg -> collapses again
+	tab.commitMsg = ""
+	tt.Frame()
+	if tt.HasText("修改上次提交") {
+		t.Fatalf("清空提交说明后应自动折叠：%q", tt.Texts())
+	}
+
+	// 6. Pin via clicking header -> stays expanded
+	if err := tt.Click("提交改动"); err != nil {
+		t.Fatalf("点击标题栏失败: %v", err)
+	}
+	tt.Move(10, 10)
+	tt.Frame()
+	if !tab.commitPinned || !tt.HasText("修改上次提交") {
+		t.Fatalf("点击固定后即使鼠标移开也应保持展开：%q", tt.Texts())
 	}
 }

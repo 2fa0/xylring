@@ -90,13 +90,13 @@ func worktreeBadges(files []fileChange) []string {
 			untracked++
 		case "冲突":
 			conflict++
-		case "已暂存", "重命名":
-			staged++
-		case "已暂存并继续改":
-			staged++
-			unstaged++
 		default:
-			unstaged++
+			if f.hasStaged() {
+				staged++
+			}
+			if f.hasUnstaged() {
+				unstaged++
+			}
 		}
 	}
 	var out []string
@@ -123,9 +123,6 @@ func (a *app) applyWorktree(t *repoTab, files []fileChange) {
 	t.worktreeKey = key
 	t.worktreeCount = count
 	t.worktreeFiles = files
-	if t.worktreeSel >= count {
-		t.worktreeSel = -1
-	}
 	a.summaryMu.Lock()
 	if a.repoSummaries != nil {
 		a.repoSummaries[t.path] = repoSummary{branch: t.branch, dirty: count > 0, checked: time.Now()}
@@ -170,9 +167,6 @@ func (a *app) shiftSelectionForWorktreeRow(t *repoTab, had, has bool) {
 func (a *app) showWorktree(t *repoTab) {
 	if t.query.term != "" || t.query.filePath != "" {
 		return
-	}
-	if a.sidebarHidden {
-		a.sidebarHidden = false
 	}
 	already := t.worktree && t.comparison == nil && t.inspecting == zeroHash
 	t.worktree = true
@@ -233,7 +227,6 @@ func (a *app) closeWorktree(t *repoTab) {
 		return
 	}
 	t.worktree = false
-	t.worktreeSel = -1
 	if t.comparison != nil || t.inspecting != zeroHash {
 		return
 	}
@@ -242,39 +235,15 @@ func (a *app) closeWorktree(t *repoTab) {
 	a.clearDiff(t)
 }
 
-func (a *app) selectWorktreeFile(t *repoTab, i int) {
-	if i < 0 || i >= len(t.worktreeFiles) {
-		return
-	}
-	t.worktreeSel = i
-	targetPath := t.worktreeFiles[i].path
-	if t.worktree && len(t.compareFiles) > 0 {
-		for idx, f := range t.compareFiles {
-			if f.path == targetPath {
-				t.fileSel = idx
-				a.loadFileDiff(t, idx)
-				return
-			}
-		}
-	}
-	t.restoreFile = targetPath
-	if !t.worktree || t.comparison != nil || t.inspecting != zeroHash {
-		a.showWorktree(t)
-		return
-	}
-	t.compareLoading = true
-	a.loadWorktreeStatus(t, true)
-}
-
 func stageFile(ctx context.Context, dir, path string) error {
-	_, err := runGit(ctx, dir, "add", "-A", "--", path)
+	_, err := runGit(ctx, dir, "--literal-pathspecs", "add", "-A", "--", path)
 	return err
 }
 
 func unstageFile(ctx context.Context, dir, path string) error {
-	_, err := runGit(ctx, dir, "restore", "--staged", "--", path)
+	_, err := runGit(ctx, dir, "--literal-pathspecs", "restore", "--staged", "--", path)
 	if err != nil {
-		_, err = runGit(ctx, dir, "reset", "HEAD", "--", path)
+		_, err = runGit(ctx, dir, "--literal-pathspecs", "reset", "HEAD", "--", path)
 	}
 	return err
 }
@@ -297,9 +266,9 @@ func discardFile(ctx context.Context, dir string, f fileChange) error {
 		fullPath := filepath.Join(dir, filepath.FromSlash(f.path))
 		return os.RemoveAll(fullPath)
 	}
-	_, err := runGit(ctx, dir, "restore", "--worktree", "--", f.path)
+	_, err := runGit(ctx, dir, "--literal-pathspecs", "restore", "--worktree", "--", f.path)
 	if err != nil {
-		_, err = runGit(ctx, dir, "checkout", "--", f.path)
+		_, err = runGit(ctx, dir, "--literal-pathspecs", "checkout", "--", f.path)
 	}
 	return err
 }
@@ -325,20 +294,26 @@ func (a *app) refreshWorktree(t *repoTab) {
 }
 
 func (a *app) stageWorktreeFile(t *repoTab, path string) {
+	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+		return
+	}
 	if t == nil || path == "" {
 		return
 	}
+	t.commitBusy = true
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := stageFile(ctx, repoPath, path); err != nil {
 			a.post(func() {
+				t.commitBusy = false
 				a.setBanner("暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
 				a.showWorktree(t)
@@ -348,20 +323,26 @@ func (a *app) stageWorktreeFile(t *repoTab, path string) {
 }
 
 func (a *app) unstageWorktreeFile(t *repoTab, path string) {
+	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+		return
+	}
 	if t == nil || path == "" {
 		return
 	}
+	t.commitBusy = true
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := unstageFile(ctx, repoPath, path); err != nil {
 			a.post(func() {
+				t.commitBusy = false
 				a.setBanner("取消暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
 				a.showWorktree(t)
@@ -371,20 +352,26 @@ func (a *app) unstageWorktreeFile(t *repoTab, path string) {
 }
 
 func (a *app) stageAllWorktree(t *repoTab) {
+	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+		return
+	}
 	if t == nil {
 		return
 	}
+	t.commitBusy = true
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := stageAll(ctx, repoPath); err != nil {
 			a.post(func() {
+				t.commitBusy = false
 				a.setBanner("全部暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
 				a.showWorktree(t)
@@ -394,20 +381,26 @@ func (a *app) stageAllWorktree(t *repoTab) {
 }
 
 func (a *app) unstageAllWorktree(t *repoTab) {
+	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+		return
+	}
 	if t == nil {
 		return
 	}
+	t.commitBusy = true
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := unstageAll(ctx, repoPath); err != nil {
 			a.post(func() {
+				t.commitBusy = false
 				a.setBanner("全部取消暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
 				a.showWorktree(t)
@@ -428,22 +421,28 @@ func (a *app) promptDiscardWorktreeFile(t *repoTab, f fileChange) {
 }
 
 func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
+	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+		return
+	}
 	if t == nil {
 		return
 	}
 	a.showDiscard = false
 	a.discard.open = false
+	t.commitBusy = true
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := discardFile(ctx, repoPath, f); err != nil {
 			a.post(func() {
+				t.commitBusy = false
 				a.setBanner("丢弃失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			t.commitBusy = false
 			a.pendingToast = "已丢弃改动: " + filepath.Base(f.path)
 			a.refreshWorktree(t)
 			if t.worktree {
@@ -454,6 +453,9 @@ func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
 }
 
 func (a *app) runCommitWorktree(t *repoTab) {
+	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+		return
+	}
 	if t == nil {
 		return
 	}
@@ -464,7 +466,7 @@ func (a *app) runCommitWorktree(t *repoTab) {
 	}
 	stagedCount := 0
 	for _, f := range t.worktreeFiles {
-		if f.extra == "已暂存" || f.extra == "重命名" || f.extra == "已暂存并继续改" {
+		if f.hasStaged() {
 			stagedCount++
 		}
 	}
@@ -496,6 +498,16 @@ func (a *app) runCommitWorktree(t *repoTab) {
 	}()
 }
 
+func commitPinTip(pinned, expanded bool) string {
+	if pinned {
+		return "取消固定（随鼠标移开自动折叠）"
+	}
+	if expanded {
+		return "固定展开提交面板"
+	}
+	return "展开提交面板"
+}
+
 func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 	if t == nil {
 		return
@@ -503,39 +515,67 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	stagedCount := 0
 	for _, f := range t.worktreeFiles {
-		if f.extra == "已暂存" || f.extra == "重命名" || f.extra == "已暂存并继续改" {
+		if f.hasStaged() {
 			stagedCount++
 		}
 	}
-	ui.Column(c.Key(fmt.Sprintf("worktree-commit-card-%d", t.id))).
+	card := ui.Column(c.Key(fmt.Sprintf("worktree-commit-card-%d", t.id))).
 		FillWidth().
-		Padding(8, 10).
+		Padding(6, 10).
 		Gap(6).
 		Background(theme.Surface.Alpha(0.6)).
 		Border(1, theme.Border).
 		Radius(theme.Radius).
-		Children(func() {
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "提交改动").Bold().FontSize(12)
-				ui.Box(c).Grow(1)
-				if stagedCount > 0 {
-					ui.Text(c, fmt.Sprintf("%d 个文件已暂存", stagedCount)).FontSize(11).TextColor(theme.Accent)
-				} else {
-					ui.Text(c, "未暂存任何文件").FontSize(11).TextColor(theme.TextMuted)
-				}
-			})
+		Transition(paneMotion())
+
+	isExpanded := card.Hovered() ||
+		card.FocusWithin() ||
+		strings.TrimSpace(t.commitMsg) != "" ||
+		t.commitAmend ||
+		t.commitBusy ||
+		t.commitErr != "" ||
+		t.commitPinned
+
+	card.Children(func() {
+		header := ui.Row(c.Key(fmt.Sprintf("commit-header-%d", t.id))).
+			FillWidth().
+			AlignItems(ui.Center).
+			Gap(6).
+			Cursor(ui.CursorPointer).
+			Tooltip(commitPinTip(t.commitPinned, isExpanded))
+		header.Children(func() {
+			ui.Text(c, "提交改动").Bold().FontSize(12).Shrink(0)
+			if t.operation != "" {
+				ui.Text(c, operationDisplayName(t.operation)+" 进行中").FontSize(12).TextColor(theme.Warning).Shrink(0)
+			}
+			ui.Box(c).Grow(1)
+			if stagedCount > 0 {
+				ui.Text(c, fmt.Sprintf("%d 个文件已暂存", stagedCount)).FontSize(11).TextColor(theme.Accent).Shrink(0)
+			} else {
+				ui.Text(c, "未暂存任何文件").FontSize(11).TextColor(theme.TextMuted).Shrink(0)
+			}
+			toggleIcon := iconExpandAll
+			if isExpanded {
+				toggleIcon = iconCollapseAll
+			}
+			ui.Icon(c, toggleIcon).Size(12, 12).TextColor(theme.TextMuted).Shrink(0)
+		})
+		if header.Clicked() {
+			t.commitPinned = !t.commitPinned
+		}
+
+		if isExpanded {
 			ui.TextArea(c.Key(fmt.Sprintf("commit-msg-%d", t.id)), &t.commitMsg).
-				Placeholder("输入提交说明 (Commit message)... (⌘Enter)").
+				Placeholder("写提交说明（⌘Enter）").
 				Height(54).
 				Disabled(t.commitBusy)
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
 				if t.head != zeroHash {
-					if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, "Amend").
+					if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, "修改上次提交").
 						Disabled(t.commitBusy).Changed() {
+						t.amendGen++
 						if t.commitAmend && strings.TrimSpace(t.commitMsg) == "" {
-							if headMsg, err := readCommitMessage(context.Background(), t.path, t.head); err == nil {
-								t.commitMsg = headMsg
-							}
+							a.loadAmendMessage(t)
 						}
 					}
 				}
@@ -552,7 +592,8 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 			if t.commitErr != "" {
 				ui.Text(c, t.commitErr).FontSize(11).TextColor(theme.Danger).SingleLine().Grow(1).MinWidth(0)
 			}
-		})
+		}
+	})
 }
 
 func (a *app) discardModal(c *ui.Context) {
@@ -589,5 +630,154 @@ func (a *app) discardModal(c *ui.Context) {
 				}
 			})
 		})
+	})
+}
+
+func (a *app) loadAmendMessage(t *repoTab) {
+	head, path := t.head, t.path
+	t.amendGen++
+	gen := t.amendGen
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		message, err := readCommitMessage(ctx, path, head)
+		a.post(func() {
+			if t.closed || t.amendGen != gen || t.head != head || !t.commitAmend || t.commitBusy || strings.TrimSpace(t.commitMsg) != "" {
+				return
+			}
+			if err != nil {
+				t.commitErr = "读取提交说明失败：" + err.Error()
+				return
+			}
+			t.commitMsg = message
+		})
+	}()
+}
+
+func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, keyPrefix string) {
+	theme := c.Theme()
+	if f.extra == "冲突" {
+		ui.Box(c.Key(fmt.Sprintf("%s-%d-%s", keyPrefix, t.id, f.path))).
+			Size(14, 14).Radius(3).
+			Background(theme.Danger.Alpha(0.15)).Border(1, theme.Danger.Alpha(0.5)).
+			Shrink(0).Center().Tooltip("存在合并冲突").Children(func() {
+			ui.Text(c, "!").Font("monospace").FontSize(10).Bold().TextColor(theme.Danger)
+		})
+		return
+	}
+	staged := f.hasStaged()
+	unstaged := f.hasUnstaged()
+	partial := staged && unstaged
+	fullyStaged := staged && !unstaged
+	label := "暂存文件"
+	tip := "未暂存 (点击暂存)"
+	if fullyStaged {
+		label = "取消暂存"
+		tip = "已暂存 (点击取消暂存)"
+	} else if partial {
+		label = "暂存剩余改动"
+		tip = "部分已暂存 (点击全部暂存)"
+	}
+	btn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-%d-%s", keyPrefix, t.id, f.path))).
+		Size(14, 14).Radius(3).
+		Label(label).Tooltip(tip).
+		Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+	if fullyStaged || partial {
+		btn.Background(theme.Accent.Alpha(0.18)).Border(1, theme.Accent.Alpha(0.6))
+	} else if btn.Hovered() {
+		btn.Background(theme.SurfaceHover).Border(1, theme.TextMuted)
+	} else {
+		btn.Border(1, theme.TextMuted.Alpha(0.55))
+	}
+	btn.Children(func() {
+		if fullyStaged {
+			ui.Icon(c, iconCheck).Size(10, 10).TextColor(theme.Accent)
+		} else if partial {
+			ui.Icon(c, iconMinus).Size(10, 10).TextColor(theme.Accent)
+		}
+	})
+	if btn.Clicked() {
+		if fullyStaged {
+			a.unstageWorktreeFile(t, f.path)
+		} else {
+			a.stageWorktreeFile(t, f.path)
+		}
+	}
+}
+
+func (a *app) worktreeStageHoverButtons(c *ui.Context, t *repoTab, f fileChange) {
+	switch {
+	case f.hasStaged() && !f.hasUnstaged():
+		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip("取消暂存").OnClick(func() {
+			a.unstageWorktreeFile(t, f.path)
+		})
+	case f.hasStaged() && f.hasUnstaged():
+		fileIconButton(c, "inspect-stage-"+f.path, "暂存改动", iconPlus).Tooltip("暂存改动").OnClick(func() {
+			a.stageWorktreeFile(t, f.path)
+		})
+		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip("取消暂存").OnClick(func() {
+			a.unstageWorktreeFile(t, f.path)
+		})
+	default:
+		fileIconButton(c, "inspect-stage-"+f.path, "暂存文件", iconPlus).Tooltip("暂存文件").OnClick(func() {
+			a.stageWorktreeFile(t, f.path)
+		})
+	}
+	fileIconButton(c, "inspect-discard-"+f.path, "丢弃改动", iconTrash2).Tooltip("丢弃改动").OnClick(func() {
+		a.promptDiscardWorktreeFile(t, f)
+	})
+}
+
+func (a *app) worktreeFileMenu(c *ui.Context, m *ui.Menu, t *repoTab, f fileChange) {
+	for _, action := range []string{"审阅并暂存", "审阅并取消暂存"} {
+		if m.Item(action + "…").Chosen() {
+			a.openOperation(action, "", f.path)
+		}
+	}
+	if f.extra == "冲突" {
+		if m.Item("使用外部合并工具解决…").Chosen() {
+			a.openOperation("外部合并工具", "", f.path)
+		}
+		if m.Item("标记已解决").Chosen() {
+			a.stageWorktreeFile(t, f.path)
+		}
+	}
+	m.Separator()
+	switch {
+	case f.hasStaged() && !f.hasUnstaged():
+		if m.Item("取消暂存").Chosen() {
+			a.unstageWorktreeFile(t, f.path)
+		}
+	case f.hasStaged() && f.hasUnstaged():
+		if m.Item("暂存工作区改动").Chosen() {
+			a.stageWorktreeFile(t, f.path)
+		}
+		if m.Item("取消暂存").Chosen() {
+			a.unstageWorktreeFile(t, f.path)
+		}
+	default:
+		if m.Item("暂存文件").Chosen() {
+			a.stageWorktreeFile(t, f.path)
+		}
+	}
+	if m.Item("丢弃改动…").Chosen() {
+		a.promptDiscardWorktreeFile(t, f)
+	}
+}
+
+func (a *app) operationBanner(c *ui.Context, tab *repoTab) {
+	if tab == nil || tab.operation == "" {
+		return
+	}
+	theme := c.Theme()
+	ui.Row(c.Key("operation-banner")).FillWidth().Padding(8, 14).Gap(10).AlignItems(ui.Center).
+		Background(theme.Warning.Alpha(0.12)).Border(1, theme.Warning.Alpha(0.28)).Radius(theme.Radius).Shrink(0).Children(func() {
+		ui.Text(c, "正在进行"+operationDisplayName(tab.operation)).FontSize(13).Grow(1).MinWidth(0)
+		for _, action := range []string{"继续操作", "中止操作"} {
+			act := action
+			if ui.Button(c.Key("banner-"+act), act).Disabled(tab.commitBusy || a.write.busy).Clicked() {
+				a.openOperation(act, "", "")
+			}
+		}
 	})
 }

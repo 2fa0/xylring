@@ -27,6 +27,7 @@ type historyLocation struct {
 	source      *fileDiffSource
 	diff        *editor.DiffState
 	simpleDiff  *simpleDiff
+	imageDiff   *imageDiff
 	note        string
 	from, to    [20]byte
 	comparison  *commitComparison
@@ -40,7 +41,7 @@ func (t *repoTab) location() *historyLocation {
 	l := &historyLocation{query: t.query, hash: t.inspecting}
 	l.loaded = len(t.commits)
 	l.diff, l.note, l.from, l.to = t.diff, t.diffNote, t.diffFrom, t.diffTo
-	l.simpleDiff, l.source = t.simpleDiff, t.diffSource
+	l.simpleDiff, l.imageDiff, l.source = t.simpleDiff, t.imageDiff, t.diffSource
 	l.comparison = t.comparison
 	l.details, l.detailsOpen = t.details, t.detailsOpen
 	l.worktree = t.worktree
@@ -114,8 +115,6 @@ func queryTips(ctx context.Context, dir string, meta repoMeta, q historyQuery) (
 	sort.Strings(tips)
 	return tips, nil
 }
-
-var searchKinds = []string{"说明", "作者", "文件路径"}
 
 func (a *app) searchHistory(t *repoTab) {
 	t.searchSuggestOpen = false
@@ -248,11 +247,6 @@ func (a *app) omniSubmit(t *repoTab) {
 	}
 	t.searchSuggestOpen = false
 
-	if t.searchKind != "说明" {
-		a.searchHistory(t)
-		return
-	}
-
 	for _, p := range []string{"author:", "作者:"} {
 		if after, ok := strings.CutPrefix(text, p); ok {
 			t.searchKind = "作者"
@@ -270,6 +264,11 @@ func (a *app) omniSubmit(t *repoTab) {
 		}
 	}
 
+	if t.query.term != "" && t.searchKind != "说明" {
+		a.searchHistory(t)
+		return
+	}
+
 	if isKnownRef(t, text) {
 		t.locate = text
 		a.locateRef(t, text)
@@ -282,6 +281,7 @@ func (a *app) omniSubmit(t *repoTab) {
 		return
 	}
 
+	t.searchKind = "说明"
 	a.searchHistory(t)
 }
 
@@ -452,7 +452,8 @@ func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Elemen
 					FillWidth().
 					Padding(6, 10).
 					Radius(th.Radius).
-					Cursor(ui.CursorPointer)
+					Cursor(ui.CursorPointer).
+					Transition(colorMotion())
 				if row.Hovered() {
 					row.Background(th.SurfaceHover)
 				}
@@ -513,10 +514,8 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 			Gap(4)
 
 		searchBox.Children(func() {
-			ui.Select(c.Key(fmt.Sprintf("search-kind-%d", t.id)), &t.searchKind, searchKinds).MinWidth(72).Shrink(0)
-
 			input := ui.TextInput(c.Key(fmt.Sprintf("search-%d", t.id)), &t.searchText).
-				Placeholder("搜索提交、分支、标签或哈希… (⌘P)").
+				Placeholder("搜索提交、分支、作者或路径… (⌘P)").
 				Bind(&t.searchInput).
 				Grow(1).
 				MinWidth(80).
@@ -529,17 +528,8 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 				t.searchSuggestOpen = true
 			}
 
-			if t.searchKind != "作者" && t.searchKind != "文件路径" {
-				jumpBtn := iconButton(c, "locate-ref", "跳到", iconLocate).Shrink(0).Tooltip("跳到所填分支/标签/哈希 (Enter)")
-				if jumpBtn.Clicked() {
-					t.searchSuggestOpen = false
-					t.locate = t.searchText
-					a.locateRef(t, t.searchText)
-				}
-			}
-
 			busy := t.loading && strings.TrimSpace(t.searchText) == t.query.term && t.searchKind == t.query.kind
-			searchBtn := iconButton(c, "search-history", "搜索", iconSearch).Shrink(0).Disabled(busy).Tooltip("搜索提交历史 (Enter)")
+			searchBtn := iconButton(c, "search-history", "搜索", iconSearch).Shrink(0).Disabled(busy).Tooltip("搜索或跳转 (Enter)")
 			if searchBtn.Clicked() || (input.Submitted() && !busy) {
 				a.omniSubmit(t)
 			}
@@ -576,7 +566,7 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 	actionButtons := func() {
 		fetchBtn := iconButton(c, "fetch", "获取", iconDownload).Shrink(0).Disabled(t.loading || a.fetch.busy)
 		fetchBtn.ContextMenu(func(m *ui.Menu) {
-			if m.Item("立即获取 (Fetch)").Chosen() {
+			if m.Item("立即获取").Chosen() {
 				a.quickFetch(t)
 			}
 			if m.Item("获取选项…").Chosen() {
@@ -585,12 +575,6 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 		})
 		if fetchBtn.Clicked() {
 			a.quickFetch(t)
-		}
-		if ui.Button(c.Key("fetch-options"), "⋯").Label("获取选项").Tooltip("获取选项（清理远端已删除引用）").Shrink(0).Disabled(t.loading || a.fetch.busy).Clicked() {
-			a.openFetch(t)
-		}
-		if iconButton(c, "refresh", "刷新", iconRefresh).Shrink(0).Disabled(t.loading).Clicked() {
-			a.refresh(t)
 		}
 		if iconButton(c, "compare", "比较", iconGitCompare).Shrink(0).Disabled(t.loading).Clicked() {
 			a.openCompareModal(t)
