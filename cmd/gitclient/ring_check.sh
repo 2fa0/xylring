@@ -9,17 +9,17 @@ guidance() {
 
 AI 参与了本次工作：
 1. 将下面的 <实际Agent产品名> 替换成真实产品名，例如 Cindy、Claude Code、Codex。
-2. 模型名确知时才加 AI-Model；不知道就整行省略，不要猜测。
+2. 必须填写真实的 AI-Model；不知道时先确认模型，不能省略或猜测。
 3. 正文和末尾的年轮字段之间必须有一个空行，每个字段只写一次。
 
 提交说明模板（必须替换尖括号中的内容）：
 <本次改动说明>
 
 AI-Agent: <实际Agent产品名>
+AI-Model: <实际模型名>
 
 重试命令（保留原来的提交选项，例如 --amend；先替换占位内容）：
-git commit -m '<本次改动说明>' --trailer 'AI-Agent: <实际Agent产品名>'
-已确知模型时再追加：--trailer 'AI-Model: <确知的实际模型名>'
+git commit -m '<本次改动说明>' --trailer 'AI-Agent: <实际Agent产品名>' --trailer 'AI-Model: <实际模型名>'
 不要在已有年轮字段的消息上重复追加；应先修正或删除原来的重复字段。
 
 仅当本次工作完全由人工完成时，才使用：
@@ -45,12 +45,14 @@ validate() {
         count[key]++
         values[key] = value
         if (count[key] > 1) fail(key " 重复；每个字段只能出现一次。")
-        if (value == "") fail(key " 不能为空；模型未知时请删除整条 AI-Model。")
-        if (value ~ /[<>]/ || tolower(value) ~ /^(unknown|unspecified|tbd|todo|n\/a|your agent\/product name|your exact model name)$/ || value ~ /^(实际Agent名称|实际Agent产品名|确知的实际模型名)$/)
-            fail(key " 仍是占位值，请填写真实信息；模型未知时省略。")
+        if (value == "") fail(key " 不能为空；AI 提交必须填写真实模型名。")
+        if (value ~ /[<>]/ || tolower(value) ~ /^(unknown|unspecified|tbd|todo|n\/a|your agent\/product name|your exact model name)$/ || value ~ /^(实际Agent名称|实际Agent产品名|确知的实际模型名|实际模型名)$/)
+            fail(key " 仍是占位值，请填写真实信息；模型未知时先确认。")
     }
     END {
         if (count["ai-agent"] != 1) fail("必须在提交说明末尾声明唯一的 AI-Agent；Assisted-by 不能代替它。")
+        if (count["ai-agent"] == 1 && tolower(values["ai-agent"]) != "human" && count["ai-model"] != 1)
+            fail("AI 提交必须声明唯一的非空 AI-Model，请填写实际模型名。")
         if (count["ai-attribution"] && values["ai-attribution"] != "stamp" && values["ai-attribution"] != "inferred")
             fail("AI-Attribution 只允许 stamp 或 inferred；显式声明时省略。")
         if (tolower(values["ai-agent"]) == "human" && (count["ai-model"] || count["ai-attribution"] || native))

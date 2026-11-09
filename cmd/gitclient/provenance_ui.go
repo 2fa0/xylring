@@ -126,7 +126,7 @@ func provenanceInputs(c *ui.Context, key string, p *provenance, disabled bool) b
 		if ui.TextInput(c.Key(key+"-agent"), &p.agent).Placeholder("Agent（严格模式人工填 human）").Label("AI Agent").Grow(1).MinWidth(0).Disabled(disabled).Changed() {
 			changed = true
 		}
-		if ui.TextInput(c.Key(key+"-model"), &p.model).Placeholder("模型（确知时填写）").Label("AI 模型").Grow(1).MinWidth(0).Disabled(disabled).Changed() {
+		if ui.TextInput(c.Key(key+"-model"), &p.model).Placeholder("AI 提交必填，人工留空").Label("AI 模型（AI 提交必填）").Grow(1).MinWidth(0).Disabled(disabled).Changed() {
 			changed = true
 		}
 	})

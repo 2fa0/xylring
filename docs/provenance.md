@@ -6,7 +6,7 @@
 
 ## GUI
 
-展开提交面板，点击「记录 AI 协同…」填写 Agent 和确知的模型名。
+展开提交面板，点击「记录 AI 协同…」填写 Agent 和实际模型名；AI 提交的模型必填，未知时先确认。
 默认不选中任何组合，最近使用最多保留 8 项，仅供点击选择。
 印章作为建议，点击后才应用。修改上次提交时回填年轮字段；清空年轮会移除 `AI-*`。
 「修改说明…」也可编辑这些字段。GUI 提交始终设置 `XYLRING_GUI=1` 跳过自动盖章。
@@ -30,6 +30,7 @@ xylring ring uninstall
 
 印章默认有效 30 分钟，覆盖有效期内多次终端提交；`--ttl 10m` 可修改期限，
 `--once` 表示单次消费。Linked worktree 各自持有印章。
+创建 AI 印章必须同时提供 `--agent` 和 `--model`。旧的无模型印章不再自动盖章。
 只有显式安装 Hook 才会自动盖章，默认不推断进程、IDE、环境变量或模型。
 Hook 为独立 POSIX sh 脚本，不依赖 Xylring 二进制。
 
@@ -56,13 +57,15 @@ xylring ring strict status
 xylring ring strict uninstall
 ```
 
+更新后请重新执行 `xylring ring install` 和 `xylring ring strict install`，将已安装的 Hook 同步到新规则。
+
 已有 `commit-msg` 会被备份并先执行；其非零退出码原样保留，卸载后恢复。
 严格检查覆盖普通、GUI、amend、merge 和 squash 的提交，不因 `XYLRING_GUI=1`
 或 `XYLRING_RING=0` 放行。GUI 可在 Agent 输入框填写 `human` 显式声明人工。
 已配置 `core.hooksPath` 时需手动将 `xylring ring strict script` 输出的脚本
 保存到独立文件，再在现有 `commit-msg` 最后调用，传入原参数并保留退出码。
 
-每条新增提交必须有唯一的非空 `AI-Agent`；`AI-Model` 仍为可选，未知时省略。
+每条新增提交必须有唯一的非空 `AI-Agent`；AI 提交还必须填写唯一的非空 `AI-Model`，未知时先确认模型名，不能省略或猜测。
 重复、空值、模板占位值及无效归因来源会被拒绝。`Assisted-by` 不能代替标准字段。
 完全人工提交显式写 `AI-Agent: human`，不能同时带模型、AI 归因来源或已识别的 AI 原生签名；
 普通人类 `Co-authored-by` 不受影响。未标注的历史提交保留现有展示行为，不回写历史。

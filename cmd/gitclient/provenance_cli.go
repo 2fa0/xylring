@@ -69,7 +69,7 @@ func runRingCLI(ctx context.Context, dir string, args []string, out io.Writer) e
 	fs := flag.NewFlagSet("stamp", flag.ContinueOnError)
 	fs.SetOutput(out)
 	agent := fs.String("agent", "", "Agent 名称")
-	model := fs.String("model", "", "已知模型名")
+	model := fs.String("model", "", "实际模型名（AI 印章必填）")
 	ttl := fs.Duration("ttl", 30*time.Minute, "有效期")
 	once := fs.Bool("once", false, "单次消费")
 	clear := fs.Bool("clear", false, "清除印章")
