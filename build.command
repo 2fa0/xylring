@@ -77,8 +77,7 @@ build_status=$?
 echo
 
 if [ "$build_status" -ne 0 ]; then
-  echo "构建命令未成功（退出码 ${build_status}）。若下面仍列出了包，那是已完成的部分。"
-  echo
+  fail "构建命令未成功（退出码 ${build_status}），未更新 release/。"
 fi
 
 staging="$(mktemp -d "${TMPDIR:-/tmp}/gitclient-packages.XXXXXX")"
@@ -181,15 +180,8 @@ fi
 if [ "$note_windows_installer" -eq 0 ] && [ "$note_windows_zip" -eq 0 ]; then
   echo "这次没有生成 Windows 包。"
 fi
-if [ "$build_status" -ne 0 ]; then
-  echo
-  echo "构建没有完整成功，请先看上面的错误，再把已生成的包发出去。"
-fi
 
 if [ -t 1 ]; then
   open "$PACKAGES"
 fi
 pause
-if [ "$build_status" -ne 0 ]; then
-  exit "$build_status"
-fi

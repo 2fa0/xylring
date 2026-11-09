@@ -20,7 +20,10 @@ type savedRepo struct {
 type savedSession struct {
 	Repos           []savedRepo
 	Active          string
-	BottomFullWidth *bool `json:"bottom_full_width,omitempty"`
+	BottomFullWidth *bool    `json:"bottom_full_width,omitempty"`
+	RepoOrder       []string `json:"repo_order,omitempty"`
+	Found           []string `json:"found,omitempty"`
+	FoundFrom       string   `json:"found_from,omitempty"`
 }
 
 func loadSession() savedSession {
@@ -50,7 +53,13 @@ func (a *app) queueSession() {
 	}
 	// Compare the persisted fields directly; unchanged frames allocate no JSON.
 	bw := a.bottomFullWidth
-	s := savedSession{Repos: make([]savedRepo, 0, len(a.tabs)), BottomFullWidth: &bw}
+	s := savedSession{
+		Repos:           make([]savedRepo, 0, len(a.tabs)),
+		BottomFullWidth: &bw,
+		RepoOrder:       a.repoOrder,
+		Found:           slices.Clone(a.found),
+		FoundFrom:       a.foundFrom,
+	}
 	for _, t := range a.tabs {
 		f := ""
 		if t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
@@ -77,7 +86,9 @@ func (a *app) queueSession() {
 	}
 	bwEqual := (s.BottomFullWidth == nil && a.lastSession != nil && a.lastSession.BottomFullWidth == nil) ||
 		(s.BottomFullWidth != nil && a.lastSession != nil && a.lastSession.BottomFullWidth != nil && *s.BottomFullWidth == *a.lastSession.BottomFullWidth)
-	if a.lastSession != nil && s.Active == a.lastSession.Active && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual {
+	repoOrderEqual := (a.lastSession == nil && len(s.RepoOrder) == 0) ||
+		(a.lastSession != nil && slices.Equal(s.RepoOrder, a.lastSession.RepoOrder))
+	if a.lastSession != nil && s.Active == a.lastSession.Active && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
 		return
 	}
 	if a.sessionWrites == nil {
@@ -153,6 +164,12 @@ func (a *app) restoreSession() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var valid []savedRepo
+		var found []string
+		for _, path := range s.Found {
+			if isGitWorkTree(path) {
+				found = append(found, path)
+			}
+		}
 		for _, r := range s.Repos {
 			if root, e := repoRoot(ctx, r.Path); e == nil && root == r.Path {
 				valid = append(valid, r)
@@ -162,7 +179,13 @@ func (a *app) restoreSession() {
 			if s.BottomFullWidth != nil {
 				a.bottomFullWidth = *s.BottomFullWidth
 			}
+			if len(s.RepoOrder) > 0 {
+				a.repoOrder = s.RepoOrder
+			}
 			if len(a.tabs) == 0 {
+				if a.foundFrom == "" {
+					a.found, a.foundFrom = found, s.FoundFrom
+				}
 				for _, r := range valid {
 					a.openRoot(r.Path)
 					t := a.tabByPath(r.Path)

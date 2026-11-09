@@ -458,3 +458,85 @@ func TestInspectFilesSplitDefaultMatchesSidebar(t *testing.T) {
 		t.Fatalf("expected tab2.fileSplit to follow customized repoSplit 280, got %v", tab2.fileSplit)
 	}
 }
+
+func TestDiffFindInView(t *testing.T) {
+	tab := newTab(1, "/tmp/test-repo")
+	tab.loaded = true
+	tab.branch = "main"
+	tab.commits = []commit{
+		{hash: hashN(1), author: "Ada", subject: "初始提交", when: 1700000000},
+	}
+	tab.graph.add(&tab.commits[0])
+	tab.inspecting = hashN(1)
+	tab.compareFiles = []fileChange{
+		{status: "M", path: "cmd/main.go"},
+	}
+	tab.fileSel = 0
+	tab.diff = &editor.DiffState{
+		Old: editor.NewBuffer("hello world\nline two\n"),
+		New: editor.NewBuffer("hello xylring\nline two modified\n"),
+	}
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(func()) {}}
+
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+
+	// 1. Verify "在 Diff 中查找" button is visible and click it
+	if !tt.HasText("在 Diff 中查找") {
+		t.Fatalf("缺少在 Diff 中查找按钮: %v", tt.Texts())
+	}
+	if err := tt.Click("在 Diff 中查找"); err != nil {
+		t.Fatalf("点击在 Diff 中查找失败: %v", err)
+	}
+	tt.Frame()
+
+	// 2. Type query in find bar
+	tt.Type("xylring")
+	tt.Frame()
+
+	// 3. Test Cmd+F shortcut focuses/reopens find when inspecting diff
+	tt.Key(commandModifier(), ui.KeyF)
+	tt.Frame()
+
+	// 4. Test file tab find button
+	fileTab := &fileDiffTab{
+		id:   1,
+		diff: &editor.DiffState{
+			Old: editor.NewBuffer("tab old\n"),
+			New: editor.NewBuffer("tab new\n"),
+		},
+	}
+	tab.fileTabs = []*fileDiffTab{fileTab}
+	tab.contentTab = 1
+	tt.Frame()
+
+	if !tt.HasText("在 Diff 中查找") {
+		t.Fatalf("文件标签页缺少在 Diff 中查找按钮: %v", tt.Texts())
+	}
+	if err := tt.Click("在 Diff 中查找"); err != nil {
+		t.Fatalf("点击标签页在 Diff 中查找失败: %v", err)
+	}
+	tt.Frame()
+
+	// 5. Test full file tab find button
+	fullTab := &fileDiffTab{
+		id:       2,
+		fullFile: true,
+		fullContent: editor.State{
+			Buffer: editor.NewBuffer("full file content\n"),
+		},
+	}
+	tab.fileTabs = append(tab.fileTabs, fullTab)
+	tab.contentTab = 2
+	tt.Frame()
+
+	if !tt.HasText("在文件中查找") {
+		t.Fatalf("全量文件标签页缺少在文件中查找按钮: %v", tt.Texts())
+	}
+	if err := tt.Click("在文件中查找"); err != nil {
+		t.Fatalf("点击在文件中查找失败: %v", err)
+	}
+	tt.Frame()
+
+	retireTester(tt)
+}

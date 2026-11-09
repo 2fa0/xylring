@@ -1,56 +1,36 @@
-# Xylring v0.6.0 Release Notes
+# Xylring v0.7.0
 
-> **Xylring**: A blazing-fast, lightweight, and modern native Git client built with Go.  
-> Release Date: 2026-11-09
+Release date: 2026-11-09
 
----
+## 更新内容
 
-## 🌟 Highlights in v0.6.0
+- **代码改动搜索**：在历史搜索框输入 `code:`、`diff:` 或 `content:`，按文本在代码中的增删查找提交；支持中文前缀与搜索建议。
+- **Diff 与文件内查找**：Diff 和完整文件视图增加查找按钮；`⌘F` / `Ctrl+F` 优先查找当前内容，`⌘P` / `Ctrl+P` 和 `⌘K` / `Ctrl+K` 打开历史搜索。
+- **仓库分组排序**：拖动顶层仓库调整分组顺序，子仓库随所属分组移动，重启后保留顺序。
+- **文件树布局**：缩小行距和缩进，在侧栏中显示更多文件。
+- **子仓库列表修复**：导入其他目录不再覆盖原有子仓库列表；会话保存完整列表，重启后仍显示未打开过的子仓库。导入失败时保留已有列表。
 
-- 🚀 **Lightning Fast Startup & Native Rendering**: Built with Go and native UI rendering, launching in milliseconds with ~50MB initial memory usage. Zero Electron overhead.
-- 🎨 **Cubic Bezier Graph**: Beautiful commit graph with first-parent lane colors, jump-free rendering across pagination, and hollow nodes for merge commits.
-- 🔍 **Omni Search & Instant Jump**: Single search box covering commit message, author, file path, branch, tag, and SHA with real-time autocompletion.
-- ⚖️ **Deep Comparison & Hunk Staging**: Compare arbitrary snapshots or merge-bases (`...`), review and stage individual diff hunks or discard changes.
-- ⚡ **Terminal CLI Integration**: Open any repository instantly with `xylring .` or `xylring /path/to/repo` right from your terminal.
-- 🖼️ **Rich File Viewers & Image Diff**: Full-file read-only preview with syntax highlighting and side-by-side image comparison.
-- 🔄 **Safe Auto-Sync & Session Restore**: Automatically track remote updates with silent background fetch; restore open repositories, commit drafts, and amend states across restarts.
+升级提示：旧版会话没有保存未打开的子仓库；升级后请重新导入一次缺失的目录，新版会保存完整列表。
 
----
+## Changes
 
-## 📦 Downloads & Verification
+- Search code additions and removals with `code:`, `diff:` or `content:` in history search, with prefix-aware suggestions.
+- Find within diffs and full-file views using the toolbar or `⌘F` / `Ctrl+F`. Use `⌘P` / `Ctrl+P` or `⌘K` / `Ctrl+K` for history search.
+- Drag top-level repository groups to reorder them together with their children; retain the order across restarts.
+- Reduce file-tree row spacing and indentation to show more files in the sidebar.
+- Keep repositories from earlier imports when importing another directory. Restore unopened repositories in the sidebar across restarts, and preserve the list if an import fails.
 
-| Platform | Architecture | Package | SHA256 Checksum |
-| :--- | :--- | :--- | :--- |
-| **macOS** | Apple Silicon (M1/M2/M3/M4) | [`xylring-0.6.0-arm64.dmg`](../../releases/download/v0.6.0/xylring-0.6.0-arm64.dmg) | `56145ee0c0c681ab8fa66da69094feea5d47dc22ae53cb103ee8f70bb38cca47` |
-| **macOS** | Intel x86_64 | [`xylring-0.6.0-amd64.dmg`](../../releases/download/v0.6.0/xylring-0.6.0-amd64.dmg) | `c6fca4d6cf508b6517044183fe1a8297da2488817f10900d8c3a3a56e189f015` |
-| **Windows** | x64 (Installer) | [`xylring-setup-0.6.0-amd64.exe`](../../releases/download/v0.6.0/xylring-setup-0.6.0-amd64.exe) | `30ad74dba2b7a27476b3d0cc8b7912a4329572fa1f419d0ae7cef612978f5114` |
-| **Windows** | x64 (Portable Zip) | [`Xylring 0.6.0 windows-x64.zip`](../../releases/download/v0.6.0/Xylring%200.6.0%20windows-x64.zip) | `745bc97af37f33d12796389e259ac9d32dd09c792c3009f226070809ca5ba071` |
+Upgrade note: older sessions did not save unopened repositories. Reimport any missing directory once after upgrading.
 
----
+## 安装包 / Packages
 
-## 💻 Installation & Security Notes
+| Platform | Architecture | File |
+| --- | --- | --- |
+| macOS | Apple Silicon | `xylring-0.7.0-arm64.dmg` |
+| macOS | Intel x86_64 | `xylring-0.7.0-amd64.dmg` |
+| Windows 10 / 11 | x64 installer | `xylring-setup-0.7.0-amd64.exe` |
+| Windows 10 / 11 | x64 portable | `Xylring 0.7.0 windows-x64.zip` |
 
-### macOS
-1. Download the `.dmg` matching your chip (Apple Silicon `arm64` or Intel `amd64`).
-2. Open the disk image and drag **Xylring.app** to your **Applications** folder.
-3. **Gatekeeper Notice**: Because this build is unsigned/notarized by Apple:
-   - On first launch, if macOS says *"Xylring cannot be opened because it is from an unidentified developer"*, right-click (or Control-click) `Xylring.app` in Finder and select **Open** → Click **Open** again.
-   - Or run in Terminal:
-     ```sh
-     xattr -cr /Applications/Xylring.app
-     ```
+SHA-256 hashes are provided in `checksums.txt` alongside the packages.
 
-### Windows (10 & 11 x64)
-- **Installer**: Run `xylring-setup-0.6.0-amd64.exe`. It installs to your user local folder without requiring administrator privileges.
-- **Portable**: Extract `Xylring 0.6.0 windows-x64.zip` and run `Xylring.exe` directly.
-- **SmartScreen Notice**: If Windows Defender SmartScreen prompts *"Windows protected your PC"*, click **More info** → **Run anyway**.
-
----
-
-## 🛠️ CLI Setup
-After starting Xylring:
-- From the menu bar, choose **File** → **Install 'xylring' Command Line Tool in PATH...**, or run:
-  ```sh
-  xylring install-cli
-  ```
-- Then use `xylring .` anywhere in your terminal!
+Install Git before running Xylring. macOS builds are not notarized; Windows builds are not code signed.

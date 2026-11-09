@@ -192,7 +192,6 @@ func (a *app) scanRepos(path string, open bool) {
 			a.scanCancel, a.scanPath = nil, ""
 			if err != nil {
 				if open {
-					a.found, a.foundFrom = nil, ""
 					a.setBanner(trimMsg(err.Error()), path)
 				}
 				return
@@ -209,8 +208,15 @@ func (a *app) scanRepos(path string, open bool) {
 
 func (a *app) setFound(from string, roots []string) {
 	a.foundFrom = from
-	if len(roots) > 1 {
-		a.found = roots
+	// A scan replaces its own subtree, not repositories imported elsewhere.
+	found := slices.Clone(roots)
+	for _, path := range a.found {
+		if path != from && !repoContains(from, path) && !slices.Contains(found, path) {
+			found = append(found, path)
+		}
+	}
+	if len(found) > 1 || len(a.found) > 0 {
+		a.found = found
 		a.refreshRepoSummaries()
 		return
 	}

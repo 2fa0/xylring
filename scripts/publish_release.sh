@@ -4,7 +4,7 @@
 
 set -e
 
-TAG="${1:-v0.6.0}"
+TAG="${1:-v0.7.0}"
 RELEASE_DIR="$(cd "$(dirname "$0")/../release" && pwd)"
 NOTES_FILE="$(cd "$(dirname "$0")/.." && pwd)/RELEASE_NOTES.md"
 

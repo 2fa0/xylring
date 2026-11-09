@@ -518,6 +518,15 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 					tab.ignoreWhitespace = !tab.ignoreWhitespace
 					a.reloadFileTab(t, tab)
 				}
+				if tab.diff != nil || tab.simple != nil {
+					findTip := "在 Diff 中查找 (⌘F)"
+					if runtime.GOOS != "darwin" {
+						findTip = "在 Diff 中查找 (Ctrl+F)"
+					}
+					if paneIconButton(c, fmt.Sprintf("tab-find-in-diff-%d", tab.id), "在 Diff 中查找", iconSearch).Tooltip(findTip).Clicked() {
+						a.openFileTabFind(tab)
+					}
+				}
 			}
 		})
 		from, to := tab.labels()
@@ -659,6 +668,14 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 				if fitBtn.Clicked() {
 					tab.imageFitActual = !tab.imageFitActual
 				}
+			} else if tab.fullContent.Buffer != nil {
+				findTip := "在文件中查找 (⌘F)"
+				if runtime.GOOS != "darwin" {
+					findTip = "在文件中查找 (Ctrl+F)"
+				}
+				if paneIconButton(c, fmt.Sprintf("tab-find-in-file-%d", tab.id), "在文件中查找", iconSearch).Tooltip(findTip).Clicked() {
+					a.openFileTabFind(tab)
+				}
 			}
 		})
 		if tab.fullImage != nil {
@@ -673,4 +690,21 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 		}
 		editor.View(c.Key(fmt.Sprintf("full-editor-%d", tab.id)), &tab.fullContent).Grow(1).MinHeight(0)
 	})
+}
+
+func (a *app) openFileTabFind(ft *fileDiffTab) {
+	if ft == nil {
+		return
+	}
+	if ft.fullFile {
+		if ft.fullContent.Buffer != nil {
+			ft.fullContent.Run(editor.Find)
+		}
+	} else {
+		if ft.diff != nil {
+			ft.diff.Run(editor.Find)
+		} else if ft.simple != nil {
+			ft.simple.new.Run(editor.Find)
+		}
+	}
 }

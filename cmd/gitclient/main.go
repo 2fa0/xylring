@@ -70,6 +70,7 @@ type app struct {
 	recentWrites      chan []string
 	repoListState     ui.ListState
 	repoSel           int
+	repoOrder         []string
 	repoSplit         float32
 	sidebarHidden     bool
 	bottomFullWidth   bool
@@ -210,15 +211,37 @@ func (a *app) handleShortcuts(c *ui.Context) {
 		}
 	}
 	tab = a.activeTab()
+	if !empty && tab != nil && !a.showCompare {
+		if c.Shortcut(commandModifier(), ui.KeyF) {
+			if tab.contentTab > 0 && tab.contentTab <= len(tab.fileTabs) {
+				a.openFileTabFind(tab.fileTabs[tab.contentTab-1])
+				return
+			}
+			if a.hasInspectBottom(tab) && (tab.diff != nil || tab.simpleDiff != nil) {
+				a.openDiffFind(tab)
+				return
+			}
+			if tab.query.filePath != "" {
+				a.leaveFileHistory(tab)
+			}
+			tab.searchSuggestOpen = true
+			tab.searchInput.Focus(c)
+			return
+		}
+		if c.Shortcut(commandModifier(), ui.KeyP) || c.Shortcut(commandModifier(), ui.KeyK) {
+			if tab.contentTab > 0 {
+				tab.contentTab = 0
+			}
+			if tab.query.filePath != "" {
+				a.leaveFileHistory(tab)
+			}
+			tab.searchSuggestOpen = true
+			tab.searchInput.Focus(c)
+			return
+		}
+	}
 	if !empty && tab != nil && tab.contentTab > 0 {
 		return
-	}
-	if !empty && tab != nil && !a.showCompare && (c.Shortcut(commandModifier(), ui.KeyF) || c.Shortcut(commandModifier(), ui.KeyP) || c.Shortcut(commandModifier(), ui.KeyK)) {
-		if tab.query.filePath != "" {
-			a.leaveFileHistory(tab)
-		}
-		tab.searchSuggestOpen = true
-		tab.searchInput.Focus(c)
 	}
 	if empty && len(a.recent) > 8 && !a.showCompare && (c.Shortcut(commandModifier(), ui.KeyF) || c.Shortcut(commandModifier(), ui.KeyP) || c.Shortcut(commandModifier(), ui.KeyK)) {
 		a.recentSearchInput.Focus(c)
@@ -588,13 +611,13 @@ func (a *app) repoItems() []string {
 				items = append(items, tab.path)
 			}
 		}
-		return items
+		return a.orderRepoItems(items)
 	}
 	items := make([]string, 0, len(a.tabs))
 	for _, tab := range a.tabs {
 		items = append(items, tab.path)
 	}
-	return items
+	return a.orderRepoItems(items)
 }
 
 func (a *app) repoList(c *ui.Context) {
@@ -619,6 +642,9 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 		}
 		a.repoListState.Selected = &a.repoSel
 		a.repoListState.Key = func(i int) any { return items[i] }
+		a.repoListState.Reorder = func(rows []int, to int) {
+			a.reorderRepos(items, rows, to)
+		}
 		closeIdx := -1
 		hideFound := ""
 		list := ui.List(c.Key("repositories"), &a.repoListState, len(items), func(i int) {

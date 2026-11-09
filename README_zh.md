@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.6.0-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.7.0-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
 </p>
@@ -41,7 +41,7 @@
 
 - 🚀 **毫秒级启动与极低内存占用**：纯 Go 原生渲染编译，秒级启动，初始内存仅约 50MB。彻底告别臃肿的 WebView 和 Chromium 内核。
 - 🎨 **平滑三次贝塞尔提交图谱**：第一父链同色追踪，跨行连线平滑过渡；大仓库分页滚动时已渲染节点不抖动，合并节点空心区分。
-- 🔍 **全能搜索与智能联想（Omni Search）**：一个搜索框覆盖提交信息、作者、文件路径、分支、标签与 SHA 哈希；支持输入前缀语法（如 `author:`、`path:`）与下拉建议。
+- 🔍 **全能搜索与智能联想（Omni Search）**：一个搜索框覆盖提交信息、代码变动（Pickaxe -S）、作者、文件路径、分支、标签与 SHA 哈希；支持输入前缀语法（如 `code:`、`author:`、`path:`）与下拉建议；Diff 审阅内支持 ⌘F / Ctrl+F 页面内快速查找与高亮。
 - ⚖️ **快照与分叉点任意比对**：任意选择两个提交或分支比对，支持两点快照比较或三点（`...` 分叉点起）改动审查。
 - 🧩 **块级交互式暂存（Hunk Staging）**：精细审阅单个文本改动块，支持块级暂存/取消暂存/丢弃改动，支持工作区提交与 Amend 上次提交。
 - 💻 **深度契合终端工作流**：支持在终端像 VS Code 一样随时输入 `xylring .` 唤醒当前仓库，支持同时打开多仓库。
@@ -72,8 +72,8 @@
 ### macOS 用户 (Apple Silicon / Intel)
 
 1. 根据芯片架构下载对应磁盘镜像：
-   - **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.6.0-arm64.dmg`
-   - **Intel 芯片 (x86_64)**：`xylring-0.6.0-amd64.dmg`
+   - **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.7.0-arm64.dmg`
+   - **Intel 芯片 (x86_64)**：`xylring-0.7.0-amd64.dmg`
 2. 双击打开 `.dmg`，将 **Xylring** 拖入「应用程序（Applications）」文件夹。
 
 > [!NOTE]
@@ -85,8 +85,8 @@
 
 ### Windows 用户 (Windows 10 & 11 x64)
 
-- **安装版**：下载运行 `xylring-setup-0.6.0-amd64.exe`（安装到当前用户目录，无需管理员权限）。
-- **便携版**：下载解压 `Xylring 0.6.0 windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
+- **安装版**：下载运行 `xylring-setup-0.7.0-amd64.exe`（安装到当前用户目录，无需管理员权限）。
+- **便携版**：下载解压 `Xylring 0.7.0 windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
 
 ### 源码编译安装
 

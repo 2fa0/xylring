@@ -65,6 +65,8 @@ func (q historyQuery) searchArgs() []string {
 		return []string{"--regexp-ignore-case", "--fixed-strings", "--author=" + q.term}
 	case "文件路径":
 		return []string{"--full-history"}
+	case "代码改动":
+		return []string{"--regexp-ignore-case", "-S" + q.term}
 	default:
 		return []string{"--regexp-ignore-case", "--fixed-strings", "--grep=" + q.term}
 	}
@@ -235,6 +237,16 @@ func isHexCommitHash(s string) bool {
 	return true
 }
 
+func cutSearchPrefix(s string, prefixes ...string) (string, bool) {
+	lower := strings.ToLower(s)
+	for _, p := range prefixes {
+		if strings.HasPrefix(lower, strings.ToLower(p)) {
+			return strings.TrimSpace(s[len(p):]), true
+		}
+	}
+	return s, false
+}
+
 func (a *app) omniSubmit(t *repoTab) {
 	text := strings.TrimSpace(t.searchText)
 	if text == "" {
@@ -247,21 +259,23 @@ func (a *app) omniSubmit(t *repoTab) {
 	}
 	t.searchSuggestOpen = false
 
-	for _, p := range []string{"author:", "作者:"} {
-		if after, ok := strings.CutPrefix(text, p); ok {
-			t.searchKind = "作者"
-			t.searchText = strings.TrimSpace(after)
-			a.searchHistory(t)
-			return
-		}
+	if term, ok := cutSearchPrefix(text, "code:", "diff:", "content:", "代码:", "内容:", "代码改动:"); ok {
+		t.searchKind = "代码改动"
+		t.searchText = term
+		a.searchHistory(t)
+		return
 	}
-	for _, p := range []string{"path:", "file:", "文件:", "路径:"} {
-		if after, ok := strings.CutPrefix(text, p); ok {
-			t.searchKind = "文件路径"
-			t.searchText = strings.TrimSpace(after)
-			a.searchHistory(t)
-			return
-		}
+	if term, ok := cutSearchPrefix(text, "author:", "作者:"); ok {
+		t.searchKind = "作者"
+		t.searchText = term
+		a.searchHistory(t)
+		return
+	}
+	if term, ok := cutSearchPrefix(text, "path:", "file:", "文件:", "路径:"); ok {
+		t.searchKind = "文件路径"
+		t.searchText = term
+		a.searchHistory(t)
+		return
 	}
 
 	if t.query.term != "" && t.searchKind != "说明" {
@@ -289,6 +303,52 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 	var items []omniSuggestItem
 	clean := strings.TrimSpace(term)
 	lower := strings.ToLower(clean)
+
+	if term, ok := cutSearchPrefix(clean, "code:", "diff:", "content:", "代码:", "内容:", "代码改动:"); ok {
+		items = append(items, omniSuggestItem{
+			kind:     "搜索",
+			icon:     iconFileText,
+			title:    fmt.Sprintf("在代码改动中搜索 “%s”", term),
+			subtitle: "按代码改动 (Pickaxe -S) 检索提交历史",
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchKind = "代码改动"
+				t.searchText = term
+				a.searchHistory(t)
+			},
+		})
+		return items
+	}
+	if term, ok := cutSearchPrefix(clean, "author:", "作者:"); ok {
+		items = append(items, omniSuggestItem{
+			kind:     "搜索",
+			icon:     iconSearch,
+			title:    fmt.Sprintf("按作者筛选 “%s”", term),
+			subtitle: "按作者筛选提交历史",
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchKind = "作者"
+				t.searchText = term
+				a.searchHistory(t)
+			},
+		})
+		return items
+	}
+	if term, ok := cutSearchPrefix(clean, "path:", "file:", "文件:", "路径:"); ok {
+		items = append(items, omniSuggestItem{
+			kind:     "搜索",
+			icon:     iconFolder,
+			title:    fmt.Sprintf("在修改文件路径中搜索 “%s”", term),
+			subtitle: "按文件路径检索提交历史",
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchKind = "文件路径"
+				t.searchText = term
+				a.searchHistory(t)
+			},
+		})
+		return items
+	}
 
 	matchedBranches := 0
 	matchedTags := 0
@@ -420,6 +480,18 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 		})
 		items = append(items, omniSuggestItem{
 			kind:     "搜索",
+			icon:     iconFileText,
+			title:    fmt.Sprintf("在代码改动中搜索 “%s”", clean),
+			subtitle: "按代码改动 (Pickaxe -S) 检索提交历史",
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchKind = "代码改动"
+				t.searchText = clean
+				a.searchHistory(t)
+			},
+		})
+		items = append(items, omniSuggestItem{
+			kind:     "搜索",
 			icon:     iconFolder,
 			title:    fmt.Sprintf("在修改文件路径中搜索 “%s”", clean),
 			subtitle: "按文件路径检索提交历史",
@@ -515,7 +587,7 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 
 		searchBox.Children(func() {
 			input := ui.TextInput(c.Key(fmt.Sprintf("search-%d", t.id)), &t.searchText).
-				Placeholder("搜索提交、分支、作者或路径… (⌘P)").
+				Placeholder("搜索提交、代码、分支、作者或路径… (⌘P)").
 				Bind(&t.searchInput).
 				Grow(1).
 				MinWidth(80).
