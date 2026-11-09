@@ -1577,14 +1577,75 @@ func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *sim
 			ui.Text(c, note).TextColor(theme.TextMuted)
 		})
 	case simple != nil:
+		simple.old.RenderFindBar = renderFindBar
+		simple.new.RenderFindBar = renderFindBar
 		ui.Row(c).Grow(1).MinHeight(0).Children(func() {
 			editor.View(c.Key("large-diff-old"), &simple.old).Grow(1).Basis(0).FillHeight().MinWidth(0)
 			editor.View(c.Key("large-diff-new"), &simple.new).Grow(1).Basis(0).FillHeight().MinWidth(0)
 		})
 	case diff != nil:
 		diff.Layout = a.currentDiffLayout()
+		diff.RenderFindBar = renderFindBar
 		editor.DiffView(c.Key("file-diff"), diff).Grow(1).MinHeight(0)
 	}
+}
+
+func renderFindBar(c *ui.Context, anchor ui.Element, f *editor.FindBar) {
+	anchor.Left(4).Right(4).Height(0)
+	// Diff separators paint above the editors; the find panel must escape that layer.
+	ui.Overlay(c, func() {
+		bar := ui.Column(c.Key(anchor.ID())).
+			AttachTo(anchor, ui.AnchorTopRight, ui.AnchorTopRight).
+			Width(360).MaxWidthPercent(100).Role(ui.RoleToolbar).Label("文件内查找").
+			Cursor(ui.CursorDefault).HandleInput(func(ui.InputEvent) bool { return false })
+		renderFindBarContent(c, bar, f)
+	})
+}
+
+func renderFindBarContent(c *ui.Context, bar ui.Element, f *editor.FindBar) {
+	theme := c.Theme()
+	// Split panes can be narrower than the editor's default single-row toolbar.
+	bar.Padding(6).Gap(4).Background(theme.Surface).
+		Border(1, theme.Border).Radius(theme.Radius)
+	bar.Children(func() {
+		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			f.QueryInput(ui.TextInput(c.Key("query"), f.Query()).Label("查找内容").
+				Placeholder("查找").Grow(1).MinWidth(0))
+		})
+		ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
+			toggle := func(value *bool, label, tip string) {
+				b := ui.ToggleBase(c.Key(tip), value).Label(tip).Tooltip(tip).
+					Padding(2, 4).Shrink(0).Radius(theme.Radius).KeepFocus()
+				if *value {
+					b.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent)
+				}
+				b.Children(func() { ui.Text(c, label).FontSize(11).SingleLine() })
+			}
+			toggle(f.CaseSensitive(), "Aa", "区分大小写")
+			toggle(f.WholeWord(), "ab", "全字匹配")
+			toggle(f.Regexp(), ".*", "正则表达式")
+			toggle(f.InSelection(), "[ ]", "在选区中查找")
+			ui.Box(c).Grow(1)
+			button := func(label, tip string) bool {
+				b := ui.ButtonBase(c.Key(tip)).Label(tip).Tooltip(tip).
+					Padding(2, 4).Shrink(0).Radius(theme.Radius).KeepFocus()
+				b.Children(func() { ui.Text(c, label).FontSize(11).SingleLine() })
+				return b.Clicked()
+			}
+			if button("↑", "上一个匹配") {
+				f.Previous()
+			}
+			if button("↓", "下一个匹配") {
+				f.Next()
+			}
+			if button("✕", "关闭查找") {
+				f.Close()
+			}
+		})
+		if status := f.Status(); status != "" {
+			ui.Text(c, status).FontSize(11).TextColor(theme.TextMuted).Role(ui.RoleStatus)
+		}
+	})
 }
 
 // Only a worker touches these buffers and caches until ownership is handed to UI.
