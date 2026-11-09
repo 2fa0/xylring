@@ -683,13 +683,17 @@ func statusWord(st string) string {
 	}
 }
 
+// displayPath shortens a path for a title row: the file and the directory it
+// is in, with what comes before them folded into an ellipsis. Keeping the
+// nearest directory says more than keeping the topmost one. Paths of three
+// segments or fewer are shown whole.
 func displayPath(p string) string {
 	p = strings.ReplaceAll(p, "\\", "/")
 	parts := strings.Split(p, "/")
 	if len(parts) <= 3 {
 		return p
 	}
-	return parts[0] + "/…/" + parts[len(parts)-1]
+	return "…/" + parts[len(parts)-2] + "/" + parts[len(parts)-1]
 }
 
 func compareFiles(ctx context.Context, dir, from, to string) ([]fileChange, error) {

@@ -22,6 +22,8 @@
 | `compare.go` 的「没有文件变化」「无匹配文件」、`main.go` 的空历史与无匹配仓库、`image_diff.go` 的「无图片内容」 | `pkg/display/empty.go` | 对方空状态给出图标、标题、说明与行动按钮；本地多为居中一行灰字，用户看不出下一步能做什么。 | 新增 `emptyHint`：图标 + 标题 + 说明 + 可选按钮。文件列表按当前场景说明是工作区干净、提交无改动还是两版本一致；无匹配文件可一键清除筛选，无匹配提交可一键退出筛选。 |
 | 搜索框的 ⌘P 提示、对比横幅的 Esc 键帽 | `pkg/display/hotkey.go` | 对方把快捷键画成键帽；本地两处各画一个方框。 | 抽出 `kbdHint` 键帽，两处共用。 |
 | 提交详情的「复制完整信息」 | `pkg/action/copybutton.go` | 本地复制后弹 Toast，反馈跑到别处。 | 按钮原位显示「已复制」两秒，与错误横幅的复制反馈同一套状态。 |
+| `git.go` 的 `displayPath` 与文件标签头、文件历史头 | `pkg/nav/breadcrumb.go` | 对方的面包屑把路径拆成层级，当前项用正文色、其余用描述色；本地把长路径压成「首段/…/文件名」，留下的恰是最没信息量的顶层目录，且整行只有一种颜色。 | 压缩策略改为保留直接父目录（`…/gitclient/compare.go`）；新增 `pathBreadcrumb`，目录用次要色、文件名加粗，整行仍是一个可截断文本，完整路径保留为 Tooltip。 |
+| `commit_details.go` 的内联完整信息卡片 | `pkg/display/accordion.go` | 对方用 MyGo 的 `CollapsibleBase` 让面板随展开进度裁剪与收缩；本地点「收起信息」后卡片瞬时消失。 | 用 `ui.AccordionBase` 的 `Item`/`Panel`/`Progress` 驱动卡片正文，收起时逐帧裁短再移除；表头、复制与关闭按钮保留原有行为，关闭按钮与折叠状态同向，不会互相打架。 |
 | 全局错误横幅 | `pkg/feedback/alert.go` | 对方的标题/描述分层和状态类型更完整；本地已有复制、仓库归属与关闭逻辑，单一错误横幅并不需要整个通用 Alert API。 | 仅改复制反馈，保留现有错误展示。 |
 | 普通按钮、输入、Checkbox、Select | `pkg/action/button.go`、`pkg/field/input.go` 等 | 本地多使用 MyGo 标准控件；对方提供更多皮肤与尺寸选项。这不构成功能或质量上必然更优的证据。 | 暂不批量替换。 |
 
@@ -45,7 +47,7 @@
 
 全量 `CGO_ENABLED=0 go test ./...`、新增布局与状态交互检查和 `go tool mygo vet .` 均通过。
 
-新增 `lobe_states_test.go` 覆盖忙碌提示、空状态按钮、徽章菜单、无匹配文件与空提交列表的文案和操作；`lobe_layout_test.go` 增加空状态预览。原有覆盖包括六类弹窗在 420×320、1100×720 和深浅主题下的边界与页脚可见性，以及 Esc 关闭、执行中防误关、取消、重开、搜索清空后的焦点、加载防重复提交、标签切换和移除后重建。原有搜索语法、联想、文件标签菜单及 Git 操作测试也纳入全量检查。
+新增 `lobe_states_test.go` 覆盖忙碌提示、空状态按钮、徽章菜单、无匹配文件与空提交列表的文案和操作，以及路径压缩规则与窄窗口下的面包屑不溢出；`files_diff_viewer_test.go` 的详情用例改为验证折叠后卡片保留到动画结束才移除；`lobe_layout_test.go` 增加空状态与路径头预览。原有覆盖包括六类弹窗在 420×320、1100×720 和深浅主题下的边界与页脚可见性，以及 Esc 关闭、执行中防误关、取消、重开、搜索清空后的焦点、加载防重复提交、标签切换和移除后重建。原有搜索语法、联想、文件标签菜单及 Git 操作测试也纳入全量检查。
 
 预览使用本地 MyGo Tester 渲染器生成，属于应用渲染截图，不代表已经在 macOS/Windows 原生窗口中做过人工端到端验收。
 
@@ -57,6 +59,9 @@
 - [文件标签页](validation/lobe-mygo/file-tabs.png)
 - [空状态（浅色）](validation/lobe-mygo/empty-light.png)
 - [空状态（深色）](validation/lobe-mygo/empty-dark.png)
+- [路径面包屑（浅色）](validation/lobe-mygo/path-header-860-dark-false.png)
+- [路径面包屑（窄窗口·深色）](validation/lobe-mygo/path-header-420-dark-true.png)
+- [内联完整信息卡片](validation/lobe-mygo/commit-details.png)
 
 复现：
 

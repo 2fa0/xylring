@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -188,5 +189,44 @@ func TestCopyTextButtonConfirmsInPlace(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText("复制完整信息") {
 		t.Fatalf("confirmation did not expire: %q", tt.Texts())
+	}
+}
+
+func TestDisplayPathKeepsNearestDirectory(t *testing.T) {
+	cases := map[string]string{
+		"compare.go":                                           "compare.go",
+		"cmd/gitclient/compare.go":                             "cmd/gitclient/compare.go",
+		"cmd/gitclient/ui/editor/diffview.go":                  "…/editor/diffview.go",
+		`C:\work\src\cmd\gitclient\compare.go`:                 "…/gitclient/compare.go",
+		"/Users/me/work/xylring/cmd/gitclient/ui/file_tree.go": "…/ui/file_tree.go",
+	}
+	for in, want := range cases {
+		if got := displayPath(in); got != want {
+			t.Fatalf("displayPath(%q) = %q, 期望 %q", in, got, want)
+		}
+	}
+}
+
+func TestPathBreadcrumbShowsDirAndFile(t *testing.T) {
+	full := "/work/xylring/cmd/gitclient/compare.go"
+	for _, width := range []int{420, 160} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			tt := ui.NewTester(func(c *ui.Context) {
+				ui.Row(c).Padding(8).Children(func() {
+					pathBreadcrumb(c, "path", full)
+					// The header keeps its own action beside the path.
+					ui.Button(c.Key("copy"), "复制路径")
+				})
+			}, width, 60)
+			defer retireTester(tt)
+			tt.Frame()
+			if !tt.HasText("…/gitclient/compare.go") {
+				t.Fatalf("面包屑文案不符: %q", tt.Texts())
+			}
+			r, ok := tt.Find("…/gitclient/compare.go")
+			if !ok || r.X < 0 || r.X+r.W > float32(width) {
+				t.Fatalf("面包屑溢出窗口: %+v", r)
+			}
+		})
 	}
 }

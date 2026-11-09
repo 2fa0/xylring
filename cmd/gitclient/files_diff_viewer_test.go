@@ -255,14 +255,28 @@ func TestCommitDetailsInlineCard(t *testing.T) {
 	if !tt.HasText("完整提交信息") || !tt.HasText("复制完整信息") || !tt.HasText("收起信息") {
 		t.Fatalf("缺少内联完整信息内容: %v", tt.Texts())
 	}
+	saveLobePreview(t, tt, "commit-details")
 
-	// Click 收起信息 to collapse
+	// Click 收起信息 to collapse: the card shrinks away instead of vanishing.
 	if err := tt.Click("收起信息"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tab.detailsOpen || tt.HasText("完整提交信息") {
-		t.Fatalf("收起信息后不应显示完整提交信息")
+	if tab.detailsOpen {
+		t.Fatal("收起后状态未更新")
+	}
+	if !tab.detailsShown || !tt.HasText("完整提交信息") {
+		t.Fatal("收起动画应保留内容直到缩回")
+	}
+	tt.Advance(90 * time.Millisecond)
+	tt.Frame()
+	if !tab.detailsShown {
+		t.Fatal("收起动画过早结束")
+	}
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	if tab.detailsShown || tt.HasText("完整提交信息") {
+		t.Fatalf("收起动画结束后不应显示完整提交信息")
 	}
 }
 

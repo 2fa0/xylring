@@ -279,3 +279,30 @@ func TestLobeEmptyStates(t *testing.T) {
 		})
 	}
 }
+
+func TestLobePathHeader(t *testing.T) {
+	path := "/work/xylring/cmd/gitclient/compare.go"
+	for _, dark := range []bool{false, true} {
+		for _, width := range []int{860, 420} {
+			t.Run(fmt.Sprintf("%d/dark=%t", width, dark), func(t *testing.T) {
+				tt := ui.NewTester(func(c *ui.Context) {
+					ui.Row(c).Padding(8, 12).Gap(8).AlignItems(ui.Center).Children(func() {
+						paneIconButton(c, "back", "返回提交历史", iconBack)
+						pathBreadcrumb(c, "path", path)
+						ui.Text(c, "1 / 3").FontSize(12).TextColor(c.Theme().TextMuted).Shrink(0)
+						paneIconButton(c, "copy", "复制路径", iconCopy)
+						paneIconButton(c, "open", "在新标签页打开", iconOpenTab)
+					})
+				}, width, 44)
+				defer retireTester(tt)
+				tt.SetDark(dark)
+				tt.Frame()
+				r, ok := tt.Find("…/gitclient/compare.go")
+				if !ok || r.X+r.W > float32(width) {
+					t.Fatalf("路径头溢出: %+v", r)
+				}
+				saveLobePreview(t, tt, fmt.Sprintf("path-header-%d-dark-%t", width, dark))
+			})
+		}
+	}
+}

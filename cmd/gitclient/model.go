@@ -171,6 +171,7 @@ type repoTab struct {
 
 	details        *commitDetails
 	detailsOpen    bool
+	detailsShown   bool // drawn while the card opens or closes, before it is gone.
 	detailsLoading bool
 	detailsErr     string
 	detailsGen     int
