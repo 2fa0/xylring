@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type historyQuery struct {
+	provs      *provenanceTable
 	term, kind string
 	ref        string // 空值为全部引用，HEAD 为当前分支，其余为完整 ref。
 	hideRemote bool
@@ -61,6 +63,11 @@ func (q historyQuery) searchArgs() []string {
 		return nil
 	}
 	switch q.kind {
+	case "Agent":
+		return []string{"--extended-regexp", "--regexp-ignore-case", "--grep=^(AI-Agent|Co-authored-by|Assisted-by):.*" + regexp.QuoteMeta(q.term)}
+	case "模型":
+		// A display alias may not occur in the raw message; retain all candidate keys.
+		return []string{"--extended-regexp", "--regexp-ignore-case", "--grep=^(AI-Agent|AI-Model|Co-authored-by|Assisted-by):"}
 	case "作者":
 		return []string{"--regexp-ignore-case", "--fixed-strings", "--author=" + q.term}
 	case "文件路径":
@@ -259,6 +266,13 @@ func (a *app) omniSubmit(t *repoTab) {
 	}
 	t.searchSuggestOpen = false
 
+	for _, kind := range []struct{ prefix, name string }{{"agent:", "Agent"}, {"model:", "模型"}} {
+		if term, ok := cutSearchPrefix(text, kind.prefix); ok {
+			t.searchKind, t.searchText = kind.name, term
+			a.searchHistory(t)
+			return
+		}
+	}
 	if term, ok := cutSearchPrefix(text, "code:", "diff:", "content:", "代码:", "内容:", "代码改动:"); ok {
 		t.searchKind = "代码改动"
 		t.searchText = term
@@ -303,6 +317,23 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 	var items []omniSuggestItem
 	clean := strings.TrimSpace(term)
 	lower := strings.ToLower(clean)
+	seen := map[string]bool{}
+	for _, p := range t.provenance.snapshot() {
+		for _, entry := range []struct{ kind, value string }{{"Agent", p.agent}, {"模型", normalizeModel(p.model)}} {
+			e := entry
+			if e.value == "" || seen[e.kind+e.value] || !strings.Contains(strings.ToLower(e.value), lower) {
+				continue
+			}
+			seen[e.kind+e.value] = true
+			items = append(items, omniSuggestItem{kind: e.kind, icon: iconSearch, title: "按" + e.kind + "筛选：" + e.value, action: func() { t.searchKind = e.kind; t.searchText = e.value; a.searchHistory(t) }})
+			if len(items) >= 8 {
+				break
+			}
+		}
+		if len(items) >= 8 {
+			break
+		}
+	}
 
 	if term, ok := cutSearchPrefix(clean, "code:", "diff:", "content:", "代码:", "内容:", "代码改动:"); ok {
 		items = append(items, omniSuggestItem{

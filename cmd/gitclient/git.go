@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	pageFirst    = 300
-	pageMore     = 100
-	maxDiffBytes = 4 << 20
-	commitFormat = "%x1e%H%x1f%P%x1f%an%x1f%at%x1f%s"
+	pageFirst        = 300
+	pageMore         = 100
+	maxDiffBytes     = 4 << 20
+	commitFormat     = "%x1e%H%x1f%P%x1f%an%x1f%at%x1f%s"
+	provenanceFormat = "%(trailers:key=AI-Agent,key=AI-Model,key=AI-Attribution,key=Co-authored-by,key=Assisted-by,unfold,separator=%x1d)"
 )
 
 var zeroHash [20]byte
@@ -247,13 +248,24 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 	if query.filePath != "" {
 		return streamFileHistory(ctx, dir, query, skip, n, fn)
 	}
+	format, supported := historyCommitFormat(ctx, dir)
+	pool := query.provs
+	if pool == nil {
+		pool = &provenanceTable{}
+	}
+	filtering := query.term != "" && (query.kind == "Agent" || query.kind == "模型")
+	gitSkip, gitN := skip, n
+	if filtering {
+		gitSkip, gitN = 0, 0
+	}
+	matched := 0
 	args := []string{
 		"log", "--date-order", "--no-color",
-		"--format=" + commitFormat,
-		"--skip=" + strconv.Itoa(skip),
+		"--format=" + format,
+		"--skip=" + strconv.Itoa(gitSkip),
 	}
-	if n > 0 {
-		args = append(args, "--max-count="+strconv.Itoa(n))
+	if gitN > 0 {
+		args = append(args, "--max-count="+strconv.Itoa(gitN))
 	}
 	args = append(args, query.searchArgs()...)
 	args = append(args, "--stdin", "--")
@@ -266,9 +278,24 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 			if rec == "" {
 				continue
 			}
-			c, err := parseCommitRecord(rec)
+			var c commit
+			var err error
+			if supported {
+				c, err = parseCommitRecord(rec, pool)
+			} else {
+				c, err = parseCommitRecord(rec)
+			}
 			if err != nil {
 				return err
+			}
+			if filtering {
+				if !query.matchesProvenance(pool.get(c.prov)) {
+					continue
+				}
+				matched++
+				if matched <= skip || n > 0 && matched > skip+n {
+					continue
+				}
 			}
 			if err := slot.yield(ctx, func() error { return fn(c) }); err != nil {
 				return err
@@ -405,7 +432,7 @@ func splitByte(sep byte) bufio.SplitFunc {
 	}
 }
 
-func parseCommitRecord(rec string) (commit, error) {
+func parseCommitRecord(rec string, pools ...*provenanceTable) (commit, error) {
 	fields := strings.Split(rec, "\x1f")
 	if len(fields) < 5 {
 		return commit{}, errors.New("无法解析提交记录")
@@ -428,12 +455,22 @@ func parseCommitRecord(rec string) (commit, error) {
 	if err != nil {
 		return commit{}, errors.New("无法解析提交时间")
 	}
+	var prov uint16
+	if len(pools) > 0 && len(fields) >= 6 {
+		prov = pools[0].intern(parseProvenance(fields[len(fields)-1]))
+		fields = fields[:len(fields)-1]
+	}
+	subject := strings.Join(fields[4:], "\x1f")
+	if len(pools) > 0 {
+		subject = strings.Clone(subject)
+	}
 	return commit{
+		prov:    prov,
 		hash:    hash,
 		parents: parents,
 		author:  fields[2],
 		when:    when,
-		subject: strings.Join(fields[4:], "\x1f"),
+		subject: subject,
 	}, nil
 }
 
@@ -468,6 +505,8 @@ type refInfo struct {
 }
 
 type repoMeta struct {
+	ringStatus  string
+	stamp       ringStamp
 	operation   string
 	branch      string
 	head        [20]byte

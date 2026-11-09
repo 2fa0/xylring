@@ -16,6 +16,7 @@ import (
 
 // commit 只保留图谱和列表要画的字段。
 type commit struct {
+	prov      uint16
 	hash      [20]byte
 	parents   [][20]byte
 	author    string
@@ -36,27 +37,32 @@ func (c commit) whenText() string {
 
 // repoTab 是一个已导入的仓库。当前只保留读历史和画图谱需要的状态。
 type repoTab struct {
-	pendingSession *savedRepo
-	operation      string
-	id             int
-	path           string
-	title          string
-	generation     int
-	loading        bool
-	loaded         bool
-	err            string
-	holdAuto       bool
-	closed         bool
-	checking       bool
-	metaKey        string
-	refWatch       refWatch
-	refsChecked    time.Time
-	usedAt         time.Time
-	notice         string
-	lastFetch      time.Time
-	fetching       bool
-	fetchGen       int
-	fetchCancel    context.CancelFunc
+	ring             ringUI
+	commitProv       provenance
+	commitRingOpen   bool
+	commitProvEdited bool
+	provenance       provenanceTable
+	pendingSession   *savedRepo
+	operation        string
+	id               int
+	path             string
+	title            string
+	generation       int
+	loading          bool
+	loaded           bool
+	err              string
+	holdAuto         bool
+	closed           bool
+	checking         bool
+	metaKey          string
+	refWatch         refWatch
+	refsChecked      time.Time
+	usedAt           time.Time
+	notice           string
+	lastFetch        time.Time
+	fetching         bool
+	fetchGen         int
+	fetchCancel      context.CancelFunc
 
 	historyCancel  context.CancelFunc
 	historyStarted time.Time
@@ -66,24 +72,24 @@ type repoTab struct {
 	historyBytes   int64
 	historyBudget  int64
 
-	branch      string
-	head        [20]byte
-	refs        map[[20]byte][]refInfo
-	ahead       int
-	behind      int
-	upstream    string
-	hasUpstream bool
-	syncBusy    bool
+	branch       string
+	head         [20]byte
+	refs         map[[20]byte][]refInfo
+	ahead        int
+	behind       int
+	upstream     string
+	hasUpstream  bool
+	syncBusy     bool
 	commitMsg    string
 	commitAmend  bool
 	amendGen     int
 	commitBusy   bool
 	commitErr    string
 	commitPinned bool
-	commits     []commit
-	graph       graph
-	hasMore     bool
-	authors     map[string]string
+	commits      []commit
+	graph        graph
+	hasMore      bool
+	authors      map[string]string
 
 	list      ui.ListState
 	selection ui.Selection[any]

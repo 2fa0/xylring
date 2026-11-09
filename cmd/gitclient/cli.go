@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -53,6 +54,16 @@ func handleCLIArgs(args []string) bool {
 	}
 	first := args[0]
 	switch first {
+	case "stamp", "ring":
+		dir, err := os.Getwd()
+		if err == nil {
+			err = runRingCLI(context.Background(), dir, args, os.Stdout)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
 	case "-v", "--version", "version":
 		fmt.Printf("Xylring version %s\n", getAppVersion())
 		return true
@@ -87,6 +98,10 @@ func printCLIHelp() {
 	fmt.Printf(`Xylring %s - 极速本地 Git 图谱浏览器与版本比对工具
 
 用法:
+  xylring stamp --agent NAME [--model NAME] [--ttl 30m] [--once]
+  xylring stamp --show|--clear
+  xylring ring install|uninstall|status|snippet|script
+  旧版启动器用户请重新执行 install-cli。
   xylring [选项] [路径...]
 
 示例:
@@ -167,7 +182,7 @@ fi
 
 # 常用查询与安装子命令直接由二进制处理，避免启动 GUI
 case "$1" in
-    -h|--help|-v|--version|install-cli|uninstall-cli)
+    -h|--help|-v|--version|version|help|install-cli|uninstall-cli|stamp|ring)
         if [ -x "$TARGET_BIN" ]; then
             exec "$TARGET_BIN" "$@"
         fi
@@ -213,8 +228,13 @@ exit 1
 func generateWindowsCmdContent(appBin string) string {
 	return fmt.Sprintf(`@echo off
 REM Xylring CLI Launcher for Windows
+for %%%%C in (stamp ring install-cli uninstall-cli version help -h --help -v --version) do if "%%~1"=="%%%%C" goto cli
 start "" "%s" %%*
-`, appBin)
+exit /b
+:cli
+"%s" %%*
+exit /b %%errorlevel%%
+`, appBin, appBin)
 }
 
 func isDirWritableOrCreatable(dir string) bool {
