@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"slices"
@@ -44,9 +45,12 @@ func init() {
 }
 
 type app struct {
-	win      *mygo.Window
-	menu     *mygo.Menu
-	dispatch func(func())
+	recentProvenance []provenance
+	ringSkipNotice   bool
+
+	win              *mygo.Window
+	menu             *mygo.Menu
+	dispatch         func(func())
 
 	tabs              []*repoTab
 	active            int
@@ -181,6 +185,7 @@ func (a *app) view(c *ui.Context) {
 	a.commitWriteModal(c)
 	a.fetchModal(c)
 	a.discardModal(c)
+	a.ringModal(c)
 	a.operationModal(c)
 }
 
@@ -623,6 +628,9 @@ func (a *app) repoItems() []string {
 func (a *app) repoList(c *ui.Context) {
 	ui.Themed(c, listTheme(c)).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Padding(6, 8, 8, 8).Children(func() {
 		a.sidebarRepoSection(c)
+		if tab := a.activeTab(); tab != nil {
+			a.ringStatusControl(c, tab, "sidebar-ring-settings")
+		}
 	})
 }
 
@@ -1170,7 +1178,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				paintWorktreeCommit(p, full, item, bg)
 				return
 			}
-			paintCommit(p, full, item, tab.worktreeConnectsFromTop(i), nil, bg, hasRefs)
+			paintCommit(p, full, item, tab.worktreeConnectsFromTop(i), nil, bg, hasRefs, tab.provenance.get(item.prov).attribution == "inferred")
 			if tab.worktreeThrough(i) {
 				if h := tab.worktreeHead(); h != nil {
 					x := laneCenter(full, h.nodeCol)
@@ -1270,6 +1278,24 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 						ui.Text(c, "标签 "+b.name).SingleLine().TextColor(t.Warning)
 					})
 				}
+			}
+			if prov := tab.provenance.get(item.prov); prov.agent != "" {
+				label := prov.badge
+				if cW, _ := c.Size(); cW < 900 {
+					label = "◎ " + prov.agent
+				}
+				ui.Text(c, label).SingleLine().MaxWidth(220).Shrink(0).FontSize(11).TextColor(muted).Tooltip(prov.description()).ContextMenu(func(m *ui.Menu) {
+					if m.Item("按此 Agent 筛选").Chosen() {
+						tab.searchKind = "Agent"
+						tab.searchText = prov.agent
+						a.searchHistory(tab)
+					}
+					if prov.model != "" && m.Item("按此模型筛选").Chosen() {
+						tab.searchKind = "模型"
+						tab.searchText = normalizeModel(prov.model)
+						a.searchHistory(tab)
+					}
+				})
 			}
 			text := item.subject
 			if text == "" {
@@ -1374,7 +1400,7 @@ func graphColor(chain int, palette []ui.Color) ui.Color {
 	return laneColor(chain)
 }
 
-func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette []ui.Color, background ui.Color, hasRefs bool) {
+func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette []ui.Color, background ui.Color, hasRefs bool, inferred ...bool) {
 	mid := r.Y + r.H/2
 	// 长泳道在下，短曲线带背景色衬底跨过泳道，最后再画节点。
 	for _, bends := range []bool{false, true} {
@@ -1397,6 +1423,27 @@ func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette 
 	if hasRefs {
 		radius = 5.5
 	}
+	if c.prov != 0 {
+		var ring ui.Path
+		x, y, rr := laneCenter(r, c.nodeCol), mid, radius+2.5
+		if len(inferred) > 0 && inferred[0] {
+			for i := 0; i < 12; i++ {
+				for j := 0; j <= 4; j++ {
+					angle := (float64(i) + float64(j)/8) * math.Pi / 6
+					px, py := x+rr*float32(math.Cos(angle)), y+rr*float32(math.Sin(angle))
+					if j == 0 {
+						ring.MoveTo(px, py)
+					} else {
+						ring.LineTo(px, py)
+					}
+				}
+			}
+		} else {
+			ring.Circle(x, y, rr)
+		}
+		p.StrokePath(&ring, 1.2, graphColor(c.nodeColor, palette).Alpha(0.45))
+	}
+
 	paintGraphNode(p, laneCenter(r, c.nodeCol), mid, radius, graphColor(c.nodeColor, palette), background, len(c.parents) > 1)
 }
 

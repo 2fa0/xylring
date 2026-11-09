@@ -331,6 +331,7 @@ func (a *app) reload(t *repoTab) {
 	t.err, t.locateErr, t.notice = "", "", ""
 	t.locateHash = zeroHash
 	path, query := t.path, t.query
+	query.provs = &t.provenance
 	n := max(pageFirst, len(t.commits))
 	budget := max(int64(historyMemoryStep), t.historyBudget)
 	location := t.location()
@@ -342,6 +343,10 @@ func (a *app) reload(t *repoTab) {
 		defer cancel()
 		watch := newRefWatch(ctx, path)
 		meta, err := loadMeta(ctx, path)
+		if err == nil {
+			meta.ringStatus = ringHookStatus(ctx, path)
+			meta.stamp, _ = readStamp(ctx, path)
+		}
 		var tips []string
 		var dirty []fileChange
 		if err == nil {
@@ -430,6 +435,7 @@ func (a *app) loadMore(t *repoTab) {
 	t.historyStarted = time.Now()
 	t.err = ""
 	gen, query := t.generation, t.query
+	query.provs = &t.provenance
 	if t.pager == nil {
 		streamCtx, cancel := context.WithCancel(context.Background())
 		t.pagerCancel = cancel
@@ -507,6 +513,11 @@ func (a *app) installHistory(t *repoTab, meta repoMeta, p preparedHistory) {
 	}
 	t.branch, t.head, t.refs = meta.branch, meta.head, meta.refs
 	t.operation = meta.operation
+	if meta.ringStatus != "" {
+		t.ring.status = meta.ringStatus
+		t.ring.stamp = meta.stamp
+		t.ring.checked = time.Now()
+	}
 	t.ahead, t.behind, t.upstream, t.hasUpstream = meta.ahead, meta.behind, meta.upstream, meta.hasUpstream
 	a.summaryMu.Lock()
 	if a.repoSummaries != nil {

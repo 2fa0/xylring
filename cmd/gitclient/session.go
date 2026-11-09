@@ -17,13 +17,16 @@ type savedRepo struct {
 	Commit string
 	File   string
 }
+type savedProvenance struct{ Agent, Model string }
 type savedSession struct {
-	Repos           []savedRepo
-	Active          string
-	BottomFullWidth *bool    `json:"bottom_full_width,omitempty"`
-	RepoOrder       []string `json:"repo_order,omitempty"`
-	Found           []string `json:"found,omitempty"`
-	FoundFrom       string   `json:"found_from,omitempty"`
+	RingSkipNotice   bool              `json:"ring_skip_notice,omitempty"`
+	RecentProvenance []savedProvenance `json:"recent_provenance,omitempty"`
+	Repos            []savedRepo
+	Active           string
+	BottomFullWidth  *bool    `json:"bottom_full_width,omitempty"`
+	RepoOrder        []string `json:"repo_order,omitempty"`
+	Found            []string `json:"found,omitempty"`
+	FoundFrom        string   `json:"found_from,omitempty"`
 }
 
 func loadSession() savedSession {
@@ -54,11 +57,15 @@ func (a *app) queueSession() {
 	// Compare the persisted fields directly; unchanged frames allocate no JSON.
 	bw := a.bottomFullWidth
 	s := savedSession{
+		RingSkipNotice:  a.ringSkipNotice,
 		Repos:           make([]savedRepo, 0, len(a.tabs)),
 		BottomFullWidth: &bw,
 		RepoOrder:       a.repoOrder,
 		Found:           slices.Clone(a.found),
 		FoundFrom:       a.foundFrom,
+	}
+	for _, p := range a.recentProvenance {
+		s.RecentProvenance = append(s.RecentProvenance, savedProvenance{p.agent, p.model})
 	}
 	for _, t := range a.tabs {
 		f := ""
@@ -88,7 +95,7 @@ func (a *app) queueSession() {
 		(s.BottomFullWidth != nil && a.lastSession != nil && a.lastSession.BottomFullWidth != nil && *s.BottomFullWidth == *a.lastSession.BottomFullWidth)
 	repoOrderEqual := (a.lastSession == nil && len(s.RepoOrder) == 0) ||
 		(a.lastSession != nil && slices.Equal(s.RepoOrder, a.lastSession.RepoOrder))
-	if a.lastSession != nil && s.Active == a.lastSession.Active && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
+	if a.lastSession != nil && s.Active == a.lastSession.Active && s.RingSkipNotice == a.lastSession.RingSkipNotice && slices.Equal(s.RecentProvenance, a.lastSession.RecentProvenance) && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
 		return
 	}
 	if a.sessionWrites == nil {
@@ -176,6 +183,13 @@ func (a *app) restoreSession() {
 			}
 		}
 		a.post(func() {
+			a.ringSkipNotice = s.RingSkipNotice
+			for _, p := range s.RecentProvenance {
+				if len(a.recentProvenance) >= 8 {
+					break
+				}
+				a.recentProvenance = append(a.recentProvenance, provenance{agent: p.Agent, model: p.Model})
+			}
 			if s.BottomFullWidth != nil {
 				a.bottomFullWidth = *s.BottomFullWidth
 			}

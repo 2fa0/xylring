@@ -1,0 +1,6 @@
+feat: release v0.7.0 with search and repository workspace improvements
+
+Add code-change search, in-file find, persistent repository group ordering and complete sidebar session restoration. Refresh release metadata and stop packaging when a build fails.
+
+Assisted-by: Cindy (https://cindy.app)
+

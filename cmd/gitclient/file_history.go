@@ -16,8 +16,14 @@ func streamFileHistory(ctx context.Context, dir string, q historyQuery, skip, n 
 	}
 	// --skip 会先跳过重命名提交，导致 --follow 无法继续追踪旧路径。
 	// 重开流时从起点恢复旧路径；连续翻页由 historyPager 复用同一个流。
+	format, supported := historyCommitFormat(ctx, dir)
+	pool := q.provs
+	if pool == nil {
+		pool = &provenanceTable{}
+	}
+	format = strings.ReplaceAll(strings.TrimPrefix(format, "%x1e"), "%x1f", "%x00")
 	args := []string{"log", "--follow", "-M", "--date-order", "--no-color", "--name-status", "-z", "--diff-merges=first-parent",
-		"--format=%x00%H%x00%P%x00%an%x00%at%x00%s"}
+		"--format=%x00" + format}
 	if n > 0 {
 		args = append(args, "--max-count="+strconv.Itoa(skip+n))
 	}
@@ -29,13 +35,23 @@ func streamFileHistory(ctx context.Context, dir string, q historyQuery, skip, n 
 				continue
 			}
 			fields := []string{sc.Text()}
-			for range 4 {
+			count := 4
+			if supported {
+				count++
+			}
+			for range count {
 				if !sc.Scan() {
 					return errors.New("无法解析文件历史")
 				}
 				fields = append(fields, sc.Text())
 			}
-			c, err := parseCommitRecord(strings.Join(fields, "\x1f"))
+			var c commit
+			var err error
+			if supported {
+				c, err = parseCommitRecord(strings.Join(fields, "\x1f"), pool)
+			} else {
+				c, err = parseCommitRecord(strings.Join(fields, "\x1f"))
+			}
 			if err != nil {
 				return err
 			}

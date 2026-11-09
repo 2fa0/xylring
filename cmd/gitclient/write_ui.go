@@ -18,6 +18,7 @@ const (
 )
 
 type commitWrite struct {
+	prov        provenance
 	kind        string
 	repo        string
 	hash        [20]byte
@@ -361,6 +362,10 @@ func (a *app) openCommitWrite(tab *repoTab, kind string, item commit) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		msg, err := readCommitMessage(ctx, path, hash)
+		var prov provenance
+		if err == nil {
+			prov, err = messageProvenance(ctx, path, msg)
+		}
 		a.post(func() {
 			if a.closed || !a.showWrite || a.write.gen != gen {
 				return
@@ -371,6 +376,7 @@ func (a *app) openCommitWrite(tab *repoTab, kind string, item commit) {
 				return
 			}
 			a.write.message = msg
+			a.write.prov = prov
 		})
 	}()
 }
@@ -477,6 +483,8 @@ func (a *app) commitWriteModal(c *ui.Context) {
 					ui.Text(c, "正在读取说明…").TextColor(c.Theme().TextMuted)
 				} else {
 					ui.Text(c, "会生成新的提交哈希；若不是 HEAD，其后的提交也会改写。").FontSize(12).TextColor(c.Theme().TextMuted)
+					provenanceInputs(c, "reword-ring", &d.prov, disabled)
+					ui.Text(c, "若提交已推送，保存将改写已推送历史，需要强制推送。").FontSize(12).TextColor(c.Theme().Warning)
 					ui.TextArea(c.Key("write-message"), &d.message).Height(160).Disabled(disabled).AutoFocus()
 				}
 			}
@@ -520,6 +528,7 @@ func (a *app) runCommitWrite() {
 	d.err = ""
 	kind, repo, hash := d.kind, d.repo, d.hash
 	oldName, name, message := d.oldName, d.name, d.message
+	prov := d.prov
 	checkout, overwrite, annotated := d.checkout, d.overwrite, d.annotated
 	trackRemote := ""
 	if kind == writeBranch && d.track {
@@ -565,7 +574,10 @@ func (a *app) runCommitWrite() {
 				notice = "已添加标签 " + name
 			}
 		default:
-			newHash, err = rewordCommit(ctx, repo, hash, message)
+			message, err = applyProvenanceTrailers(ctx, repo, message, prov)
+			if err == nil {
+				newHash, err = rewordCommit(ctx, repo, hash, message)
+			}
 			if err == nil {
 				notice = "已修改说明"
 			}

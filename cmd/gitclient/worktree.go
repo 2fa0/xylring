@@ -282,7 +282,7 @@ func commitWorktree(ctx context.Context, dir, msg string, amend bool) error {
 	if amend {
 		args = []string{"commit", "--amend", "-m", msg}
 	}
-	_, err := runGit(ctx, dir, args...)
+	_, err := runGitExtra(ctx, dir, 16<<20, []string{"XYLRING_GUI=1"}, args...)
 	return err
 }
 
@@ -478,16 +478,31 @@ func (a *app) runCommitWorktree(t *repoTab) {
 	t.commitErr = ""
 	repoPath := t.path
 	amend := t.commitAmend
+	prov := t.commitProv
+	provEdited := t.commitProvEdited
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := commitWorktree(ctx, repoPath, msg, amend)
+		var err error
+		if !provEdited && prov.agent == "" && prov.model == "" {
+			prov, err = messageProvenance(ctx, repoPath, msg)
+		}
+		var finalMsg string
+		if err == nil {
+			finalMsg, err = applyProvenanceTrailers(ctx, repoPath, msg, prov)
+		}
+		if err == nil {
+			err = commitWorktree(ctx, repoPath, finalMsg, amend)
+		}
 		a.post(func() {
 			t.commitBusy = false
 			if err != nil {
 				t.commitErr = err.Error()
 				a.setBanner("提交失败: "+err.Error(), "")
 			} else {
+				a.rememberProvenance(prov)
+				t.commitProv = provenance{}
+				t.commitProvEdited = false
 				t.commitMsg = ""
 				t.commitAmend = false
 				t.commitErr = ""
@@ -565,6 +580,7 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 		}
 
 		if isExpanded {
+			a.commitRingControl(c, t)
 			ui.TextArea(c.Key(fmt.Sprintf("commit-msg-%d", t.id)), &t.commitMsg).
 				Placeholder("写提交说明（⌘Enter）").
 				Height(54).
@@ -574,8 +590,10 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 					if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, "修改上次提交").
 						Disabled(t.commitBusy).Changed() {
 						t.amendGen++
-						if t.commitAmend && strings.TrimSpace(t.commitMsg) == "" {
+						if t.commitAmend {
 							a.loadAmendMessage(t)
+						} else {
+							t.commitProv = provenance{}
 						}
 					}
 				}
@@ -637,19 +655,29 @@ func (a *app) loadAmendMessage(t *repoTab) {
 	head, path := t.head, t.path
 	t.amendGen++
 	gen := t.amendGen
+	initialProv := t.commitProv
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		message, err := readCommitMessage(ctx, path, head)
+		var prov provenance
+		if err == nil {
+			prov, err = messageProvenance(ctx, path, message)
+		}
 		a.post(func() {
-			if t.closed || t.amendGen != gen || t.head != head || !t.commitAmend || t.commitBusy || strings.TrimSpace(t.commitMsg) != "" {
+			if t.closed || t.amendGen != gen || t.head != head || !t.commitAmend || t.commitBusy {
 				return
 			}
 			if err != nil {
 				t.commitErr = "读取提交说明失败：" + err.Error()
 				return
 			}
-			t.commitMsg = message
+			if strings.TrimSpace(t.commitMsg) == "" {
+				t.commitMsg = message
+			}
+			if t.commitProv == initialProv {
+				t.commitProv = prov
+			}
 		})
 	}()
 }

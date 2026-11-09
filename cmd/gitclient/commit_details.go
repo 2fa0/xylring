@@ -12,6 +12,7 @@ import (
 )
 
 type commitDetails struct {
+	prov                          provenance
 	hash, parents                 string
 	author, authorEmail, authored string
 	committer, commitEmail, at    string
@@ -30,6 +31,10 @@ func readCommitDetails(ctx context.Context, dir string, hash [20]byte) (*commitD
 		return nil, errors.New("无法解析完整提交信息")
 	}
 	d := &commitDetails{hash: f[0], parents: f[1], author: f[2], authorEmail: f[3], authored: f[4], committer: f[5], commitEmail: f[6], at: f[7], message: strings.TrimRight(f[8], "\n")}
+	d.prov, err = messageProvenance(ctx, dir, d.message)
+	if err != nil {
+		return nil, err
+	}
 	d.formatted = d.text()
 	d.view = editor.State{Buffer: editor.NewBuffer(d.formatted), ReadOnly: true, Label: "完整提交信息"}
 	return d, nil
@@ -43,7 +48,11 @@ func (d *commitDetails) text() string {
 	if parents == "" {
 		parents = "无（初始提交）"
 	}
-	return fmt.Sprintf("提交：%s\n父提交：%s\n作者：%s <%s>\n创作时间：%s\n提交者：%s <%s>\n提交时间：%s\n\n%s", d.hash, parents, d.author, d.authorEmail, d.authored, d.committer, d.commitEmail, d.at, d.message)
+	ring := ""
+	if p := d.prov; p.agent != "" {
+		ring = "年轮印记：" + p.description() + "\n"
+	}
+	return ring + fmt.Sprintf("提交：%s\n父提交：%s\n作者：%s <%s>\n创作时间：%s\n提交者：%s <%s>\n提交时间：%s\n\n%s", d.hash, parents, d.author, d.authorEmail, d.authored, d.committer, d.commitEmail, d.at, d.message)
 }
 
 func (d *commitDetails) body() string {
