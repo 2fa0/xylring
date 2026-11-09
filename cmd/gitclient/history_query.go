@@ -617,12 +617,7 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 			Gap(4)
 
 		searchBox.Children(func() {
-			input := ui.TextInput(c.Key(fmt.Sprintf("search-%d", t.id)), &t.searchText).
-				Placeholder("搜索提交、代码、分支、作者或路径… (⌘P)").
-				Bind(&t.searchInput).
-				Grow(1).
-				MinWidth(80).
-				Error(t.locateErr)
+			input, submit := omniSearchField(c, t)
 
 			if input.Changed() {
 				t.locate = t.searchText
@@ -631,9 +626,7 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 				t.searchSuggestOpen = true
 			}
 
-			busy := t.loading && strings.TrimSpace(t.searchText) == t.query.term && t.searchKind == t.query.kind
-			searchBtn := iconButton(c, "search-history", "搜索", iconSearch).Shrink(0).Disabled(busy).Tooltip("搜索或跳转 (Enter)")
-			if searchBtn.Clicked() || (input.Submitted() && !busy) {
+			if submit {
 				a.omniSubmit(t)
 			}
 

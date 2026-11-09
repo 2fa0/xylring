@@ -153,67 +153,20 @@ func iconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 }
 
 func chromeIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
-	t := c.Theme()
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Size(26, 26).Radius(6).Center().Shrink(0).FocusRing(false).Cursor(ui.CursorPointer).Transition(colorMotion())
-	switch {
-	case b.Pressed():
-		b.Background(t.SurfacePressed)
-	case b.Hovered():
-		b.Background(t.SurfaceHover)
-	}
-	b.Children(func() {
-		ui.Icon(c, icon).Size(16, 16).TextColor(t.Text)
-	})
-	return b
+	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name)
+	return styleActionIcon(c, b, icon, 26, 16, c.Theme().Text, false)
 }
 
 func paneIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
-	t := c.Theme()
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer).Transition(colorMotion())
-	switch {
-	case b.Pressed():
-		b.Background(t.SurfacePressed)
-	case b.Hovered():
-		b.Background(t.SurfaceHover)
-	}
-	b.Children(func() {
-		ui.Icon(c, icon).Size(14, 14).TextColor(t.TextMuted)
-	})
-	return b
+	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name)
+	return styleActionIcon(c, b, icon, 24, 14, c.Theme().TextMuted, false)
 }
 
 func paneToggleIconButton(c *ui.Context, key, name, tip string, icon *ui.SVG, active bool) ui.Element {
-	t := c.Theme()
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(tip).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer).Transition(colorMotion())
-	switch {
-	case b.Pressed():
-		b.Background(t.SurfacePressed)
-	case b.Hovered():
-		b.Background(t.SurfaceHover)
-	case active:
-		b.Background(t.Accent.Alpha(0.12))
-	}
-	textColor := t.TextMuted
-	if active {
-		textColor = t.Accent
-	}
-	b.Children(func() {
-		ui.Icon(c, icon).Size(14, 14).TextColor(textColor)
-	})
-	return b
+	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(tip)
+	return styleActionIcon(c, b, icon, 24, 14, c.Theme().TextMuted, active)
 }
 
 func closeIconButton(c *ui.Context, key, name string) ui.Element {
-	t := c.Theme()
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer).Transition(colorMotion())
-	switch {
-	case b.Pressed():
-		b.Background(t.SurfacePressed)
-	case b.Hovered():
-		b.Background(t.SurfaceHover)
-	}
-	b.Children(func() {
-		ui.Icon(c, iconClose).Size(14, 14).TextColor(t.TextMuted)
-	})
-	return b
+	return paneIconButton(c, key, name, iconClose)
 }

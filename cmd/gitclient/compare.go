@@ -214,51 +214,45 @@ func (a *app) comparisonModal(c *ui.Context) {
 	suggestions := t.refSuggestions()
 	theme := c.Theme()
 
-	ui.Modal(c.Key("compare-modal"), &a.showCompare, func() {
-		ui.Column(c).Width(440).Gap(12).Children(func() {
-			ui.Text(c, "比较").Bold()
-
-			var fromInput, toInput ui.Element
-			ui.Row(c).Gap(8).AlignItems(ui.End).Children(func() {
-				ui.Column(c).Grow(1).Gap(4).Children(func() {
-					ui.Text(c, "从").FontSize(12).TextColor(theme.TextMuted)
-					fromInput = ui.Autocomplete(c.Key("compare-from"), &a.compareFrom, suggestions).Placeholder("HEAD").FillWidth()
-				})
-				if ui.Button(c.Key("compare-swap"), "⇄").Label("交换").Tooltip("交换起点与终点").Shrink(0).Clicked() {
-					a.compareFrom, a.compareTo = a.compareTo, a.compareFrom
-				}
-				ui.Column(c).Grow(1).Gap(4).Children(func() {
-					ui.Text(c, "到").FontSize(12).TextColor(theme.TextMuted)
-					toInput = ui.Autocomplete(c.Key("compare-to"), &a.compareTo, suggestions).Placeholder("分支、标签或哈希").FillWidth()
-				})
+	var fromInput, toInput ui.Element
+	appModal(c.Key("compare-modal"), &a.showCompare, "比较", 480, false, func() {
+		ui.Row(c).Gap(8).AlignItems(ui.End).Children(func() {
+			ui.Column(c).Grow(1).Gap(4).Children(func() {
+				ui.Text(c, "从").FontSize(12).TextColor(theme.TextMuted)
+				fromInput = ui.Autocomplete(c.Key("compare-from"), &a.compareFrom, suggestions).Placeholder("HEAD").FillWidth()
 			})
-
-			ui.Checkbox(c.Key("compare-three"), &a.compareThree, "从分叉点起")
-
-			if a.compareErr != "" {
-				ui.Text(c, a.compareErr).FontSize(12).TextColor(theme.Danger)
+			if ui.Button(c.Key("compare-swap"), "⇄").Label("交换").Tooltip("交换起点与终点").Shrink(0).Clicked() {
+				a.compareFrom, a.compareTo = a.compareTo, a.compareFrom
 			}
-
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if ui.Button(c.Key("compare-cancel"), "取消").Clicked() {
-					a.showCompare = false
-				}
-				busy := t == nil || t.compareLoading
-				submitted := (fromInput.Submitted() || toInput.Submitted()) && !busy
-				if ui.PrimaryButton(c.Key("compare-apply"), "开始比较").Disabled(busy).Clicked() || submitted {
-					from, to, three, err := parseCompareRange(a.compareFrom, a.compareTo)
-					if err != nil {
-						a.compareErr = err.Error()
-						return
-					}
-					if t == nil {
-						a.compareErr = "没有打开的仓库"
-						return
-					}
-					a.compareRefs(t, from, to, three || a.compareThree)
-				}
+			ui.Column(c).Grow(1).Gap(4).Children(func() {
+				ui.Text(c, "到").FontSize(12).TextColor(theme.TextMuted)
+				toInput = ui.Autocomplete(c.Key("compare-to"), &a.compareTo, suggestions).Placeholder("分支、标签或哈希").FillWidth()
 			})
 		})
+
+		ui.Checkbox(c.Key("compare-three"), &a.compareThree, "从分叉点起")
+
+		if a.compareErr != "" {
+			ui.Text(c, a.compareErr).FontSize(12).TextColor(theme.Danger)
+		}
+	}, func() {
+		if ui.Button(c.Key("compare-cancel"), "取消").Clicked() {
+			a.showCompare = false
+		}
+		busy := t == nil || t.compareLoading
+		submitted := (fromInput.Submitted() || toInput.Submitted()) && !busy
+		if ui.PrimaryButton(c.Key("compare-apply"), "开始比较").Disabled(busy).Clicked() || submitted {
+			from, to, three, err := parseCompareRange(a.compareFrom, a.compareTo)
+			if err != nil {
+				a.compareErr = err.Error()
+				return
+			}
+			if t == nil {
+				a.compareErr = "没有打开的仓库"
+				return
+			}
+			a.compareRefs(t, from, to, three || a.compareThree)
+		}
 	})
 	if wasOpen && !a.showCompare {
 		if t := a.activeTab(); t != nil && t.compareLoading && t.comparison == nil {

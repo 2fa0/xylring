@@ -154,41 +154,37 @@ func (a *app) openFetch(tab *repoTab) {
 
 func (a *app) fetchModal(c *ui.Context) {
 	wasOpen := a.showFetch
-	ui.Modal(c.Key("fetch-modal"), &a.showFetch, func() {
-		d := &a.fetch
-		ui.Column(c).Width(460).Gap(8).Children(func() {
-			ui.Text(c, "获取远程").Bold()
-			ui.Text(c, "从所有远程获取最新引用。不会合并或改动工作区。").FontSize(12).TextColor(c.Theme().TextMuted)
-			disabled := d.preparing || d.busy
-			switch {
-			case d.preparing:
-				ui.Text(c, "正在读取远程…").TextColor(c.Theme().TextMuted)
-			case len(d.remotes) > 0:
-				ui.Text(c, "远程："+strings.Join(d.remotes, "、")).FontSize(12).TextColor(c.Theme().TextMuted)
-			}
-			ui.Checkbox(c.Key("fetch-prune"), &d.prune, "清理远端已删除的分支").Disabled(disabled)
-			ui.Checkbox(c.Key("fetch-prune-tags"), &d.pruneTags, "同时清理远端已删除的标签").Disabled(disabled)
-			if d.err != "" {
-				ui.Text(c, d.err).TextColor(c.Theme().Danger)
-			}
+	d := &a.fetch
+	disabled := d.preparing || d.busy
+	appModal(c.Key("fetch-modal"), &a.showFetch, "获取远程", 500, d.busy, func() {
+		ui.Text(c, "从所有远程获取最新引用。不会合并或改动工作区。").FontSize(12).TextColor(c.Theme().TextMuted)
+		switch {
+		case d.preparing:
+			ui.Text(c, "正在读取远程…").TextColor(c.Theme().TextMuted)
+		case len(d.remotes) > 0:
+			ui.Text(c, "远程："+strings.Join(d.remotes, "、")).FontSize(12).TextColor(c.Theme().TextMuted)
+		}
+		ui.Checkbox(c.Key("fetch-prune"), &d.prune, "清理远端已删除的分支").Disabled(disabled)
+		ui.Checkbox(c.Key("fetch-prune-tags"), &d.pruneTags, "同时清理远端已删除的标签").Disabled(disabled)
+		if d.err != "" {
+			ui.Text(c, d.err).TextColor(c.Theme().Danger)
+		}
+		if d.busy {
+			ui.Text(c, "正在获取…").TextColor(c.Theme().TextMuted)
+		}
+	}, func() {
+		if ui.Button(c.Key("fetch-cancel"), "取消").Clicked() {
 			if d.busy {
-				ui.Text(c, "正在获取…").TextColor(c.Theme().TextMuted)
+				if d.cancel != nil {
+					d.cancel()
+				}
+			} else {
+				a.showFetch = false
 			}
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if ui.Button(c.Key("fetch-cancel"), "取消").Clicked() {
-					if d.busy {
-						if d.cancel != nil {
-							d.cancel()
-						}
-					} else {
-						a.showFetch = false
-					}
-				}
-				if ui.PrimaryButton(c.Key("fetch-apply"), "获取").Disabled(disabled || len(d.remotes) == 0).Clicked() {
-					a.runFetch()
-				}
-			})
-		})
+		}
+		if ui.PrimaryButton(c.Key("fetch-apply"), "获取").Disabled(disabled || len(d.remotes) == 0).Clicked() {
+			a.runFetch()
+		}
 	})
 	if wasOpen && !a.showFetch && a.fetch.busy {
 		a.showFetch = true

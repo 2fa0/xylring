@@ -624,30 +624,23 @@ func (a *app) discardModal(c *ui.Context) {
 		return
 	}
 	theme := c.Theme()
-	ui.Modal(c.Key("discard-confirm-modal"), &a.showDiscard, func() {
-		f := a.discard.file
-		ui.Column(c).Width(380).Gap(12).Children(func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, iconTrash2).Size(18, 18).TextColor(theme.Danger)
-				ui.Text(c, "确定丢弃文件修改？").Bold().FontSize(14)
-			})
-			ui.Text(c, f.path).FontSize(12).Font("monospace").TextColor(theme.TextMuted)
-			if f.extra == "未跟踪" {
-				ui.Text(c, "此文件为未跟踪文件，丢弃将永久删除该文件，无法恢复。").FontSize(12).TextColor(theme.Danger)
-			} else {
-				ui.Text(c, "工作区的修改将被撤销并恢复，无法恢复。").FontSize(12).TextColor(theme.TextMuted)
-			}
-			ui.Row(c).FillWidth().Justify(ui.End).Gap(8).Children(func() {
-				if ui.Button(c.Key("discard-cancel"), "取消").Clicked() {
-					a.showDiscard = false
-					a.discard.open = false
-				}
-				confirmBtn := ui.Button(c.Key("discard-confirm"), "确定丢弃").Padding(2, 12)
-				if confirmBtn.Clicked() {
-					a.runDiscardWorktreeFile(tab, f)
-				}
-			})
-		})
+	f := a.discard.file
+	appModal(c.Key("discard-confirm-modal"), &a.showDiscard, "确定丢弃文件修改？", 420, false, func() {
+		ui.Text(c, f.path).FontSize(12).Font("monospace").TextColor(theme.TextMuted)
+		if f.extra == "未跟踪" {
+			ui.Text(c, "此文件为未跟踪文件，丢弃将永久删除该文件，无法恢复。").FontSize(12).TextColor(theme.Danger)
+		} else {
+			ui.Text(c, "工作区的修改将被撤销并恢复，无法恢复。").FontSize(12).TextColor(theme.TextMuted)
+		}
+	}, func() {
+		if ui.Button(c.Key("discard-cancel"), "取消").Clicked() {
+			a.showDiscard = false
+			a.discard.open = false
+		}
+		confirmBtn := ui.Button(c.Key("discard-confirm"), "确定丢弃").Padding(2, 12)
+		if confirmBtn.Clicked() {
+			a.runDiscardWorktreeFile(tab, f)
+		}
 	})
 }
 

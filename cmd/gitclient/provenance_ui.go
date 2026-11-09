@@ -187,61 +187,59 @@ func (a *app) ringModal(c *ui.Context) {
 	if t == nil || !t.ring.open {
 		return
 	}
-	ui.Modal(c.Key("ring-settings-modal"), &t.ring.open, func() {
-		ui.Column(c).Gap(8).Width(460).Children(func() {
-			ui.Text(c, "本仓库年轮记录").Bold()
-			ui.Text(c, t.ring.status).FontSize(12)
-			if reason := provenanceReadStatus(); reason != "" {
-				ui.Text(c, reason).FontSize(12).TextColor(c.Theme().TextMuted)
+	appModal(c.Key("ring-settings-modal"), &t.ring.open, "本仓库年轮记录", 500, t.ring.busy, func() {
+		ui.Text(c, t.ring.status).FontSize(12)
+		if reason := provenanceReadStatus(); reason != "" {
+			ui.Text(c, reason).FontSize(12).TextColor(c.Theme().TextMuted)
+		}
+		ui.Text(c, "开启会修改 .git/hooks。Agent 和模型 Trailer 随提交推送后公开。推断保持关闭。").FontSize(12)
+		if strings.HasPrefix(t.ring.status, "需手动集成") {
+			ui.Text(c, "请将年轮脚本保存到现有 Hook 可调用的位置，再在 prepare-commit-msg 中执行该脚本并传入原参数。脚本仅依赖 Git 和 POSIX sh。").FontSize(12)
+			if ui.Button(c.Key("ring-copy-script"), "复制集成脚本").Clicked() {
+				c.Services().WriteClipboard(ringHookScript())
 			}
-			ui.Text(c, "开启会修改 .git/hooks。Agent 和模型 Trailer 随提交推送后公开。推断保持关闭。").FontSize(12)
-			if strings.HasPrefix(t.ring.status, "需手动集成") {
-				ui.Text(c, "请将年轮脚本保存到现有 Hook 可调用的位置，再在 prepare-commit-msg 中执行该脚本并传入原参数。脚本仅依赖 Git 和 POSIX sh。").FontSize(12)
-				if ui.Button(c.Key("ring-copy-script"), "复制集成脚本").Clicked() {
-					c.Services().WriteClipboard(ringHookScript())
+		} else {
+			if strings.HasPrefix(t.ring.status, "已开启") {
+				if ui.Button(c.Key("ring-uninstall"), "关闭并还原原 Hook").Disabled(t.ring.busy).Clicked() {
+					a.ringAction(t, "uninstall")
 				}
 			} else {
-				if strings.HasPrefix(t.ring.status, "已开启") {
-					if ui.Button(c.Key("ring-uninstall"), "关闭并还原原 Hook").Disabled(t.ring.busy).Clicked() {
-						a.ringAction(t, "uninstall")
-					}
-				} else {
-					ui.Checkbox(c.Key("ring-confirm"), &t.ring.confirm, "我了解以上改动并同意在本仓库开启")
-					ui.Checkbox(c.Key("ring-skip-notice"), &a.ringSkipNotice, "以后开启其他仓库时不再提示")
-					if ui.Button(c.Key("ring-install"), "开启终端年轮记录").Disabled(t.ring.busy || (!t.ring.confirm && !a.ringSkipNotice)).Clicked() {
-						a.ringAction(t, "install")
-					}
+				ui.Checkbox(c.Key("ring-confirm"), &t.ring.confirm, "我了解以上改动并同意在本仓库开启")
+				ui.Checkbox(c.Key("ring-skip-notice"), &a.ringSkipNotice, "以后开启其他仓库时不再提示")
+				if ui.Button(c.Key("ring-install"), "开启终端年轮记录").Disabled(t.ring.busy || (!t.ring.confirm && !a.ringSkipNotice)).Clicked() {
+					a.ringAction(t, "install")
 				}
 			}
-			if t.ring.stamp.p.agent != "" {
-				ui.Text(c, "生效印章："+t.ring.stamp.p.description())
-				if ui.Button(c.Key("ring-clear-stamp"), "清除印章").Disabled(t.ring.busy).Clicked() {
-					a.ringAction(t, "clear")
-				}
+		}
+		if t.ring.stamp.p.agent != "" {
+			ui.Text(c, "生效印章："+t.ring.stamp.p.description())
+			if ui.Button(c.Key("ring-clear-stamp"), "清除印章").Disabled(t.ring.busy).Clicked() {
+				a.ringAction(t, "clear")
 			}
-			if ui.Button(c.Key("ring-copy-rules"), "复制 Agent 规则片段").Clicked() {
-				c.Services().WriteClipboard(provenanceRuleSnippet())
-				c.Toast("已复制，可粘贴到项目规则文件")
+		}
+		if ui.Button(c.Key("ring-copy-rules"), "复制 Agent 规则片段").Clicked() {
+			c.Services().WriteClipboard(provenanceRuleSnippet())
+			c.Toast("已复制，可粘贴到项目规则文件")
+		}
+		ui.Text(c, "可选写入项目规则：文件通常受版本控制，会影响所有协作者。").FontSize(12)
+		ui.TextInput(c.Key("rule-target"), &t.ring.ruleTarget).Placeholder("AGENTS.md / CLAUDE.md / .cursor/rules/xylring-provenance.mdc")
+		ui.Checkbox(c.Key("rule-remove"), &t.ring.ruleRemove, "移除已有年轮规则")
+		if ui.Button(c.Key("rule-preview"), "预览规则 diff").Disabled(t.ring.busy).Clicked() {
+			a.previewRingRules(t)
+		}
+		if preview := t.ring.preview; preview != nil {
+			ui.Scroll(c).Height(180).Children(func() { ui.Text(c, preview.diff).Font("monospace").FontSize(11) })
+			if ui.Button(c.Key("rule-save"), "确认写入以上 diff").Disabled(t.ring.busy).Clicked() {
+				a.saveRingRules(t)
 			}
-			ui.Text(c, "可选写入项目规则：文件通常受版本控制，会影响所有协作者。").FontSize(12)
-			ui.TextInput(c.Key("rule-target"), &t.ring.ruleTarget).Placeholder("AGENTS.md / CLAUDE.md / .cursor/rules/xylring-provenance.mdc")
-			ui.Checkbox(c.Key("rule-remove"), &t.ring.ruleRemove, "移除已有年轮规则")
-			if ui.Button(c.Key("rule-preview"), "预览规则 diff").Disabled(t.ring.busy).Clicked() {
-				a.previewRingRules(t)
-			}
-			if preview := t.ring.preview; preview != nil {
-				ui.Scroll(c).Height(180).Children(func() { ui.Text(c, preview.diff).Font("monospace").FontSize(11) })
-				if ui.Button(c.Key("rule-save"), "确认写入以上 diff").Disabled(t.ring.busy).Clicked() {
-					a.saveRingRules(t)
-				}
-			}
-			if t.ring.err != "" {
-				ui.Text(c, t.ring.err).TextColor(c.Theme().Danger)
-			}
-			if ui.Button(c.Key("ring-close"), "关闭").Clicked() {
-				t.ring.open = false
-			}
-		})
+		}
+		if t.ring.err != "" {
+			ui.Text(c, t.ring.err).TextColor(c.Theme().Danger)
+		}
+	}, func() {
+		if ui.Button(c.Key("ring-close"), "关闭").Disabled(t.ring.busy).Clicked() {
+			t.ring.open = false
+		}
 	})
 }
 

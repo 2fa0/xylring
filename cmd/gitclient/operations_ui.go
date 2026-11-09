@@ -201,156 +201,152 @@ func operationHint(action string) string {
 	return ""
 }
 func (a *app) operationModal(c *ui.Context) {
-	ui.Modal(c.Key("repo-operation"), &a.showOperation, func() {
-		d := &a.op
-		ui.Column(c).Width(620).Gap(8).Children(func() {
-			title := d.action
-			if d.hub != "" {
-				title = d.hub
+	d := &a.op
+	title := d.action
+	if d.hub != "" {
+		title = d.hub
+	}
+	hub := d.hub == "Stash" || d.hub == "远程" || d.action == "Stash" || d.action == "远程"
+	needConfirm := operationRequiresConfirm(d.action)
+	appModal(c.Key("repo-operation"), &a.showOperation, title, 660, d.busy, func() {
+		ui.Text(c, d.repo).FontSize(11).SingleLine().Tooltip(d.repo)
+		if hint := operationHint(title); hint != "" {
+			ui.Text(c, hint).FontSize(12)
+		}
+		if d.state != "" {
+			ui.Text(c, "当前操作："+d.state).TextColor(c.Theme().Warning)
+		}
+		if d.target != "" {
+			ui.Text(c, "提交："+d.target).FontSize(12).SingleLine()
+		}
+		if d.path != "" && d.action != "克隆仓库" && d.action != "初始化仓库" {
+			ui.Text(c, "文件："+d.path).FontSize(12)
+		}
+		switch {
+		case d.hub == "Stash" || d.action == "Stash":
+			a.stashHub(c, d)
+		case d.hub == "远程" || d.action == "远程":
+			a.remoteHub(c, d)
+		case d.action == "审阅并暂存" || d.action == "审阅并取消暂存":
+			labels := []string{}
+			for _, h := range d.hunks {
+				labels = append(labels, h.label)
 			}
-			hub := d.hub == "Stash" || d.hub == "远程" || d.action == "Stash" || d.action == "远程"
-			ui.Text(c, title).Bold()
-			ui.Text(c, d.repo).FontSize(11).SingleLine().Tooltip(d.repo)
-			if hint := operationHint(title); hint != "" {
-				ui.Text(c, hint).FontSize(12)
-			}
-			if d.state != "" {
-				ui.Text(c, "当前操作："+d.state).TextColor(c.Theme().Warning)
-			}
-			if d.target != "" {
-				ui.Text(c, "提交："+d.target).FontSize(12).SingleLine()
-			}
-			if d.path != "" && d.action != "克隆仓库" && d.action != "初始化仓库" {
-				ui.Text(c, "文件："+d.path).FontSize(12)
-			}
-			switch {
-			case d.hub == "Stash" || d.action == "Stash":
-				a.stashHub(c, d)
-			case d.hub == "远程" || d.action == "远程":
-				a.remoteHub(c, d)
-			case d.action == "审阅并暂存" || d.action == "审阅并取消暂存":
-				labels := []string{}
-				for _, h := range d.hunks {
-					labels = append(labels, h.label)
-				}
-				if len(labels) > 0 {
-					ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-						if ui.Select(c.Key("op-hunk"), &d.hunkChoice, labels).Grow(1).Disabled(d.busy).Changed() {
-							for i, h := range d.hunks {
-								if h.label == d.hunkChoice {
-									d.hunk = i
-									break
-								}
-							}
-							d.output = d.hunks[d.hunk].patch
-						}
-						if len(labels) > 1 {
-							if ui.Button(c.Key("op-hunk-prev"), "上一块").Disabled(d.busy || d.hunk <= 0).Clicked() {
-								d.hunk--
-								d.hunkChoice = d.hunks[d.hunk].label
-								d.output = d.hunks[d.hunk].patch
-							}
-							if ui.Button(c.Key("op-hunk-next"), "下一块").Disabled(d.busy || d.hunk >= len(d.hunks)-1).Clicked() {
-								d.hunk++
-								d.hunkChoice = d.hunks[d.hunk].label
-								d.output = d.hunks[d.hunk].patch
-							}
-						}
-					})
-				} else {
-					ui.Text(c, "没有可操作的文本改动块")
-				}
-			case d.action == "保存 Stash":
-				ui.TextInput(c.Key("op-value"), &d.value).Placeholder("保存说明").Disabled(d.busy)
-				ui.Checkbox(c.Key("op-untracked"), &d.includeUntracked, "包含未跟踪文件").Disabled(d.busy)
-			case d.action == "应用 Stash" || d.action == "弹出 Stash" || d.action == "删除 Stash" || d.action == "查看 Stash":
-				labels := []string{}
-				for _, s := range d.stashes {
-					labels = append(labels, s.label)
-				}
-				if len(labels) == 0 {
-					ui.Text(c, "没有 Stash")
-				} else {
-					if ui.Select(c.Key("op-stash"), &d.stashChoice, labels).Disabled(d.busy).Changed() {
-						for i, s := range d.stashes {
-							if s.label == d.stashChoice {
-								d.stash = i
+			if len(labels) > 0 {
+				ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+					if ui.Select(c.Key("op-hunk"), &d.hunkChoice, labels).Grow(1).Disabled(d.busy).Changed() {
+						for i, h := range d.hunks {
+							if h.label == d.hunkChoice {
+								d.hunk = i
 								break
 							}
 						}
+						d.output = d.hunks[d.hunk].patch
 					}
-				}
-			case d.action == "新增远程" || d.action == "修改远程地址" || d.action == "删除远程" || d.action == "推送分支" || d.action == "推送标签":
-				if d.action != "新增远程" {
-					ui.Text(c, "远程")
-					if ui.Select(c.Key("op-remote"), &d.remote, d.remotes).Disabled(d.busy).Changed() && d.action == "修改远程地址" {
-						d.value = d.remoteURLs[d.remote]
-					}
-					if address := d.remoteURLs[d.remote]; address != "" {
-						ui.Text(c, address).FontSize(11).SingleLine().Tooltip(address)
-					}
-				}
-				if d.action == "新增远程" || strings.HasPrefix(d.action, "推送") {
-					ui.TextInput(c.Key("op-name"), &d.name).Placeholder("名称 / 目标分支或标签").Disabled(d.busy)
-				}
-				if d.action == "新增远程" || d.action == "修改远程地址" {
-					ui.TextInput(c.Key("op-value"), &d.value).Placeholder("远程地址").Disabled(d.busy)
-				}
-			case d.action == "设置身份":
-				ui.TextInput(c.Key("op-name"), &d.name).Placeholder("姓名").Disabled(d.busy)
-				ui.TextInput(c.Key("op-value"), &d.value).Placeholder("邮箱").Disabled(d.busy)
-				ui.Checkbox(c.Key("op-global"), &d.global, "写入全局配置").Disabled(d.busy)
-			case d.action == "行历史":
-				ui.TextInput(c.Key("op-value"), &d.value).Placeholder("起始行,结束行，例如 10,20 或 10-20").Disabled(d.busy)
-			case d.action == "克隆仓库" || d.action == "初始化仓库":
-				if d.action == "克隆仓库" {
-					ui.TextInput(c.Key("op-url"), &d.value).Placeholder("仓库 URL").Disabled(d.busy)
-				}
-				ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-					ui.TextInput(c.Key("op-path"), &d.path).Placeholder("本地目录（绝对路径）").Grow(1).Disabled(d.busy)
-					if a.win != nil {
-						if ui.Button(c.Key("op-pick-dir"), "选择目录…").Disabled(d.busy || a.picking).Clicked() {
-							a.pickOperationDirectory()
+					if len(labels) > 1 {
+						if ui.Button(c.Key("op-hunk-prev"), "上一块").Disabled(d.busy || d.hunk <= 0).Clicked() {
+							d.hunk--
+							d.hunkChoice = d.hunks[d.hunk].label
+							d.output = d.hunks[d.hunk].patch
+						}
+						if ui.Button(c.Key("op-hunk-next"), "下一块").Disabled(d.busy || d.hunk >= len(d.hunks)-1).Clicked() {
+							d.hunk++
+							d.hunkChoice = d.hunks[d.hunk].label
+							d.output = d.hunks[d.hunk].patch
 						}
 					}
 				})
+			} else {
+				ui.Text(c, "没有可操作的文本改动块")
 			}
-			if d.output != "" {
-				height := float32(260)
-				if d.action == "设置身份" {
-					height = 120
-				}
-				ui.TextArea(c.Key("op-output"), &d.output).Font("monospace").FontSize(12).ReadOnly(true).Height(height).FillWidth()
+		case d.action == "保存 Stash":
+			ui.TextInput(c.Key("op-value"), &d.value).Placeholder("保存说明").Disabled(d.busy)
+			ui.Checkbox(c.Key("op-untracked"), &d.includeUntracked, "包含未跟踪文件").Disabled(d.busy)
+		case d.action == "应用 Stash" || d.action == "弹出 Stash" || d.action == "删除 Stash" || d.action == "查看 Stash":
+			labels := []string{}
+			for _, s := range d.stashes {
+				labels = append(labels, s.label)
 			}
-			if d.err != "" {
-				ui.Text(c, d.err).TextColor(c.Theme().Danger)
-			}
-			needConfirm := operationRequiresConfirm(d.action)
-			if hub {
-				ui.Checkbox(c.Key("op-confirm"), &d.confirmed, "确认删除、弹出或覆盖类操作").Disabled(d.busy)
-			} else if needConfirm {
-				ui.Checkbox(c.Key("op-confirm"), &d.confirmed, "确认对上述仓库和目标执行操作").Disabled(d.busy)
-			}
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if d.busy && a.opCancel != nil {
-					if ui.Button(c.Key("op-cancel"), "取消执行").Clicked() {
-						a.opCancel()
+			if len(labels) == 0 {
+				ui.Text(c, "没有 Stash")
+			} else {
+				if ui.Select(c.Key("op-stash"), &d.stashChoice, labels).Disabled(d.busy).Changed() {
+					for i, s := range d.stashes {
+						if s.label == d.stashChoice {
+							d.stash = i
+							break
+						}
 					}
 				}
-				if ui.Button(c.Key("op-close"), "关闭").Disabled(d.busy).Clicked() {
-					a.showOperation = false
+			}
+		case d.action == "新增远程" || d.action == "修改远程地址" || d.action == "删除远程" || d.action == "推送分支" || d.action == "推送标签":
+			if d.action != "新增远程" {
+				ui.Text(c, "远程")
+				if ui.Select(c.Key("op-remote"), &d.remote, d.remotes).Disabled(d.busy).Changed() && d.action == "修改远程地址" {
+					d.value = d.remoteURLs[d.remote]
 				}
-				if !hub {
-					label := "执行"
-					if d.busy {
-						label = "正在处理…"
-					}
-					if ui.PrimaryButton(c.Key("op-run"), label).Disabled(d.busy || !d.ready || (needConfirm && !d.confirmed)).Clicked() {
-						a.runOperation()
+				if address := d.remoteURLs[d.remote]; address != "" {
+					ui.Text(c, address).FontSize(11).SingleLine().Tooltip(address)
+				}
+			}
+			if d.action == "新增远程" || strings.HasPrefix(d.action, "推送") {
+				ui.TextInput(c.Key("op-name"), &d.name).Placeholder("名称 / 目标分支或标签").Disabled(d.busy)
+			}
+			if d.action == "新增远程" || d.action == "修改远程地址" {
+				ui.TextInput(c.Key("op-value"), &d.value).Placeholder("远程地址").Disabled(d.busy)
+			}
+		case d.action == "设置身份":
+			ui.TextInput(c.Key("op-name"), &d.name).Placeholder("姓名").Disabled(d.busy)
+			ui.TextInput(c.Key("op-value"), &d.value).Placeholder("邮箱").Disabled(d.busy)
+			ui.Checkbox(c.Key("op-global"), &d.global, "写入全局配置").Disabled(d.busy)
+		case d.action == "行历史":
+			ui.TextInput(c.Key("op-value"), &d.value).Placeholder("起始行,结束行，例如 10,20 或 10-20").Disabled(d.busy)
+		case d.action == "克隆仓库" || d.action == "初始化仓库":
+			if d.action == "克隆仓库" {
+				ui.TextInput(c.Key("op-url"), &d.value).Placeholder("仓库 URL").Disabled(d.busy)
+			}
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.TextInput(c.Key("op-path"), &d.path).Placeholder("本地目录（绝对路径）").Grow(1).Disabled(d.busy)
+				if a.win != nil {
+					if ui.Button(c.Key("op-pick-dir"), "选择目录…").Disabled(d.busy || a.picking).Clicked() {
+						a.pickOperationDirectory()
 					}
 				}
 			})
-		})
+		}
+		if d.output != "" {
+			height := float32(260)
+			if d.action == "设置身份" {
+				height = 120
+			}
+			ui.TextArea(c.Key("op-output"), &d.output).Font("monospace").FontSize(12).ReadOnly(true).Height(height).FillWidth()
+		}
+		if d.err != "" {
+			ui.Text(c, d.err).TextColor(c.Theme().Danger)
+		}
+		if hub {
+			ui.Checkbox(c.Key("op-confirm"), &d.confirmed, "确认删除、弹出或覆盖类操作").Disabled(d.busy)
+		} else if needConfirm {
+			ui.Checkbox(c.Key("op-confirm"), &d.confirmed, "确认对上述仓库和目标执行操作").Disabled(d.busy)
+		}
+	}, func() {
+		if d.busy && a.opCancel != nil {
+			if ui.Button(c.Key("op-cancel"), "取消执行").Clicked() {
+				a.opCancel()
+			}
+		}
+		if ui.Button(c.Key("op-close"), "关闭").Disabled(d.busy).Clicked() {
+			a.showOperation = false
+		}
+		if !hub {
+			label := "执行"
+			if d.busy {
+				label = "正在处理…"
+			}
+			if ui.PrimaryButton(c.Key("op-run"), label).Disabled(d.busy || !d.ready || (needConfirm && !d.confirmed)).Clicked() {
+				a.runOperation()
+			}
+		}
 	})
 }
 func (a *app) runOperation() {

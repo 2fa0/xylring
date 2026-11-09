@@ -758,17 +758,7 @@ func (a *app) globalAlertBanner(c *ui.Context, tab *repoTab) {
 		Background(t.Danger.Alpha(0.1)).Border(1, t.Danger.Alpha(0.28)).Radius(t.Radius).Shrink(0).Transition(fadeEnter()).Children(func() {
 		ui.Icon(c, iconAlertCircle).Size(16, 16).TextColor(t.Danger).Shrink(0)
 		ui.Text(c, a.banner).FontSize(13).TextColor(t.Danger).Grow(1).MinWidth(0)
-		if copyBtn := ui.ButtonBase(c.Key("banner-copy-err")).Label("复制错误信息").Tooltip("复制错误信息到剪贴板").Padding(3, 8).Radius(t.Radius).Cursor(ui.CursorPointer).Transition(colorMotion()); copyBtn.Clicked() {
-			c.Services().WriteClipboard(a.banner)
-			c.Toast("已复制错误信息")
-		} else {
-			if copyBtn.Hovered() {
-				copyBtn.Background(t.Danger.Alpha(0.15))
-			}
-			copyBtn.Children(func() {
-				ui.Text(c, "复制").FontSize(11).TextColor(t.Danger)
-			})
-		}
+		copyIconButton(c, "banner-copy-err", "复制错误信息", a.banner)
 		if closeBtn := closeIconButton(c, "banner-close", "关闭提示"); closeBtn.Clicked() {
 			a.setBanner("", "")
 		}
