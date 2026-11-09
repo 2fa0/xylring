@@ -110,11 +110,19 @@ func (a *app) clearDetails(t *repoTab) {
 		t.detailsCancel = nil
 	}
 	t.details, t.detailsErr = nil, ""
-	t.detailsOpen, t.detailsLoading = false, false
+	t.detailsOpen, t.detailsShown, t.detailsLoading = false, false, false
 }
 
 func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
+	if !t.detailsOpen && !t.detailsShown {
+		return
+	}
 	theme := c.Theme()
+	// MyGo's collapsible drives the card: it clips and shrinks the text while
+	// the details close, instead of taking the whole card away between frames.
+	acc := ui.AccordionBase(c)
+	item := acc.Item(&t.detailsOpen)
+	progress := item.Progress()
 	ui.Column(c.Key(fmt.Sprintf("commit-details-inline-%d", t.id))).FillWidth().Padding(6, 8).Gap(6).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Children(func() {
 		switch {
 		case t.detailsLoading:
@@ -139,7 +147,10 @@ func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
 					t.detailsOpen = false
 				}
 			})
-			editor.View(c.Key(fmt.Sprintf("commit-info-%d", t.id)), &t.details.view).FillWidth().Height(160).MinHeight(80)
+			item.Panel(func() {
+				editor.View(c.Key(fmt.Sprintf("commit-info-%d", t.id)), &t.details.view).FillWidth().Height(160).MinHeight(0)
+			})
 		}
 	})
+	t.detailsShown = t.detailsOpen || progress > 0.01
 }

@@ -487,7 +487,7 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 				t.contentTab = 0
 				t.revealFileTab = true
 			}
-			ui.Text(c, displayPath(tab.file.fullPath())).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(tab.file.fullPath())
+			pathBreadcrumb(c, "file-tab-path", tab.file.fullPath())
 			if fileIdx >= 0 && len(t.compareFiles) > 1 {
 				ui.Text(c, fmt.Sprintf("%d / %d", fileIdx+1, len(t.compareFiles))).FontSize(12).TextColor(c.Theme().TextMuted).Shrink(0)
 				if ui.Button(c.Key("prev-file"), "上一文件").Disabled(fileIdx <= 0).Shrink(0).Clicked() {
@@ -643,7 +643,7 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 				t.revealFileTab = true
 			}
 			ui.Icon(c, iconFileText).Size(16, 16).TextColor(theme.TextMuted)
-			ui.Text(c, displayPath(tab.file.fullPath())).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(tab.file.fullPath())
+			pathBreadcrumb(c, "file-tab-path", tab.file.fullPath())
 			ui.Text(c, "· "+tab.fullRev).FontSize(12).TextColor(theme.TextMuted).Shrink(0)
 			copy := iconButton(c, "copy-tab-path-full", "复制路径", iconCopy).Tooltip(copyPathTip(c))
 			if copy.Clicked() {

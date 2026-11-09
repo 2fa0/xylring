@@ -263,3 +263,21 @@ func kbdHint(c *ui.Context, key, keys string) ui.Element {
 	})
 	return e
 }
+
+// pathBreadcrumb names a file in its directory: the directory muted and the
+// file itself bold, in one line that keeps the full path as its tooltip. A
+// path already folded by displayPath reads the same way.
+func pathBreadcrumb(c *ui.Context, key, path string) ui.Element {
+	t := c.Theme()
+	short := displayPath(path)
+	dir, name := "", short
+	if i := strings.LastIndex(short, "/"); i >= 0 {
+		dir, name = short[:i+1], short[i+1:]
+	}
+	spans := make([]ui.Span, 0, 2)
+	if dir != "" {
+		spans = append(spans, ui.Span{Text: dir, Color: t.TextMuted})
+	}
+	spans = append(spans, ui.Span{Text: name, Color: t.Text, Weight: 700})
+	return ui.RichText(c.Key(key), spans...).Tooltip(path).SingleLine().Grow(1).MinWidth(0)
+}

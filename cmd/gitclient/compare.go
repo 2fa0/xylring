@@ -935,9 +935,8 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 				}
 			}
 		})
-		if t.detailsOpen {
-			a.commitDetailsInline(c, t)
-		} else if t.details != nil && t.details.hash == hashHex(item.hash) {
+		a.commitDetailsInline(c, t)
+		if !t.detailsShown && t.details != nil && t.details.hash == hashHex(item.hash) {
 			if body := t.details.body(); body != "" {
 				ui.Scroll(c.Key(fmt.Sprintf("commit-body-%d", t.id))).MaxHeight(68).Padding(4, 6).Radius(theme.Radius).Background(theme.Surface).Children(func() {
 					ui.Text(c, body).FontSize(12).TextColor(theme.TextMuted)
