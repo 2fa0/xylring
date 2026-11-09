@@ -59,12 +59,8 @@ func gitPull(ctx context.Context, dir string) (string, error) {
 	return string(out), err
 }
 
-func gitPush(ctx context.Context, dir, branch string, setUpstream bool) (string, error) {
-	args := []string{"push"}
-	if setUpstream {
-		args = append(args, "-u", "origin", branch)
-	}
-	out, err := runGit(ctx, dir, args...)
+func gitPush(ctx context.Context, dir string) (string, error) {
+	out, err := runGit(ctx, dir, "push")
 	return string(out), err
 }
 
@@ -72,7 +68,7 @@ func (a *app) quickPull(tab *repoTab) {
 	if tab == nil {
 		return
 	}
-	if a.write.busy || a.fetch.busy || tab.syncBusy {
+	if a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -105,7 +101,7 @@ func (a *app) quickPush(tab *repoTab) {
 	if tab == nil {
 		return
 	}
-	if a.write.busy || a.fetch.busy || tab.syncBusy {
+	if a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -114,15 +110,17 @@ func (a *app) quickPush(tab *repoTab) {
 		a.pendingToast = "请先拉取远程更新"
 		return
 	}
+	if !tab.hasUpstream {
+		a.openOperation("推送分支", "", "")
+		return
+	}
 	tab.syncBusy = true
 	tab.notice = "正在推送到远程 (git push)…"
 	repoPath := tab.path
-	branch := tab.branch
-	setUpstream := !tab.hasUpstream && branch != ""
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		out, err := gitPush(ctx, repoPath, branch, setUpstream)
+		out, err := gitPush(ctx, repoPath)
 		a.post(func() {
 			tab.syncBusy = false
 			tab.notice = ""

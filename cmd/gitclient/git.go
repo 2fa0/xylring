@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gitclient/internal/crashlog"
 )
 
 const (
@@ -127,6 +130,7 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	defer func() { <-gitSlots }()
 	bin, err := gitPath()
 	if err != nil {
+		logGitFailure(dir, args, err)
 		return nil, err
 	}
 	commandCtx, cancel := context.WithCancel(ctx)
@@ -142,9 +146,13 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 	if stdout.overflow {
+		log.Printf("git output limit exceeded repo=%q limit=%d", dir, limit)
 		return nil, fmt.Errorf("Git 输出超过 %d 字节，请缩小读取范围", limit)
 	}
 	if ctx.Err() != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			logGitFailure(dir, args, ctx.Err())
+		}
 		return stdout.Bytes(), fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
 	// git diff --no-index returns 1 for a successful comparison with changes.
@@ -155,6 +163,7 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 		}
 	}
 	if err != nil {
+		logGitFailure(dir, args, err)
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
@@ -303,6 +312,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	defer slot.release()
 	bin, err := gitPath()
 	if err != nil {
+		logGitFailure(dir, args, err)
 		return err
 	}
 	cmd := exec.CommandContext(ctx, bin, gitArgs(args...)...)
@@ -322,6 +332,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	stopRead := context.AfterFunc(ctx, func() { _ = stdout.Close() })
 	defer stopRead()
 	if err := cmd.Start(); err != nil {
+		logGitFailure(dir, args, err)
 		return err
 	}
 	sc := bufio.NewScanner(stdout)
@@ -336,9 +347,17 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	}
 	waitErr := cmd.Wait()
 	if parseErr != nil {
+		if ctx.Err() == nil {
+			logGitFailure(dir, args, parseErr)
+		} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			logGitFailure(dir, args, ctx.Err())
+		}
 		return parseErr
 	}
 	if ctx.Err() != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			logGitFailure(dir, args, ctx.Err())
+		}
 		return fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
 	if waitErr != nil {
@@ -349,9 +368,21 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 		if strings.Contains(msg, "does not have any commits") {
 			return nil
 		}
+		logGitFailure(dir, args, waitErr)
 		return errors.New(trimMsg(msg))
 	}
 	return nil
+}
+
+func logGitFailure(dir string, args []string, err error) {
+	operation := ""
+	if len(args) > 0 {
+		operation = args[0]
+	}
+	// Arguments and stderr may contain credentials, commit messages or file contents.
+	msg := fmt.Sprintf("git failed repo=%q operation=%q error=%q", dir, operation, err)
+	log.Print(msg)
+	crashlog.Breadcrumb(msg)
 }
 
 func historyTips(ctx context.Context, dir string) ([]string, error) {
@@ -437,6 +468,7 @@ type refInfo struct {
 }
 
 type repoMeta struct {
+	operation   string
 	branch      string
 	head        [20]byte
 	refs        map[[20]byte][]refInfo
@@ -471,6 +503,10 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 		return m, err
 	}
 	m.refs = parseRefs(rawRefs)
+	m.operation, err = operationState(ctx, dir)
+	if err != nil {
+		return m, err
+	}
 	return m, nil
 }
 
@@ -558,7 +594,8 @@ type fileChange struct {
 	binary         bool
 	hasStat        bool
 
-	worktreeVersion string
+	indexStatus, workStatus byte
+	worktreeVersion         string
 }
 
 func (f fileChange) label() string {
@@ -805,15 +842,22 @@ func readBlob(ctx context.Context, dir, rev, path string) ([]byte, string, error
 		return nil, "", err
 	}
 	size, _ := strconv.ParseInt(strings.TrimSpace(string(sizeOut)), 10, 64)
-	if size > maxDiffBytes {
+	limit := int64(maxDiffBytes)
+	if isImageFile(path) {
+		limit = 32 << 20
+	}
+	if size > limit {
 		return nil, fmt.Sprintf("文件过大（%d 字节），未载入", size), nil
 	}
-	data, err := runGit(ctx, dir, "cat-file", "blob", spec)
+	data, err := runGitLimit(ctx, dir, int(limit+1), "cat-file", "blob", spec)
 	if err != nil {
 		if missingBlob(err) {
 			return nil, "", nil
 		}
 		return nil, "", err
+	}
+	if isImageFile(path) {
+		return data, "", nil
 	}
 	if bytes.IndexByte(data, 0) >= 0 {
 		return nil, fmt.Sprintf("二进制文件（%d 字节）", len(data)), nil

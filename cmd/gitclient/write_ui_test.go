@@ -99,7 +99,7 @@ func TestCommitRowMenuOpensBranchDialog(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := tt.Menu()
-	for _, item := range []string{"添加标签…", "新建分支…", "修改说明…", "复制哈希", "复制提交信息"} {
+	for _, item := range []string{"添加标签…", "新建分支…", "修改说明…", "复制哈希", "复制提交信息", "比较", "重置当前分支"} {
 		found := false
 		for _, m := range got {
 			if m == item {
@@ -109,6 +109,13 @@ func TestCommitRowMenuOpensBranchDialog(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("menu %q missing %q", got, item)
+		}
+	}
+	for _, item := range []string{"硬重置…", "合并…", "以此提交进行比较…"} {
+		for _, m := range got {
+			if m == item {
+				t.Fatalf("menu %q still has %q at top level", got, item)
+			}
 		}
 	}
 	if err := tt.ChooseMenuItem("新建分支…"); err != nil {

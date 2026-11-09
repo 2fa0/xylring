@@ -13,11 +13,14 @@ import (
 )
 
 func worktreeStatus(ctx context.Context, dir string) ([]fileChange, error) {
-	out, err := runGit(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=normal")
+	out, err := runGit(ctx, dir, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	if err != nil {
 		return nil, err
 	}
-	files := parsePorcelainZ(out)
+	return enrichWorktreeStatus(ctx, dir, parsePorcelainZ(out))
+}
+
+func enrichWorktreeStatus(ctx context.Context, dir string, files []fileChange) ([]fileChange, error) {
 	applyWorktreeNumStat(ctx, dir, files)
 	for i := range files {
 		if err := ctx.Err(); err != nil {
@@ -34,6 +37,13 @@ func worktreeStatus(ctx context.Context, dir string) ([]fileChange, error) {
 			h.Write([]byte(err.Error()))
 		}
 		files[i].worktreeVersion = fmt.Sprintf("%x", h.Sum(nil))
+		if !files[i].hasStat && files[i].extra == "未跟踪" && err == nil {
+			if isImageFile(files[i].path) || strings.HasPrefix(note, "二进制文件") {
+				files[i].binary, files[i].hasStat = true, true
+			} else if note == "" {
+				files[i].added, files[i].hasStat = countTextLines(data), true
+			}
+		}
 	}
 	return files, nil
 }
@@ -42,39 +52,14 @@ func applyWorktreeNumStat(ctx context.Context, dir string, files []fileChange) {
 	if len(files) == 0 {
 		return
 	}
-	statOut, err := runGit(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "HEAD", "--")
+	statOut, err := runGit(ctx, dir, "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "HEAD", "--")
 	if err != nil {
-		statOut, err = runGit(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "--cached", "--")
+		statOut, err = runGit(ctx, dir, "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "--cached", "--")
 	}
 	if err == nil {
 		applyNumStat(files, parseNumStatZ(statOut))
 	}
-	for i := range files {
-		if files[i].hasStat || files[i].extra != "未跟踪" {
-			continue
-		}
-		added, binary, ok := worktreeUntrackedStat(dir, files[i].path)
-		if !ok {
-			continue
-		}
-		files[i].added = added
-		files[i].binary = binary
-		files[i].hasStat = true
-	}
-}
 
-func worktreeUntrackedStat(dir, rel string) (added int, binary, ok bool) {
-	data, note, err := readWorktreeFile(dir, rel)
-	if err != nil {
-		return 0, false, false
-	}
-	if note != "" {
-		if strings.HasPrefix(note, "二进制文件") {
-			return 0, true, true
-		}
-		return 0, false, false
-	}
-	return countTextLines(data), false, true
 }
 
 func countTextLines(data []byte) int {
@@ -91,7 +76,7 @@ func countTextLines(data []byte) int {
 func worktreeKey(files []fileChange) string {
 	parts := make([]string, 0, len(files))
 	for _, f := range files {
-		parts = append(parts, fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%t\x00%t", f.status, f.extra, f.oldPath, f.path, f.worktreeVersion, f.added, f.deleted, f.binary, f.hasStat))
+		parts = append(parts, fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%t\x00%t\x00%d\x00%d", f.status, f.extra, f.oldPath, f.path, f.worktreeVersion, f.added, f.deleted, f.binary, f.hasStat, f.indexStatus, f.workStatus))
 	}
 	return strings.Join(parts, "\x00")
 }
@@ -121,7 +106,7 @@ func parsePorcelainZ(b []byte) []fileChange {
 				path = rec[2:]
 			}
 		}
-		ch := fileChange{path: path}
+		ch := fileChange{path: path, indexStatus: x, workStatus: y}
 		if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
 			if i < len(parts) {
 				// Porcelain -z emits the destination first, then the source.
@@ -198,7 +183,11 @@ func readWorktreeFile(dir, rel string) ([]byte, string, error) {
 	if !info.Mode().IsRegular() {
 		return nil, "不是普通文件", nil
 	}
-	if info.Size() > maxDiffBytes {
+	limit := int64(maxDiffBytes)
+	if isImageFile(rel) {
+		limit = 32 << 20
+	}
+	if info.Size() > limit {
 		return nil, fmt.Sprintf("文件过大（%d 字节），未载入", info.Size()), nil
 	}
 	f, err := os.Open(abs)
@@ -206,8 +195,8 @@ func readWorktreeFile(dir, rel string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxDiffBytes+1))
-	if len(data) > maxDiffBytes {
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if int64(len(data)) > limit {
 		return nil, "文件在读取时变大，未载入", nil
 	}
 	if err != nil {
@@ -216,8 +205,25 @@ func readWorktreeFile(dir, rel string) ([]byte, string, error) {
 		}
 		return nil, "", err
 	}
+	if isImageFile(rel) {
+		return data, "", nil
+	}
 	if bytes.IndexByte(data, 0) >= 0 {
 		return nil, fmt.Sprintf("二进制文件（%d 字节）", len(data)), nil
 	}
 	return data, "", nil
+}
+
+func (f fileChange) hasStaged() bool {
+	if f.indexStatus != 0 {
+		return f.indexStatus != ' ' && f.indexStatus != '?' && f.indexStatus != '!' && f.extra != "冲突"
+	}
+	return f.extra == "已暂存" || f.extra == "重命名" || f.extra == "已暂存并继续改"
+}
+
+func (f fileChange) hasUnstaged() bool {
+	if f.workStatus != 0 {
+		return f.workStatus != ' ' && f.workStatus != '?' && f.workStatus != '!' && f.extra != "冲突"
+	}
+	return f.extra != "已暂存" && f.extra != "重命名"
 }

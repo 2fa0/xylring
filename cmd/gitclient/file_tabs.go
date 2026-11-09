@@ -26,10 +26,19 @@ type fileDiffTab struct {
 	loadGen          int
 	diff             *editor.DiffState
 	simple           *simpleDiff
+	imageDiff        *imageDiff
+	imageViewMode    int
+	imageFitActual   bool
 	note             string
 	fullFile         bool
 	fullRev          string
 	fullContent      editor.State
+	fullImage        *imageInfo
+	backing          string
+	cachePending     bool
+	cacheCancel      context.CancelFunc
+	evicted          bool
+	closed           bool
 }
 
 func (a *app) openFileTabAt(t *repoTab, i int) {
@@ -91,19 +100,21 @@ func (a *app) openWorktreeFileTab(t *repoTab, f fileChange) {
 		source, err := readFileDiffSource(ctx, path, fromRev, "", f, true)
 		var diff *editor.DiffState
 		var simple *simpleDiff
+		var imgDiff *imageDiff
 		var note string
 		if err == nil {
-			diff, simple, note, err = source.prepare(ctx, f.path, ignoreWhitespace && f.status != "A" && f.status != "D")
+			diff, simple, imgDiff, note, err = source.prepare(ctx, f.path, ignoreWhitespace && f.status != "A" && f.status != "D")
 		}
 		if err != nil {
 			note = err.Error()
 		}
 		a.post(func() {
-			if t.closed {
+			if t.closed || newTab.closed {
 				return
 			}
 			newTab.source = source
-			newTab.diff, newTab.simple, newTab.note = diff, simple, note
+			newTab.diff, newTab.simple, newTab.imageDiff, newTab.note = diff, simple, imgDiff, note
+			a.trimInactiveHistory()
 		})
 	}()
 }
@@ -117,7 +128,7 @@ func (a *app) openFileTab(t *repoTab) {
 	for i, tab := range t.fileTabs {
 		if tab.file == f && tab.from == t.diffFrom && tab.to == t.diffTo && tab.worktree == t.worktree {
 			// A refreshed worktree may have different bytes for the same path.
-			if !t.worktree || (tab.diff == t.diff && tab.note == t.diffNote) {
+			if !t.worktree || (tab.diff == t.diff && tab.imageDiff == t.imageDiff && tab.note == t.diffNote) {
 				t.contentTab = i + 1
 				t.revealFileTab = true
 				return
@@ -130,7 +141,8 @@ func (a *app) openFileTab(t *repoTab) {
 	t.fileTabs = append(t.fileTabs, &fileDiffTab{
 		id: t.nextFileTabID, file: f, from: t.diffFrom, to: t.diffTo,
 		worktree: t.worktree, openedAt: time.Now(),
-		ignoreWhitespace: a.diffIgnoreWhitespace, source: t.diffSource, diff: t.diff, simple: t.simpleDiff, note: t.diffNote,
+		ignoreWhitespace: a.diffIgnoreWhitespace, source: t.diffSource, diff: t.diff, simple: t.simpleDiff, imageDiff: t.imageDiff,
+		imageViewMode: t.imageViewMode, imageFitActual: t.imageFitActual, note: t.diffNote,
 	})
 	t.contentTab = len(t.fileTabs)
 	t.revealFileTab = true
@@ -140,6 +152,7 @@ func (a *app) closeFileTab(t *repoTab, index int) {
 	if index < 0 || index >= len(t.fileTabs) {
 		return
 	}
+	t.fileTabs[index].close()
 	t.fileTabs = slices.Delete(t.fileTabs, index, index+1)
 	switch {
 	case t.contentTab == index+1:
@@ -155,6 +168,11 @@ func (a *app) closeOtherFileTabs(t *repoTab, keepIndex int) {
 		return
 	}
 	target := t.fileTabs[keepIndex]
+	for i, tab := range t.fileTabs {
+		if i != keepIndex {
+			tab.close()
+		}
+	}
 	t.fileTabs = []*fileDiffTab{target}
 	t.contentTab = 1
 	t.revealFileTab = true
@@ -164,7 +182,10 @@ func (a *app) closeRightFileTabs(t *repoTab, fromIndex int) {
 	if fromIndex < 0 || fromIndex >= len(t.fileTabs)-1 {
 		return
 	}
-	t.fileTabs = t.fileTabs[:fromIndex+1]
+	for _, tab := range t.fileTabs[fromIndex+1:] {
+		tab.close()
+	}
+	t.fileTabs = slices.Delete(t.fileTabs, fromIndex+1, len(t.fileTabs))
 	if t.contentTab > fromIndex+1 {
 		t.contentTab = fromIndex + 1
 		t.revealFileTab = true
@@ -172,6 +193,9 @@ func (a *app) closeRightFileTabs(t *repoTab, fromIndex int) {
 }
 
 func (a *app) closeAllFileTabs(t *repoTab) {
+	for _, tab := range t.fileTabs {
+		tab.close()
+	}
 	t.fileTabs = nil
 	t.contentTab = 0
 	t.revealFileTab = true
@@ -339,7 +363,7 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 					var action func()
 					tabs.List.Gap(4).Children(func() {
 						for i, label := range labels {
-							item := tabs.Tab(i).Padding(6, 8).Gap(4).AlignItems(ui.Center).MaxWidth(280).Radius(4).TextColor(theme.TextMuted)
+							item := tabs.Tab(i).Padding(6, 8).Gap(4).AlignItems(ui.Center).MaxWidth(280).Radius(4).TextColor(theme.TextMuted).Transition(colorMotion())
 							if i > 0 && i-1 < len(t.fileTabs) {
 								fileIdx := i - 1
 								tab := t.fileTabs[fileIdx]
@@ -440,6 +464,9 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 }
 
 func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
+	if tab.evicted {
+		a.restoreFileTab(t, tab)
+	}
 	if tab.fullFile {
 		a.fullFileTabPane(c, t, tab)
 		return
@@ -474,27 +501,33 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 				copyFilePath(c, t.path, tab.file.path, copy.ClickModifiers())
 			}
 			ui.Box(c).Grow(1)
-			a.diffLayoutToggle(c)
-			tabIgnoreBtn := ui.ButtonBase(c.Key(fmt.Sprintf("tab-diff-ignore-whitespace-%d", tab.id))).Height(24).Label("忽略空白").Disabled(tab.source == nil).Tooltip("忽略空白字符改动").Padding(0, 8).Radius(c.Theme().Radius).Cursor(ui.CursorPointer).Shrink(0).Center()
-			if tab.ignoreWhitespace {
-				tabIgnoreBtn.Background(c.Theme().Accent.Alpha(0.16)).TextColor(c.Theme().Accent).Border(1, c.Theme().Accent.Alpha(0.4))
+			if tab.imageDiff != nil {
+				a.imageDiffControls(c, tab.id, tab.imageDiff, &tab.imageViewMode, &tab.imageFitActual)
 			} else {
-				tabIgnoreBtn.Background(c.Theme().Surface).TextColor(c.Theme().TextMuted).Border(1, c.Theme().Border)
-			}
-			tabIgnoreBtn.Children(func() {
-				ui.Text(c, "忽略空白").FontSize(11).SingleLine()
-			})
-			if tabIgnoreBtn.Clicked() {
-				tab.ignoreWhitespace = !tab.ignoreWhitespace
-				a.reloadFileTab(t, tab)
+				a.diffLayoutToggle(c)
+				tabIgnoreBtn := ui.ButtonBase(c.Key(fmt.Sprintf("tab-diff-ignore-whitespace-%d", tab.id))).Height(24).Label("忽略空白").Disabled(tab.source == nil).Tooltip("忽略空白字符改动").Padding(0, 8).Radius(c.Theme().Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+				if tab.ignoreWhitespace {
+					tabIgnoreBtn.Background(c.Theme().Accent.Alpha(0.16)).TextColor(c.Theme().Accent).Border(1, c.Theme().Accent.Alpha(0.4))
+				} else {
+					tabIgnoreBtn.Background(c.Theme().Surface).TextColor(c.Theme().TextMuted).Border(1, c.Theme().Border)
+				}
+				tabIgnoreBtn.Children(func() {
+					ui.Text(c, "忽略空白").FontSize(11).SingleLine()
+				})
+				if tabIgnoreBtn.Clicked() {
+					tab.ignoreWhitespace = !tab.ignoreWhitespace
+					a.reloadFileTab(t, tab)
+				}
 			}
 		})
 		from, to := tab.labels()
-		ui.Row(c).Padding(0, 12, 8, 12).Gap(12).Shrink(0).Children(func() {
-			ui.Text(c, "原版本 · "+from).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.from))
-			ui.Text(c, "新版本 · "+to).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.to))
-		})
-		a.fileDiffContent(c, tab.diff, tab.simple, tab.note, false)
+		if tab.imageDiff == nil {
+			ui.Row(c).Padding(0, 12, 8, 12).Gap(12).Shrink(0).Children(func() {
+				ui.Text(c, "原版本 · "+from).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.from))
+				ui.Text(c, "新版本 · "+to).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.to))
+			})
+		}
+		a.fileDiffContent(c, tab.diff, tab.simple, tab.imageDiff, tab.note, false, tab.imageViewMode, tab.imageFitActual)
 	})
 }
 
@@ -505,20 +538,20 @@ func (a *app) reloadFileTab(t *repoTab, tab *fileDiffTab) {
 	tab.loadGen++
 	gen, source, f, ignoreWhitespace := tab.loadGen, tab.source, tab.file, tab.ignoreWhitespace
 	tab.note = "正在读取改动…"
-	tab.diff, tab.simple = nil, nil
+	tab.diff, tab.simple, tab.imageDiff = nil, nil, nil
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		diff, simple, note, err := source.prepare(ctx, f.path, ignoreWhitespace && f.status != "A" && f.status != "D")
+		diff, simple, imgDiff, note, err := source.prepare(ctx, f.path, ignoreWhitespace && f.status != "A" && f.status != "D")
 		if err != nil {
 			note = err.Error()
 		}
 		a.post(func() {
-			if t.closed || tab.loadGen != gen {
+			if t.closed || tab.closed || tab.loadGen != gen {
 				return
 			}
 			tab.note = note
-			tab.diff, tab.simple = diff, simple
+			tab.diff, tab.simple, tab.imageDiff = diff, simple, imgDiff
 		})
 	}()
 }
@@ -563,19 +596,30 @@ func (a *app) openFullFileTab(t *repoTab, filePath, rev, revLabel string) {
 		if err != nil {
 			note = err.Error()
 		}
-		buf := editor.NewBuffer(string(content))
-		buf.SetLanguage(editor.LanguageFor(filePath))
-		state := editor.State{
-			Buffer:   buf,
-			ReadOnly: true,
-			Label:    filePath + " (" + revLabel + ")",
+		var imgInfo *imageInfo
+		var state editor.State
+		if isImageFile(filePath) && len(content) > 0 && err == nil {
+			imgInfo, err = decodeImageInfo(content, filePath)
+			if err != nil {
+				note = fmt.Sprintf("图片解码失败：%v", err)
+			}
+		} else {
+			buf := editor.NewBuffer(string(content))
+			buf.SetLanguage(editor.LanguageFor(filePath))
+			state = editor.State{
+				Buffer:   buf,
+				ReadOnly: true,
+				Label:    filePath + " (" + revLabel + ")",
+			}
 		}
 		a.post(func() {
-			if t.closed {
+			if t.closed || newTab.closed {
 				return
 			}
 			newTab.fullContent = state
+			newTab.fullImage = imgInfo
 			newTab.note = note
+			a.trimInactiveHistory()
 		})
 	}()
 }
@@ -595,7 +639,32 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 			if copy.Clicked() {
 				copyFilePath(c, t.path, tab.file.path, copy.ClickModifiers())
 			}
+			if tab.fullImage != nil {
+				ui.Box(c).Grow(1)
+				fitLabel := "自适应"
+				fitTip := "当前自适应窗口，点击切换至 1:1 实际尺寸"
+				if tab.imageFitActual {
+					fitLabel = "1:1 尺寸"
+					fitTip = "当前 1:1 实际尺寸，点击切换至自适应缩放"
+				}
+				fitBtn := ui.ButtonBase(c.Key(fmt.Sprintf("full-img-fit-%d", tab.id))).Height(24).Label(fitLabel).Tooltip(fitTip).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+				if tab.imageFitActual {
+					fitBtn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
+				} else {
+					fitBtn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
+				}
+				fitBtn.Children(func() {
+					ui.Text(c, fitLabel).FontSize(11).SingleLine()
+				})
+				if fitBtn.Clicked() {
+					tab.imageFitActual = !tab.imageFitActual
+				}
+			}
 		})
+		if tab.fullImage != nil {
+			a.imageSingleView(c, tab.fullImage, tab.file.path, tab.imageFitActual)
+			return
+		}
 		if tab.note != "" && tab.fullContent.Buffer == nil {
 			ui.Column(c).Grow(1).Center().Children(func() {
 				ui.Text(c, tab.note).TextColor(theme.TextMuted)

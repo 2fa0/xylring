@@ -17,9 +17,6 @@ var iconFolderPlusSVG []byte
 //go:embed icons/house.svg
 var iconHomeSVG []byte
 
-//go:embed icons/refresh-cw.svg
-var iconRefreshSVG []byte
-
 //go:embed icons/download.svg
 var iconDownloadSVG []byte
 
@@ -58,6 +55,9 @@ var iconHistorySVG []byte
 
 //go:embed icons/panel-left.svg
 var iconPanelLeftSVG []byte
+
+//go:embed icons/panel-bottom.svg
+var iconPanelBottomSVG []byte
 
 //go:embed icons/maximize-2.svg
 var iconMaximizeSVG []byte
@@ -105,7 +105,6 @@ var (
 	iconFolder      = ui.MustParseSVG(iconFolderSVG)
 	iconFolderPlus  = ui.MustParseSVG(iconFolderPlusSVG)
 	iconHome        = ui.MustParseSVG(iconHomeSVG)
-	iconRefresh     = ui.MustParseSVG(iconRefreshSVG)
 	iconDownload    = ui.MustParseSVG(iconDownloadSVG)
 	iconUpload      = ui.MustParseSVG(iconUploadSVG)
 	iconArrowDown   = ui.MustParseSVG(iconArrowDownSVG)
@@ -121,6 +120,7 @@ var (
 	iconOpenTab     = ui.MustParseSVG(iconOpenTabSVG)
 	iconHistory     = ui.MustParseSVG(iconHistorySVG)
 	iconPanelLeft   = ui.MustParseSVG(iconPanelLeftSVG)
+	iconPanelBottom = ui.MustParseSVG(iconPanelBottomSVG)
 	iconMaximize    = ui.MustParseSVG(iconMaximizeSVG)
 	iconMinimize    = ui.MustParseSVG(iconMinimizeSVG)
 	iconAlertCircle = ui.MustParseSVG(iconAlertCircleSVG)
@@ -143,7 +143,7 @@ func iconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 
 func chromeIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 	t := c.Theme()
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Size(26, 26).Radius(6).Center().Shrink(0).FocusRing(false).Cursor(ui.CursorPointer)
+	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Size(26, 26).Radius(6).Center().Shrink(0).FocusRing(false).Cursor(ui.CursorPointer).Transition(colorMotion())
 	switch {
 	case b.Pressed():
 		b.Background(t.SurfacePressed)
@@ -158,7 +158,7 @@ func chromeIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element 
 
 func paneIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 	t := c.Theme()
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer)
+	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer).Transition(colorMotion())
 	switch {
 	case b.Pressed():
 		b.Background(t.SurfacePressed)
@@ -171,9 +171,30 @@ func paneIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 	return b
 }
 
+func paneToggleIconButton(c *ui.Context, key, name, tip string, icon *ui.SVG, active bool) ui.Element {
+	t := c.Theme()
+	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(tip).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer).Transition(colorMotion())
+	switch {
+	case b.Pressed():
+		b.Background(t.SurfacePressed)
+	case b.Hovered():
+		b.Background(t.SurfaceHover)
+	case active:
+		b.Background(t.Accent.Alpha(0.12))
+	}
+	textColor := t.TextMuted
+	if active {
+		textColor = t.Accent
+	}
+	b.Children(func() {
+		ui.Icon(c, icon).Size(14, 14).TextColor(textColor)
+	})
+	return b
+}
+
 func closeIconButton(c *ui.Context, key, name string) ui.Element {
 	t := c.Theme()
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer)
+	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(t.Radius).Shrink(0).Cursor(ui.CursorPointer).Transition(colorMotion())
 	switch {
 	case b.Pressed():
 		b.Background(t.SurfacePressed)

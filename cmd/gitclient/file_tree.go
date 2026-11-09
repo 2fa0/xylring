@@ -147,6 +147,7 @@ func (t fileTree) rowOf(key string, open *ui.Selection[string]) int {
 	return walk(t.roots)
 }
 
+// File lists are replaced as a unit; compute their structural key only on replacement.
 func fileSetKey(files []fileChange) string {
 	var b strings.Builder
 	for _, f := range files {
@@ -155,7 +156,7 @@ func fileSetKey(files []fileChange) string {
 		b.WriteString(f.path)
 		b.WriteByte(0)
 		b.WriteString(f.oldPath)
-		b.WriteByte('\n')
+		b.WriteByte(0)
 	}
 	return b.String()
 }
@@ -178,37 +179,28 @@ func (t *repoTab) filteredFileIndices() []int {
 	return res
 }
 
-func (t *repoTab) filteredWorktreeIndices() []int {
-	filter := strings.ToLower(strings.TrimSpace(t.worktreeFilter))
-	if filter == "" {
-		res := make([]int, len(t.worktreeFiles))
-		for i := range t.worktreeFiles {
-			res[i] = i
-		}
-		return res
-	}
-	var res []int
-	for i, f := range t.worktreeFiles {
-		if strings.Contains(strings.ToLower(f.path), filter) || (f.oldPath != "" && strings.Contains(strings.ToLower(f.oldPath), filter)) {
-			res = append(res, i)
-		}
-	}
-	return res
-}
-
 func (t *repoTab) resetFileTree() {
 	t.fileOutline = ui.OutlineState[string]{}
 	t.fileOutlineSel = -1
 	t.fileTreeScroll, t.fileTreeScrollY = ui.ScrollState{}, 0
 	t.fileHoverID, t.fileHoverY = "", 0
-	t.fileTreeKey = ""
+	t.fileTreeKey, t.fileTreeFilter = "", ""
+	t.fileTreeInput, t.fileTreeCount = nil, 0
 	t.fileTreeData = fileTree{}
 }
 
 func (t *repoTab) prepareFileTree() fileTree {
 	filter := strings.ToLower(strings.TrimSpace(t.fileFilter))
-	key := fileSetKey(t.compareFiles) + "\x00" + filter
-	if t.fileTreeKey != key {
+	var input *fileChange
+	if len(t.compareFiles) > 0 {
+		input = &t.compareFiles[0]
+	}
+	if t.fileTreeInput != input || t.fileTreeCount != len(t.compareFiles) || t.fileTreeFilter != filter {
+		key := fileSetKey(t.compareFiles) + "\x00" + filter
+		t.fileTreeInput, t.fileTreeCount, t.fileTreeFilter = input, len(t.compareFiles), filter
+		if t.fileTreeKey == key {
+			return t.fileTreeData
+		}
 		t.fileTreeKey = key
 		indices := t.filteredFileIndices()
 		t.fileTreeData = buildFilteredFileTree(t.compareFiles, indices)
@@ -254,79 +246,5 @@ func (t *repoTab) syncFileOutlineSel(tree fileTree) {
 	if row >= 0 {
 		t.fileOutlineSel = row
 		t.fileOutline.List.ScrollIntoView(row)
-	}
-}
-
-func (t *repoTab) resetWorktreeTree() {
-	t.worktreeOutline = ui.OutlineState[string]{}
-	t.worktreeOutlineSel = -1
-	t.worktreeTreeScroll, t.worktreeTreeScrollY = ui.ScrollState{}, 0
-	t.worktreeHoverID, t.worktreeHoverY = "", 0
-	t.worktreeTreeKey = ""
-	t.worktreeTreeData = fileTree{}
-}
-
-func (t *repoTab) prepareWorktreeTree() fileTree {
-	filter := strings.ToLower(strings.TrimSpace(t.worktreeFilter))
-	key := fileSetKey(t.worktreeFiles) + "\x00" + filter
-	if t.worktreeTreeKey != key {
-		t.worktreeTreeKey = key
-		indices := t.filteredWorktreeIndices()
-		t.worktreeTreeData = buildFilteredFileTree(t.worktreeFiles, indices)
-		t.worktreeOutline.Open.Clear()
-		for k, n := range t.worktreeTreeData.nodes {
-			if n.dir {
-				t.worktreeOutline.Open.Add(k)
-			}
-		}
-		t.worktreeOutlineSel = -1
-	}
-	return t.worktreeTreeData
-}
-
-func (t *repoTab) expandAllWorktreeTree() {
-	tree := t.prepareWorktreeTree()
-	for k, n := range tree.nodes {
-		if n.dir {
-			t.worktreeOutline.Open.Add(k)
-		}
-	}
-}
-
-func (t *repoTab) collapseAllWorktreeTree() {
-	t.worktreeOutline.Open.Clear()
-}
-
-func (t *repoTab) syncWorktreeOutlineSel(tree fileTree) {
-	if t.worktreeSel < 0 || t.worktreeSel >= len(t.worktreeFiles) {
-		return
-	}
-	want := slashPath(t.worktreeFiles[t.worktreeSel].path)
-	if t.worktreeOutlineSel >= 0 && t.worktreeOutlineSel < t.worktreeOutline.Rows() {
-		cur := t.worktreeOutline.Item(t.worktreeOutlineSel)
-		if cur == want {
-			return
-		}
-		if n, ok := tree.nodes[cur]; ok && n.dir {
-			return
-		}
-	}
-	row := tree.rowOf(want, &t.worktreeOutline.Open)
-	if row < 0 {
-		parts := strings.Split(want, "/")
-		prefix := ""
-		for _, p := range parts[:len(parts)-1] {
-			if prefix == "" {
-				prefix = p
-			} else {
-				prefix += "/" + p
-			}
-			t.worktreeOutline.Open.Add(prefix + "/")
-		}
-		row = tree.rowOf(want, &t.worktreeOutline.Open)
-	}
-	if row >= 0 {
-		t.worktreeOutlineSel = row
-		t.worktreeOutline.List.ScrollIntoView(row)
 	}
 }

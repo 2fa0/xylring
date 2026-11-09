@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"gitclient/internal/crashlog"
 )
 
 func (a *app) post(fn func()) {
@@ -141,6 +143,7 @@ func (a *app) openRepo(path string) {
 }
 
 func (a *app) openPath(path string) {
+	crashlog.Breadcrumb("打开路径 " + path)
 	a.showHome = false
 	a.scanRepos(path, true)
 }
@@ -227,6 +230,7 @@ func workspaceDir(path string) string {
 }
 
 func (a *app) openRoot(root string) {
+	crashlog.Breadcrumb("打开仓库 " + root)
 	if a.closed {
 		return
 	}
@@ -274,6 +278,7 @@ func (a *app) closeTab(i int) {
 	}
 	a.tabs[i].closed = true
 	a.tabs[i].cancel()
+	a.closeAllFileTabs(a.tabs[i])
 	a.tabs = slices.Delete(a.tabs, i, i+1)
 	if a.active > i || a.active >= len(a.tabs) {
 		a.active--
@@ -314,6 +319,7 @@ func (a *app) reload(t *repoTab) {
 	t.generation++
 	t.locateGen++
 	gen := t.generation
+	t.worktreeCache = nil
 	t.loading = true
 	t.historyStarted = time.Now()
 	t.err, t.locateErr, t.notice = "", "", ""
@@ -385,6 +391,14 @@ func (a *app) reload(t *repoTab) {
 			t.hasMore = more
 			a.installHistory(t, meta, prepared)
 			a.applyWorktree(t, dirty)
+			if t.pendingSession != nil && a.activeTab() == t {
+				r := t.pendingSession
+				t.pendingSession = nil
+				t.restoreFile = r.File
+				if h, e := parseHash(r.Commit); e == nil {
+					a.jumpToHash(t, h)
+				}
+			}
 		})
 	}()
 }
@@ -416,9 +430,9 @@ func (a *app) loadMore(t *repoTab) {
 		t.pager = newHistoryPager(streamCtx, t.path, query, t.historyTips, len(t.commits))
 	}
 	p := t.pager
-	base, authors, g, baseBytes := t.commits, t.authors, t.graph.clone(), t.historyBytes
-	meta := repoMeta{branch: t.branch, head: t.head, refs: t.refs, ahead: t.ahead, behind: t.behind, upstream: t.upstream, hasUpstream: t.hasUpstream}
-	n := min(4096, max(pageMore, len(base)/2))
+	baseLen, authors, g := len(t.commits), t.authors, t.graph.clone()
+	meta := repoMeta{operation: t.operation, branch: t.branch, head: t.head, refs: t.refs, ahead: t.ahead, behind: t.behind, upstream: t.upstream, hasUpstream: t.hasUpstream}
+	n := min(4096, max(pageMore, baseLen/2))
 	remaining := t.historyBudget - t.historyBytes
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.historyCancel = cancel
@@ -428,18 +442,6 @@ func (a *app) loadMore(t *repoTab) {
 		var prepared preparedHistory
 		if err == nil {
 			prepared, err = prepareHistory(ctx, commits, g, authors, query.term == "" && query.filePath == "")
-			if err == nil {
-				all := make([]commit, 0, len(base)+len(commits))
-				all = append(all, base...)
-				prepared.commits = append(all, prepared.commits...)
-				for h, i := range prepared.index {
-					prepared.index[h] = i + len(base)
-				}
-				for i, c := range base {
-					prepared.index[c.hash] = i
-				}
-				prepared.bytes += baseBytes
-			}
 		}
 		a.post(func() {
 			if t.generation != gen || t.closed {
@@ -458,6 +460,19 @@ func (a *app) loadMore(t *repoTab) {
 				t.pager = nil
 			}
 			t.hasMore = more
+			// Only the accepted page mutates UI-owned history and its index.
+			if t.commitIndex == nil {
+				t.commitIndex = make(map[[20]byte]int, baseLen+len(prepared.commits))
+				for i, c := range t.commits {
+					t.commitIndex[c.hash] = i
+				}
+			}
+			for h, i := range prepared.index {
+				t.commitIndex[h] = baseLen + i
+			}
+			prepared.commits = append(t.commits, prepared.commits...)
+			prepared.index = t.commitIndex
+			prepared.bytes += t.historyBytes
 			a.installHistory(t, meta, prepared)
 		})
 	}()
@@ -485,6 +500,7 @@ func (a *app) installHistory(t *repoTab, meta repoMeta, p preparedHistory) {
 		selected = item.hash
 	}
 	t.branch, t.head, t.refs = meta.branch, meta.head, meta.refs
+	t.operation = meta.operation
 	t.ahead, t.behind, t.upstream, t.hasUpstream = meta.ahead, meta.behind, meta.upstream, meta.hasUpstream
 	a.summaryMu.Lock()
 	if a.repoSummaries != nil {

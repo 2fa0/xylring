@@ -11,7 +11,10 @@ func TestFetchDialogOpensFromToolbar(t *testing.T) {
 	a := &app{tabs: []*repoTab{tab}, dispatch: func(func()) {}}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if err := tt.Click("获取选项"); err != nil {
+	if err := tt.RightClick("获取"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("获取选项…"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

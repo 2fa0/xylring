@@ -359,9 +359,8 @@ func TestInspectAndLocateCommit(t *testing.T) {
 	tab.selected = -1
 	tab.selection.Clear()
 	a.closeInspection(tab)
-	tab.searchKind = "定位"
 	tt.Frame()
-	if err := tt.Click("跳到"); err != nil {
+	if err := tt.Click("搜索"); err != nil {
 		t.Fatal(err)
 	}
 	waitText(t, tt, updates, "M  a.txt")
