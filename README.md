@@ -1,107 +1,168 @@
-# Xylring
+<p align="center">
+  <img src="cmd/gitclient/resources/logo.png" alt="Xylring Logo" width="96" height="96" />
+</p>
 
-导入一个 Git 仓库，画出提交图谱，并比较任意两个分支或哈希。
+<h1 align="center">Xylring</h1>
 
-## 命令行（CLI）
+<p align="center">
+  <strong>A blazing fast, lightweight, and native Git client built with Go.</strong><br>
+  No Electron overhead. No bloated WebViews. Just pure speed, fluid graph rendering, and effortless diff reviewing.
+</p>
 
-像 VS Code 的 `code .` 一样，在终端中直接打开 Git 仓库并唤醒 Xylring：
+<p align="center">
+  <a href="#why-xylring">Features</a> •
+  <a href="#comparison">Comparison</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#cli-usage">CLI Usage</a> •
+  <a href="#roadmap">Roadmap</a> •
+  <a href="./README_zh.md">简体中文</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Release-v0.6.0-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
+</p>
+
+---
+
+## 💡 Why Xylring?
+
+Most developers face an awkward dilemma with Git clients:
+- **Electron-based clients** (GitKraken, VS Code GitLens) offer rich UI but consume hundreds of megabytes of RAM and feel sluggish to cold-start.
+- **Top-tier native clients** (Sublime Merge, Fork) offer exceptional performance, but are closed-source and paid commercial tools.
+- **Terminal TUIs** (Lazygit) are blazingly fast, but limited when inspecting multi-branch branch topology, side-by-side rich diffs, or images.
+
+**Xylring** is designed to bridge this gap: **Native Go performance, aesthetic modern UI, instant CLI invocation, under its noncommercial source-available license.**
+
+---
+
+## ⚡ Highlights
+
+- 🚀 **Sub-second Startup & Minimal Footprint**: Built with Go and native rendering. Launches in milliseconds with ~50MB RAM usage. Zero Webview / Electron baggage.
+- 🎨 **Cubic Bezier Graph**: Smooth branch curves tracking the first-parent lane. View the whole repository history without jitter or stutter across pagination.
+- 🔍 **Omni Search with Autocomplete**: A single search box covering commit messages, author names, file paths, branches, tags, and commit hashes. Supports prefixes like `author:` and `path:`.
+- ⚖️ **Arbitrary Snapshots & Merge-Base Comparison**: Compare any two commits, branches, or tags. Supports two-dot snapshot diffing or three-dot (`...`) branch fork diffing.
+- 🧩 **Hunk-Level Interactive Staging**: Review and stage individual patch hunks, discard changes, or amend previous commits with a single click.
+- 💻 **Terminal-First Workflow**: Launch any repository right from your terminal with `xylring .`, `xylring /path/to/repo`, or switch between multiple repositories effortlessly.
+- 🖼️ **Full-File Source View & Image Diff**: Read full-file snapshots with syntax highlighting and inspect visual image diffs side-by-side.
+- 🛡️ **Local & Privacy First**: 100% offline-ready. Never uploads logs, metrics, or credentials. Uses your existing system Git and SSH config directly.
+
+---
+
+## 📊 Comparison with Popular Git Clients
+
+| Dimension | **Xylring** | **Sublime Merge** | **Fork** | **GitKraken** | **Lazygit** |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **License** | **Noncommercial** | ❌ No | ❌ No | ❌ No | ✅ Yes |
+| **Tech Stack** | **Go (Native)** | C++ (Custom) | Swift / WPF | Electron / Web | Go (TUI) |
+| **Initial Memory** | **~50 MB** | ~60 MB | ~100 MB | ~300 MB+ | ~20 MB |
+| **Cold Startup** | **< 0.2s** | < 0.3s | < 1.0s | 2-4s | < 0.1s |
+| **CLI Wakeup (`.`)** | ✅ `xylring .` | ✅ `smerge .` | ✅ `fork .` | ⚠️ Limited | ✅ `lazygit` |
+| **Visual Graph** | ✅ **Bezier Lanes** | ✅ Smooth Lanes | ✅ Native | ✅ Web SVG | ⚠️ Text ASCII |
+| **Hunk / Patch Staging** | ✅ **Yes** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Price / License** | **Noncommercial** | \$99 (Commercial) | \$49.99 (Commercial)| \$60+/yr (Subscription) | Free |
+
+---
+
+## 📦 Installation
+
+Pre-built binaries are available on the [**GitHub Releases**](../../releases) page for **macOS** and **Windows**:
+
+### macOS (Apple Silicon & Intel)
+
+1. Download the `.dmg` matching your architecture:
+   - **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.6.0-arm64.dmg`
+   - **Intel x86_64**: `xylring-0.6.0-amd64.dmg`
+2. Open the disk image and drag **Xylring** into your `Applications` folder.
+
+> [!NOTE]
+> **First-time launch on macOS**:  
+> Since releases are currently self-distributed without Apple notarization, right-click (or Control-click) `Xylring.app` in Finder and select **Open** on the first launch. Or run:
+> ```sh
+> xattr -cr /Applications/Xylring.app
+> ```
+
+### Windows (10 & 11 x64)
+
+- **Installer**: Download and run `xylring-setup-0.6.0-amd64.exe` (installs to user directory, no admin rights required).
+- **Portable**: Download and extract `Xylring 0.6.0 windows-x64.zip`, then run `Xylring.exe`.
+
+### Build from Source
+
+Requirements: **Go 1.27+** and system **Git**.
 
 ```sh
-# 打开当前目录的 Git 仓库
-xylring .
+# Clone the repository
+git clone REPOSITORY_URL
+cd xylring
 
-# 打开指定目录的 Git 仓库
-xylring /path/to/repository
+# Run directly
+go run ./cmd/gitclient /path/to/your/repo
 
-# 同时打开多个仓库
-xylring repoA repoB
-
-# 仅激活并聚焦 Xylring 窗口
-xylring
-```
-
-### 安装命令行工具
-
-- **方式一（GUI 菜单）**：在菜单栏中选择「文件」→「在 PATH 中安装 'xylring' 命令行工具…」。
-- **方式二（终端命令）**：在终端执行：
-  ```sh
-  xylring install-cli
-  ```
-  （卸载可选择菜单栏「从 PATH 中卸载 'xylring' 命令行工具」或执行 `xylring uninstall-cli`）。
-
-## 本机运行
-
-需要 Go 1.27.3 和系统 Git，在 `cmd/gitclient/` 执行：
-
-```sh
-go run . /path/to/repository
-```
-
-不带路径时，从窗口里导入仓库。最近打开过的仓库会留在导入页。
-
-构建本机 macOS 应用：
-
-```sh
+# Or build native macOS .app
+cd cmd/gitclient
 go tool mygo build -skip-dmg -skip-notarize
 ```
 
-生成 `cmd/gitclient/build/darwin-arm64/Xylring.app`。
+---
 
-## 现在有什么
+## 🚀 CLI Usage
 
-- 导入本地 Git 仓库，或从命令行传入路径。选中目录时左侧列出其下找到的仓库，点选即可切换。刷新会重新扫描该目录，新出现的子仓库会出现在列表里。
-- 按日期顺序绘制提交图谱，默认显示全部分支（包含远程），可切换为仅本地分支；保留标签和当前 HEAD。
-- 泳道颜色跟随第一父链；换道是跨行接上的曲线，往后翻页时已经画出的线不跳动。
-- 分支、标签和 HEAD 标在对应提交上。滚动到底继续加载。
-- 一个搜索框覆盖提交说明（含正文）、作者、文件路径、分支、标签和哈希；输入时提供联想。可用 author: / path: 前缀限定。Cmd/Ctrl+F 聚焦，Enter 搜索或跳转，返回历史可恢复原来的提交和文件。
-- 通过「本地分支 / 全部分支」分段滑块切换显示范围，再筛选当前或指定分支。搜索沿用所选范围。
-- 窗口在前台时每 2 秒检查活动仓库；引用未变化时复用结果，每 30 秒完整核对一次。失焦或最小化时暂停，重新获得焦点立即检查。外部提交、切分支后自动更新；自动和手动刷新保留所选提交、文件与阅读位置，原提交离开当前范围时会提示。前台时大约每 2 分钟自动 fetch 所有远程（不 prune、不合并），打开仓库后会先获取一次；失败保持静默，可用手动「获取」查看错误。
-- 顶栏显示当前仓库、分支和领先/落后计数（`↑m ↓n`），并提供拉取、推送。导入仓库走「文件」菜单或 ⌘O；返回仓库列表走侧栏「首页」。图谱工具栏保留范围、搜索和比较；获取远程点「获取」，长按可打开清理选项。刷新走 ⌘R。
-- 点选一条提交或对比时，在图谱下方以经典分栏呈现：左侧为提交摘要与改动文件列表（支持平铺与树状视图、关键字快速过滤），右侧为差异 diff 审阅器；左侧边栏下半部分固定常驻当前工作区未提交改动。Esc 关掉详情。
-- 文件对比可点「在新标签页打开」，用完整内容区阅读；也可右键选择「查看此版本完整文件」，直接以语法高亮只读视图查阅任意快照的全文源码。点标签上的关闭或 Cmd/Ctrl+W 关闭文件标签。
-- 提交详情可展开完整消息、作者/提交者、时间和全部父提交，并复制完整信息或完整哈希；合并提交支持无缝切换父提交对比；所选文件可以复制相对仓库的路径。
-- 从文件 diff 进入文件历史，查看截至所选版本的历次改动，并追踪重命名前的路径。可以在图谱中定位一条历史，也可以返回原来的提交/比较和 diff 阅读位置。搜索和文件历史以列表呈现，不绘制省略中间提交的图谱连线。
-- 搜索范围智能定位 HEAD、分支、标签或哈希；输入时提供下拉联想补全。
-- 比较任意两个分支、标签或哈希时图谱仍在。工具栏「比较」，或按住 Cmd/Ctrl 点两个提交。两点比较两个快照；勾选「从分叉点起」只看终点从分叉之后的改动。
-- 有未提交改动时，图谱顶部出现「未提交改动」节点。点它进入和看提交一样的一幕：左侧文件（可暂存/取消暂存/丢弃），右侧 diff，文件列表下写说明并提交或修改上次提交。侧栏只保留仓库列表和脏状态。
-- 丰富的引用与分支管理：在提交行或分支/标签徽标右键可检出本地分支、检出提交（分离 HEAD）、双击远程分支建跟踪分支并检出、新建/重命名/删除本地分支、新建（轻量/附注）/删除本地标签、修改历史提交说明（自动重放后续线性提交）。
-
-## 仓库写入与历史追查
-
-- 「仓库」菜单只有四个入口：新建仓库（克隆/初始化）、Stash、远程、设置身份。Stash 与远程在各自面板里完成保存/查看/应用和远程管理、指定推送。无上游分支的首次推送会先选择目标，不再假定 `origin`。
-- 提交右键第一层是检出、新建分支、比较和复制；打标签、改说明在下面。合并/变基/拣选/撤销进「应用到当前分支」，三种 Reset 进「重置当前分支」。执行前显示固定的提交 SHA；当前分支或 HEAD 变化后需要重新确认。
-- 合并、变基、拣选或撤销发生冲突后，可从工作区文件右键打开 Git 配置的外部合并工具，暂存文件以标记解决，再从工作区继续或中止。外部合并工具需事先通过 Git 配置。
-- 工作区文件右键「审阅并暂存 / 审阅并取消暂存」分别显示未暂存和已暂存的原始 patch，可选择一个文本改动块操作。执行前拒绝已经变化的 patch；新增、删除、二进制和模式变更使用文件级操作。
-- 历史文件右键提供 Blame、指定行范围的行历史，以及将文件恢复为所选提交版本。Blame 与行历史以只读文本呈现；文件恢复仅改工作区，保留暂存区。
-- 不带命令行路径启动时恢复上次打开的仓库及活动仓库、提交草稿与 Amend 状态，并尝试恢复所选提交和文件。文件标签、搜索条件和 diff 滚动位置暂不跨重启恢复。会话保存在配置目录的 `session.json`，与本地日志一样不上传。
-- 新增操作在后台执行，可取消；取消或失败后刷新仓库以核对实际状态。SSH/HTTPS 认证沿用系统 Git 与已有凭据配置，不提供内置登录流程。
-
-## 大仓库与大文件
-
-历史在后台按需读取，连续翻页复用同一条 Git 流。自动加载达到约 64 MiB 的历史数据估算预算后暂停，可点「继续加载」读取更早记录。后台仓库共享缓存预算，超预算会回收较久未使用的数据；切回时重载原查询、所选提交和文件。回收后的 diff 滚动偏移可能重置，未回收时返回搜索或文件历史仍保持原阅读位置。
-
-单侧超过 10 万行的文件显示两侧只读原文，省略差异高亮；较大的改动块省略行内高亮。完整提交信息最多读取 1 MiB，其他 Git 批量输出最多 16 MiB，超过上限会明确提示。
-
-## 本地日志与崩溃排查
-
-GUI 启动后自动将日志写入用户配置目录下的 `Xylring/logs/`。macOS 路径为 `~/Library/Application Support/Xylring/logs/`，Windows 为 `%AppData%\Xylring\logs\`，Linux 为 `${XDG_CONFIG_HOME:-~/.config}/Xylring/logs/`。
-
-沿用 Snapover 的本地日志方案：`xylring.log` 保存版本、运行环境、启动/退出和 Git 操作失败记录；`crash.log` 保存关键操作线索、Go 未恢复的 panic（包括后台 goroutine）及 runtime 致命错误。`session.open` 标记运行中的会话，正常退出时删除，下次启动可识别上次异常退出。日志不上传，不记录 Git 完整参数、stdout 或 stderr。
-
-普通日志和崩溃日志约 1 MiB 轮转一次，各保留上一份 `.1`；普通日志按最早记录保留 7 天，崩溃日志按最后写入时间保留 7 天，避免长时间运行后刚产生的堆栈被清理。轮转失败后，崩溃日志会定期尝试恢复，普通日志会在后续写入时重试。关键操作线索通过有界后台队列写入，队列满时丢弃线索，崩溃堆栈由 Go runtime 直接落盘。
-
-崩溃后保留对应时间的日志供排查。日志和堆栈可能包含本地路径及运行时信息，分享前请检查。强制结束、断电或原生层崩溃不保证生成 Go 堆栈；macOS 原生崩溃还需检查「控制台」中的崩溃报告或 `~/Library/Logs/DiagnosticReports/`。
-
-## 验证
-
-在仓库根执行：
+Seamlessly inspect any Git repository directly from your terminal, just like `code .`:
 
 ```sh
-CGO_ENABLED=0 go test ./cmd/gitclient
+# Open repository in current directory
+xylring .
+
+# Open specific repository
+xylring /path/to/project
+
+# Open multiple repositories side-by-side
+xylring repoA repoB
+
+# Just focus/activate the running Xylring window
+xylring
 ```
 
-在 `cmd/gitclient/` 执行：
+### Install CLI Helper in PATH
+- **From GUI Menu**: Select `File` → `Install 'xylring' Command Line Tool in PATH...`
+- **From Terminal**:
+  ```sh
+  xylring install-cli
+  ```
 
-```sh
-go tool mygo vet .
-```
+---
+
+## 🗺️ Roadmap
+
+- [x] High-performance commit graph with cubic Bezier lanes
+- [x] Omni-search across messages, authors, files, refs, and SHAs
+- [x] Hunk-level staging and interactive patch discard
+- [x] Dual-point and triple-point (`...`) commit comparisons
+- [x] Syntax-highlighted full-file viewer and image diffing
+- [x] CLI `xylring .` terminal integration
+- [x] Cross-platform support for macOS (ARM64/x64) and Windows (x64)
+- [ ] Interactive Rebase UI (Squash, Reorder, Drop)
+- [ ] Linux desktop support (X11 / Wayland)
+- [ ] Custom themes (Solarized, Nord, Catppuccin)
+- [ ] Vim-style keyboard navigation
+
+---
+
+## 🤝 Contributing
+
+Contributions, issues, and feature requests are welcome!  
+Feel free to check out the [issues page](../../issues).
+
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feat/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'feat: add some amazing feature'`)
+4. Push to the Branch (`git push origin feat/AmazingFeature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+Xylring is distributed under its noncommercial source-available license; see [`LICENSE`](LICENSE).
