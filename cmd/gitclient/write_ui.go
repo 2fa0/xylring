@@ -418,98 +418,94 @@ func writeTitle(kind string) string {
 
 func (a *app) commitWriteModal(c *ui.Context) {
 	wasOpen := a.showWrite
-	ui.Modal(c.Key("commit-write-modal"), &a.showWrite, func() {
-		d := &a.write
-		ui.Column(c).Width(460).Gap(8).Children(func() {
-			ui.Text(c, writeTitle(d.kind)).Bold()
-			summary := shortHash(d.hash)
-			if d.subject != "" {
-				summary += "  " + d.subject
-			}
-			ui.Text(c, summary).FontSize(12).SingleLine().TextColor(c.Theme().TextMuted).Tooltip(hashHex(d.hash) + "\n" + d.subject)
-			disabled := d.preparing || d.busy
-			switch d.kind {
-			case writeBranch:
-				var input ui.Element
-				ui.Field(c, "分支名", func() {
-					input = ui.TextInput(c.Key("write-branch-name"), &d.name).Placeholder("feature/fix").Disabled(disabled).AutoFocus()
-				})
-				if len(d.remotes) > 0 {
-					label := "跟踪远程分支"
-					if d.trackRemote != "" {
-						label = "跟踪 " + d.trackRemote
-					}
-					ui.Checkbox(c.Key("write-track"), &d.track, label).Disabled(disabled)
-					if d.track && len(d.remotes) > 1 {
-						ui.Select(c.Key("write-track-remote"), &d.trackRemote, d.remotes).Disabled(disabled)
-					}
-				}
-				ui.Checkbox(c.Key("write-checkout"), &d.checkout, "创建后检出").Disabled(disabled)
-				ui.Checkbox(c.Key("write-overwrite-branch"), &d.overwrite, "覆盖已有同名分支").Disabled(disabled)
-				if input.Submitted() && !disabled {
-					a.runCommitWrite()
-				}
-			case writeRenameBranch:
-				var input ui.Element
-				ui.Field(c, "新分支名", func() {
-					input = ui.TextInput(c.Key("write-rename-branch"), &d.name).Placeholder(d.oldName).Disabled(disabled).AutoFocus()
-				})
-				ui.Checkbox(c.Key("write-overwrite-rename"), &d.overwrite, "覆盖已有同名分支").Disabled(disabled)
-				if input.Submitted() && !disabled {
-					a.runCommitWrite()
-				}
-			case writeDeleteBranch:
-				ui.Text(c, "确定删除本地分支 "+d.name+" 吗？").FontSize(13)
-				ui.Checkbox(c.Key("write-force-delete-branch"), &d.overwrite, "强制删除（即使尚未完全合并）").Disabled(disabled)
-			case writeDeleteTag:
-				ui.Text(c, "确定删除本地标签 "+d.name+" 吗？").FontSize(13)
-			case writeTag:
-				var input ui.Element
-				ui.Field(c, "标签名", func() {
-					input = ui.TextInput(c.Key("write-tag-name"), &d.name).Placeholder("v1.0.0").Disabled(disabled).AutoFocus()
-				})
-				ui.Checkbox(c.Key("write-annotated"), &d.annotated, "附注标签").Disabled(disabled)
-				if d.annotated {
-					ui.Field(c, "消息", func() {
-						ui.TextInput(c.Key("write-tag-message"), &d.message).Placeholder("标签说明").Disabled(disabled)
-					})
-				}
-				ui.Checkbox(c.Key("write-overwrite-tag"), &d.overwrite, "覆盖已有同名标签").Disabled(disabled)
-				if input.Submitted() && !disabled {
-					a.runCommitWrite()
-				}
-			default:
-				if d.preparing {
-					ui.Text(c, "正在读取说明…").TextColor(c.Theme().TextMuted)
-				} else {
-					ui.Text(c, "会生成新的提交哈希；若不是 HEAD，其后的提交也会改写。").FontSize(12).TextColor(c.Theme().TextMuted)
-					provenanceInputs(c, "reword-ring", &d.prov, disabled)
-					ui.Text(c, "若提交已推送，保存将改写已推送历史，需要强制推送。").FontSize(12).TextColor(c.Theme().Warning)
-					ui.TextArea(c.Key("write-message"), &d.message).Height(160).Disabled(disabled).AutoFocus()
-				}
-			}
-			if d.err != "" {
-				ui.Text(c, d.err).TextColor(c.Theme().Danger)
-			}
-			if d.busy {
-				ui.Text(c, "Git 正在执行…").TextColor(c.Theme().TextMuted)
-			}
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if ui.Button(c.Key("write-cancel"), "取消").Disabled(d.busy).Clicked() {
-					a.showWrite = false
-				}
-				label := "创建"
-				switch d.kind {
-				case writeMessage, writeRenameBranch:
-					label = "保存"
-				case writeDeleteBranch, writeDeleteTag:
-					label = "删除"
-				}
-				if ui.PrimaryButton(c.Key("write-apply"), label).Disabled(disabled).Clicked() {
-					a.runCommitWrite()
-				}
+	d := &a.write
+	disabled := d.preparing || d.busy
+	appModal(c.Key("commit-write-modal"), &a.showWrite, writeTitle(d.kind), 500, d.busy, func() {
+		summary := shortHash(d.hash)
+		if d.subject != "" {
+			summary += "  " + d.subject
+		}
+		ui.Text(c, summary).FontSize(12).SingleLine().TextColor(c.Theme().TextMuted).Tooltip(hashHex(d.hash) + "\n" + d.subject)
+		switch d.kind {
+		case writeBranch:
+			var input ui.Element
+			ui.Field(c, "分支名", func() {
+				input = ui.TextInput(c.Key("write-branch-name"), &d.name).Placeholder("feature/fix").Disabled(disabled).AutoFocus()
 			})
-		})
+			if len(d.remotes) > 0 {
+				label := "跟踪远程分支"
+				if d.trackRemote != "" {
+					label = "跟踪 " + d.trackRemote
+				}
+				ui.Checkbox(c.Key("write-track"), &d.track, label).Disabled(disabled)
+				if d.track && len(d.remotes) > 1 {
+					ui.Select(c.Key("write-track-remote"), &d.trackRemote, d.remotes).Disabled(disabled)
+				}
+			}
+			ui.Checkbox(c.Key("write-checkout"), &d.checkout, "创建后检出").Disabled(disabled)
+			ui.Checkbox(c.Key("write-overwrite-branch"), &d.overwrite, "覆盖已有同名分支").Disabled(disabled)
+			if input.Submitted() && !disabled {
+				a.runCommitWrite()
+			}
+		case writeRenameBranch:
+			var input ui.Element
+			ui.Field(c, "新分支名", func() {
+				input = ui.TextInput(c.Key("write-rename-branch"), &d.name).Placeholder(d.oldName).Disabled(disabled).AutoFocus()
+			})
+			ui.Checkbox(c.Key("write-overwrite-rename"), &d.overwrite, "覆盖已有同名分支").Disabled(disabled)
+			if input.Submitted() && !disabled {
+				a.runCommitWrite()
+			}
+		case writeDeleteBranch:
+			ui.Text(c, "确定删除本地分支 "+d.name+" 吗？").FontSize(13)
+			ui.Checkbox(c.Key("write-force-delete-branch"), &d.overwrite, "强制删除（即使尚未完全合并）").Disabled(disabled)
+		case writeDeleteTag:
+			ui.Text(c, "确定删除本地标签 "+d.name+" 吗？").FontSize(13)
+		case writeTag:
+			var input ui.Element
+			ui.Field(c, "标签名", func() {
+				input = ui.TextInput(c.Key("write-tag-name"), &d.name).Placeholder("v1.0.0").Disabled(disabled).AutoFocus()
+			})
+			ui.Checkbox(c.Key("write-annotated"), &d.annotated, "附注标签").Disabled(disabled)
+			if d.annotated {
+				ui.Field(c, "消息", func() {
+					ui.TextInput(c.Key("write-tag-message"), &d.message).Placeholder("标签说明").Disabled(disabled)
+				})
+			}
+			ui.Checkbox(c.Key("write-overwrite-tag"), &d.overwrite, "覆盖已有同名标签").Disabled(disabled)
+			if input.Submitted() && !disabled {
+				a.runCommitWrite()
+			}
+		default:
+			if d.preparing {
+				ui.Text(c, "正在读取说明…").TextColor(c.Theme().TextMuted)
+			} else {
+				ui.Text(c, "会生成新的提交哈希；若不是 HEAD，其后的提交也会改写。").FontSize(12).TextColor(c.Theme().TextMuted)
+				provenanceInputs(c, "reword-ring", &d.prov, disabled)
+				ui.Text(c, "若提交已推送，保存将改写已推送历史，需要强制推送。").FontSize(12).TextColor(c.Theme().Warning)
+				ui.TextArea(c.Key("write-message"), &d.message).Height(160).Disabled(disabled).AutoFocus()
+			}
+		}
+		if d.err != "" {
+			ui.Text(c, d.err).TextColor(c.Theme().Danger)
+		}
+		if d.busy {
+			ui.Text(c, "Git 正在执行…").TextColor(c.Theme().TextMuted)
+		}
+	}, func() {
+		if ui.Button(c.Key("write-cancel"), "取消").Disabled(d.busy).Clicked() {
+			a.showWrite = false
+		}
+		label := "创建"
+		switch d.kind {
+		case writeMessage, writeRenameBranch:
+			label = "保存"
+		case writeDeleteBranch, writeDeleteTag:
+			label = "删除"
+		}
+		if ui.PrimaryButton(c.Key("write-apply"), label).Disabled(disabled).Clicked() {
+			a.runCommitWrite()
+		}
 	})
 	if wasOpen && !a.showWrite && a.write.busy {
 		a.showWrite = true

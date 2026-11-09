@@ -368,7 +368,7 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 								fileIdx := i - 1
 								tab := t.fileTabs[fileIdx]
 								_, to := tab.labels()
-								item.Label(label + " · " + to)
+								item.Label(label + " · " + to).Tooltip(tab.file.path + " · " + to)
 								item.ContextMenu(func(m *ui.Menu) {
 									fullPath := repoFilePath(t.path, tab.file.path, true)
 									if m.Item("关闭").Shortcut(commandModifier(), ui.KeyW).Chosen() {
@@ -433,9 +433,7 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 								}
 							}
 							if i == t.contentTab {
-								item.TextColor(theme.Text).FontWeight(600).DrawOver(func(p *ui.Painter, r ui.Rect) {
-									p.Fill(ui.Rect{X: r.X + 6, Y: r.Y + r.H - 2, W: r.W - 12, H: 2}, theme.Accent, 1)
-								})
+								item.TextColor(theme.Text)
 								if t.revealFileTab || t.shownFileTab != selected {
 									item.ScrollIntoView()
 								}
@@ -443,6 +441,9 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 								item.Background(theme.SurfaceHover.Alpha(0.6)).TextColor(theme.Text)
 							}
 							item.Children(func() {
+								if i == t.contentTab {
+									fileTabIndicator(c, t)
+								}
 								ui.Text(c, label).SingleLine().MinWidth(0)
 								if i > 0 && i-1 < len(t.fileTabs) {
 									fileIdx := i - 1

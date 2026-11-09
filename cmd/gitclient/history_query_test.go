@@ -291,10 +291,11 @@ func TestLocateRefShowsErrorNearInput(t *testing.T) {
 	if msg.Y < jump.Y || msg.Y > jump.Y+80 {
 		t.Fatalf("error not under toolbar: jump=%+v msg=%+v", jump, msg)
 	}
-	if r, ok := tt.Find(tab.locate); ok {
+	if field, ok := tt.AccessByRole(ui.RoleTextField, "搜索提交、代码、分支、作者或路径"); ok {
+		r := field.Bounds
 		tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
 	} else {
-		tt.ClickAt(jump.X-40, jump.Y+jump.H/2)
+		t.Fatal("missing search input")
 	}
 	tt.Type("x")
 	tt.Frame()
