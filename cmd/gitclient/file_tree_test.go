@@ -243,4 +243,14 @@ func TestFileTreeSpacingAndIndentation(t *testing.T) {
 	if rCmd.H > 30 {
 		t.Fatalf("目录行高度过大: H=%.1f (期望 <= 30)", rCmd.H)
 	}
+
+	// Verify compact indentation: delta between child file and root file should be <= 10px (previously 24px)
+	rLic, okLic := tt.Find("LICENSE")
+	if !okLic {
+		t.Fatal("树节点未找到: LICENSE")
+	}
+	indentDelta := rMain.X - rLic.X
+	if indentDelta > 10 {
+		t.Fatalf("层级缩进过大: delta=%.1f (期望 <= 10)", indentDelta)
+	}
 }
