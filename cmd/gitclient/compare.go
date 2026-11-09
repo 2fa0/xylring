@@ -1619,15 +1619,51 @@ func renderFindBar(c *ui.Context, anchor ui.Element, f *editor.FindBar) {
 	})
 }
 
+// findQueryDelay keeps the diff from revealing a match under the pointer on
+// every keystroke, which scrolls the text away and repaints it twice.
+const findQueryDelay = 150 * time.Millisecond
+
+// findQueryInput is the query as typed, and the one the editor searches for.
+type findQueryInput struct {
+	text, applied string
+	edited        time.Time
+}
+
 func renderFindBarContent(c *ui.Context, bar ui.Element, f *editor.FindBar) {
 	theme := c.Theme()
+	query := ui.Local(bar, f.Query(), func() findQueryInput {
+		return findQueryInput{text: *f.Query(), applied: *f.Query()}
+	})
+	// Opening Find from a selection can seed a new query in the editor.
+	if query.applied != *f.Query() {
+		query.text, query.applied = *f.Query(), *f.Query()
+	}
+	commit := func() {
+		*f.Query(), query.applied = query.text, query.text
+	}
 	// Split panes can be narrower than the editor's default single-row toolbar.
 	bar.Padding(6).Gap(4).Background(theme.Surface).
 		Border(1, theme.Border).Radius(theme.Radius)
 	bar.Children(func() {
 		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-			f.QueryInput(ui.TextInput(c.Key("query"), f.Query()).Label("查找内容").
-				Placeholder("查找").Grow(1).MinWidth(0))
+			before := query.text
+			input := ui.TextInput(c.Key("query"), &query.text).Label("查找内容").
+				Placeholder("查找").Grow(1).MinWidth(0)
+			if query.text != before {
+				query.edited = c.Now()
+			}
+			if query.text != query.applied {
+				// Searching moves the text to the match, so the editor searches
+				// once the typing pauses, and at once for Enter and an emptied
+				// query, which needs no pause to say what it finds.
+				wait := findQueryDelay - c.Now().Sub(query.edited)
+				if query.text == "" || input.Submitted() || wait <= 0 {
+					commit()
+				} else {
+					c.After(wait)
+				}
+			}
+			f.QueryInput(input)
 		})
 		ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
 			toggle := func(value *bool, label, tip string) {
@@ -1650,18 +1686,28 @@ func renderFindBarContent(c *ui.Context, bar ui.Element, f *editor.FindBar) {
 				return b.Clicked()
 			}
 			if button("↑", "上一个匹配") {
+				commit()
 				f.Previous()
 			}
 			if button("↓", "下一个匹配") {
+				commit()
 				f.Next()
 			}
 			if button("✕", "关闭查找") {
 				f.Close()
 			}
 		})
-		if status := f.Status(); status != "" {
-			ui.Text(c, status).FontSize(11).TextColor(theme.TextMuted).Role(ui.RoleStatus)
+		// The row keeps its line while the typing pauses, so the panel does not
+		// grow with the first result and shrink back to nothing.
+		status := " "
+		if query.text == query.applied {
+			// Matches searches the text the bar read before it was built.
+			f.Matches()
+			if s := f.Status(); s != "" {
+				status = s
+			}
 		}
+		ui.Text(c, status).FontSize(11).TextColor(theme.TextMuted).Role(ui.RoleStatus)
 	})
 }
 
