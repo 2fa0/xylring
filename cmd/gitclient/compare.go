@@ -1446,7 +1446,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 		ui.Text(c, "无匹配文件").Padding(12).TextColor(theme.TextMuted)
 		return
 	}
-	t.fileOutline.Indent = theme.Space(3)
+	t.fileOutline.Indent = theme.Space(1.5)
 	t.syncFileOutlineSel(tree)
 	t.fileOutline.List.Selected = &t.fileOutlineSel
 	t.fileOutline.List.Label = func(i int) string {
@@ -1465,7 +1465,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 		if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
 			tip = t.compareFiles[n.file].fullPath()
 		}
-		row := ui.Row(c).Gap(6).MinWidth(0).Grow(1).MinHeight(20).Padding(1, 2).AlignItems(ui.Center)
+		row := ui.Row(c).Gap(5).MinWidth(0).Grow(1).MinHeight(20).Padding(1, 0).AlignItems(ui.Center)
 		hovered := row.Hovered()
 		row.Tooltip(filePathTip(tip, scrolling || t.fileRowMoving(c, row, "tree:"+tip, hovered)))
 		if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
