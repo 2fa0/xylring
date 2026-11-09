@@ -104,6 +104,12 @@ var iconRows2SVG []byte
 //go:embed icons/tree-rings.svg
 var iconTreeRingsSVG []byte
 
+//go:embed icons/image.svg
+var iconImageSVG []byte
+
+//go:embed icons/git-commit.svg
+var iconGitCommitSVG []byte
+
 //go:embed icons/settings.svg
 var iconRingSettingsSVG []byte
 
@@ -139,6 +145,8 @@ var (
 	iconCheck       = ui.MustParseSVG(iconCheckSVG)
 	iconColumns2    = ui.MustParseSVG(iconColumns2SVG)
 	iconRows2       = ui.MustParseSVG(iconRows2SVG)
+	iconImage       = ui.MustParseSVG(iconImageSVG)
+	iconGitCommit   = ui.MustParseSVG(iconGitCommitSVG)
 )
 
 var (

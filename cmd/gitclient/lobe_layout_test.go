@@ -256,3 +256,26 @@ func TestLobeMainLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestLobeEmptyStates(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%t", dark), func(t *testing.T) {
+			tab := newTab(1, "/work/example")
+			tab.loaded = true
+			tab.query.term = "needle"
+			a := &app{tabs: []*repoTab{tab}}
+			tt := ui.NewTester(a.view, 860, 560)
+			defer retireTester(tt)
+			tt.SetDark(dark)
+			tt.Frame()
+			if !tt.HasText("没有匹配的提交") || !tt.HasText("退出筛选") {
+				t.Fatalf("search empty state missing: %q", tt.Texts())
+			}
+			yellow := tt.Image()
+			if yellow == nil {
+				t.Fatal("no image")
+			}
+			saveLobePreview(t, tt, fmt.Sprintf("empty-commits-dark-%t", dark))
+		})
+	}
+}

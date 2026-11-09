@@ -790,9 +790,7 @@ func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 		}
 		a.fileFilterBar(c, t)
 		if t.compareLoading && len(t.compareFiles) == 0 {
-			ui.Column(c).Grow(1).Center().Children(func() {
-				ui.Text(c, "正在读取改动…").TextColor(theme.TextMuted)
-			})
+			busyBlock(c, "files-loading", "正在读取改动…", "").Grow(1)
 			return
 		}
 		if t.compareErr != "" && len(t.compareFiles) == 0 {
@@ -808,13 +806,44 @@ func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 				a.fileFlatList(c, t)
 			}
 			if len(t.compareFiles) == 0 && !t.compareLoading {
-				ui.Text(c, "没有文件变化").Padding(12).TextColor(theme.TextMuted)
+				emptyHint(c, "files-empty", emptyHintProps{
+					Icon:        iconGitCompare,
+					Title:       "没有文件变化",
+					Description: filesEmptyHint(t),
+				}).Grow(1)
 			}
 		})
 		if t.worktree {
 			a.worktreeCommitCard(c, t)
 		}
 	})
+}
+
+// noMatchingFiles says the filter hid every file, and clears it on request.
+func noMatchingFiles(c *ui.Context, filter *string) {
+	emptyHint(c, "files-no-match", emptyHintProps{
+		Icon:        iconSearch,
+		Title:       "无匹配文件",
+		Description: "换个关键词，或清除筛选查看全部改动",
+		Action: func() {
+			if ui.Button(c.Key("files-clear-filter"), "清除筛选").Clicked() {
+				*filter = ""
+			}
+		},
+	})
+}
+
+// filesEmptyHint says why the file list is empty: a clean worktree, a commit
+// that changed nothing, or two versions that match.
+func filesEmptyHint(t *repoTab) string {
+	switch {
+	case t.worktree:
+		return "工作区没有未提交的改动"
+	case t.comparison != nil:
+		return "这两个版本没有文件差异"
+	default:
+		return "这条提交没有改动任何文件"
+	}
 }
 
 func (a *app) sidebarActiveInspect(c *ui.Context, t *repoTab) {
@@ -824,9 +853,7 @@ func (a *app) sidebarActiveInspect(c *ui.Context, t *repoTab) {
 func (a *app) fileDiffPane(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	if t.compareLoading && len(t.compareFiles) == 0 {
-		ui.Column(c).Grow(1).Center().Children(func() {
-			ui.Text(c, "正在读取改动…").TextColor(theme.TextMuted)
-		})
+		busyBlock(c, "diff-loading", "正在读取改动…", "").Grow(1)
 		return
 	}
 	if t.compareErr != "" && len(t.compareFiles) == 0 {
@@ -1155,9 +1182,7 @@ func (a *app) comparisonBanner(c *ui.Context, tab *repoTab) {
 			if ui.Button(c.Key("compare-banner-exit"), "退出对比").Label("退出对比").Tooltip("退出对比模式 (Esc)").Shrink(0).Clicked() {
 				a.endComparison(tab)
 			}
-			ui.Box(c).Padding(2, 6).Radius(t.Radius).Background(t.Surface).Border(1, t.Border).Shrink(0).Children(func() {
-				ui.Text(c, "Esc").FontSize(11).TextColor(t.TextMuted)
-			})
+			kbdHint(c, "compare-banner-esc", "Esc")
 		})
 	})
 }
@@ -1366,7 +1391,7 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 	scrolling := takeScrollMove(&t.fileListScroll, &t.fileListScrollY)
 	indices := t.filteredFileIndices()
 	if len(indices) == 0 && len(t.compareFiles) > 0 {
-		ui.Text(c, "无匹配文件").Padding(12).TextColor(theme.TextMuted)
+		noMatchingFiles(c, &t.fileFilter)
 		return
 	}
 	currentSel := -1
@@ -1437,7 +1462,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 	scrolling := takeScrollMove(&t.fileTreeScroll, &t.fileTreeScrollY)
 	tree := t.prepareFileTree()
 	if len(tree.roots) == 0 && len(t.compareFiles) > 0 {
-		ui.Text(c, "无匹配文件").Padding(12).TextColor(theme.TextMuted)
+		noMatchingFiles(c, &t.fileTreeFilter)
 		return
 	}
 	t.fileOutline.Indent = theme.Space(1.5)
@@ -1561,9 +1586,7 @@ func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *sim
 	theme := c.Theme()
 	switch {
 	case loading:
-		ui.Column(c).Grow(1).Center().Children(func() {
-			ui.Text(c, "正在读取文件…").TextColor(theme.TextMuted)
-		})
+		busyBlock(c, "diff-file-loading", "正在读取文件…", "").Grow(1)
 	case imgDiff != nil:
 		a.imageDiffView(c, imgDiff, viewMode, fitActual)
 	case note != "":

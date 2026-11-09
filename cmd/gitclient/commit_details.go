@@ -118,7 +118,7 @@ func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
 	ui.Column(c.Key(fmt.Sprintf("commit-details-inline-%d", t.id))).FillWidth().Padding(6, 8).Gap(6).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Children(func() {
 		switch {
 		case t.detailsLoading:
-			ui.Text(c, "正在读取…").TextColor(theme.TextMuted)
+			busyRow(c, "details-loading", "正在读取提交信息…", "")
 		case t.detailsErr != "":
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, t.detailsErr).TextColor(theme.Danger)
@@ -130,10 +130,7 @@ func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
 		case t.details != nil:
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "完整提交信息").Bold().FontSize(12).SingleLine().Grow(1).MinWidth(0)
-				if ui.Button(c.Key("copy-commit-info"), "复制完整信息").Shrink(0).Clicked() {
-					c.Services().WriteClipboard(t.details.text())
-					c.Toast("已复制提交信息")
-				}
+				copyTextButton(c, "copy-commit-info", "复制完整信息", t.details.text())
 				closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("close-commit-details-%d", t.id))).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Tooltip("收起信息").Transition(colorMotion())
 				closeBtn.Children(func() {
 					ui.Icon(c, iconClose).Size(12, 12).TextColor(theme.TextMuted)
