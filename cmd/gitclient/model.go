@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -248,6 +250,152 @@ func repoListLabel(from string, items []string, path string) string {
 		}
 	}
 	return repoChoiceLabel(from, path)
+}
+
+type repoGroup struct {
+	root     string
+	children []string
+}
+
+func buildRepoGroups(items []string) []repoGroup {
+	if len(items) == 0 {
+		return nil
+	}
+	var roots []string
+	for _, p := range items {
+		if repoNestLevel(items, p) == 0 {
+			roots = append(roots, p)
+		}
+	}
+	if len(roots) == 0 {
+		roots = append(roots, items...)
+	}
+	groups := make([]repoGroup, len(roots))
+	rootMap := make(map[string]int, len(roots))
+	for i, r := range roots {
+		groups[i] = repoGroup{root: r}
+		rootMap[r] = i
+	}
+	for _, p := range items {
+		if _, isRoot := rootMap[p]; isRoot {
+			continue
+		}
+		assigned := false
+		for i, r := range roots {
+			if repoContains(r, p) {
+				groups[i].children = append(groups[i].children, p)
+				assigned = true
+				break
+			}
+		}
+		if !assigned {
+			groups = append(groups, repoGroup{root: p})
+		}
+	}
+	return groups
+}
+
+func (a *app) orderRepoItems(items []string) []string {
+	if len(items) <= 1 {
+		return items
+	}
+	groups := buildRepoGroups(items)
+	if len(groups) <= 1 {
+		return items
+	}
+	if len(a.repoOrder) > 0 {
+		orderMap := make(map[string]int, len(a.repoOrder))
+		for idx, path := range a.repoOrder {
+			orderMap[path] = idx
+		}
+		sort.SliceStable(groups, func(i, j int) bool {
+			idxI, okI := orderMap[groups[i].root]
+			idxJ, okJ := orderMap[groups[j].root]
+			if okI && okJ {
+				return idxI < idxJ
+			}
+			if okI {
+				return true
+			}
+			if okJ {
+				return false
+			}
+			return i < j
+		})
+	}
+	res := make([]string, 0, len(items))
+	for _, g := range groups {
+		res = append(res, g.root)
+		res = append(res, g.children...)
+	}
+	return res
+}
+
+func (a *app) reorderRepos(items []string, rows []int, to int) {
+	if len(rows) == 0 || rows[0] < 0 || rows[0] >= len(items) {
+		return
+	}
+	draggedPath := items[rows[0]]
+	if repoNestLevel(items, draggedPath) > 0 {
+		return
+	}
+	groups := buildRepoGroups(items)
+	if len(groups) <= 1 {
+		return
+	}
+	fromGroup := -1
+	for i, g := range groups {
+		if g.root == draggedPath {
+			fromGroup = i
+			break
+		}
+	}
+	if fromGroup < 0 {
+		return
+	}
+
+	groupStarts := make([]int, len(groups)+1)
+	cur := 0
+	for i, g := range groups {
+		groupStarts[i] = cur
+		cur += 1 + len(g.children)
+	}
+	groupStarts[len(groups)] = cur
+
+	toGroup := len(groups)
+	if to < cur {
+		for i := 0; i < len(groups); i++ {
+			start := groupStarts[i]
+			end := groupStarts[i+1]
+			if to >= start && to < end {
+				mid := start + (end-start)/2
+				if to <= mid {
+					toGroup = i
+				} else {
+					toGroup = i + 1
+				}
+				break
+			}
+		}
+	}
+
+	if toGroup == fromGroup || toGroup == fromGroup+1 {
+		return
+	}
+
+	g := groups[fromGroup]
+	groups = slices.Delete(groups, fromGroup, fromGroup+1)
+	if toGroup > fromGroup {
+		toGroup--
+	}
+	groups = slices.Insert(groups, toGroup, g)
+
+	newOrder := make([]string, len(groups))
+	for i, grp := range groups {
+		newOrder[i] = grp.root
+	}
+	a.repoOrder = newOrder
+	a.queueSession()
 }
 
 func (t *repoTab) intern(s string) string {

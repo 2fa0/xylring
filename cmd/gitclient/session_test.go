@@ -54,6 +54,26 @@ func TestSessionPersistsBottomFullWidth(t *testing.T) {
 	}
 }
 
+func TestSessionPersistsRepoOrder(t *testing.T) {
+	config := t.TempDir()
+	old := userConfigDir
+	userConfigDir = func() (string, error) { return config, nil }
+	defer func() { userConfigDir = old }()
+	tab := newTab(1, "/tmp/repo")
+	a := newApp()
+	a.tabs = []*repoTab{tab}
+	a.persist = true
+	a.sessionReady = true
+	a.repoOrder = []string{"/tmp/repo2", "/tmp/repo"}
+	a.queueSession()
+	close(a.sessionWrites)
+	<-a.sessionDone
+	s := loadSession()
+	if len(s.RepoOrder) != 2 || s.RepoOrder[0] != "/tmp/repo2" || s.RepoOrder[1] != "/tmp/repo" {
+		t.Fatalf("expected RepoOrder in saved session, got %+v", s.RepoOrder)
+	}
+}
+
 func TestConfigDirMigratesFromLegacy(t *testing.T) {
 	config := t.TempDir()
 	old := userConfigDir

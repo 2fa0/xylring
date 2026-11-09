@@ -1017,6 +1017,15 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 		} else {
 			a.diffLayoutToggle(c)
 			a.diffIgnoreWhitespaceToggle(c, t)
+			if t.diff != nil || t.simpleDiff != nil {
+				findTip := "在 Diff 中查找 (⌘F)"
+				if runtime.GOOS != "darwin" {
+					findTip = "在 Diff 中查找 (Ctrl+F)"
+				}
+				if paneIconButton(c, "find-in-diff", "在 Diff 中查找", iconSearch).Tooltip(findTip).Clicked() {
+					a.openDiffFind(t)
+				}
+			}
 		}
 		fullWidthTip := "全宽展示 (展开至整窗宽度)"
 		if a.bottomFullWidth {
@@ -1039,6 +1048,21 @@ func (a *app) currentDiffLayout() editor.DiffLayout {
 		return editor.DiffUnified
 	}
 	return editor.DiffSplit
+}
+
+func (a *app) openDiffFind(t *repoTab) {
+	if t == nil {
+		return
+	}
+	if t.contentTab > 0 && t.contentTab <= len(t.fileTabs) {
+		a.openFileTabFind(t.fileTabs[t.contentTab-1])
+		return
+	}
+	if t.diff != nil {
+		t.diff.Run(editor.Find)
+	} else if t.simpleDiff != nil {
+		t.simpleDiff.new.Run(editor.Find)
+	}
 }
 
 func (a *app) diffLayoutToggle(c *ui.Context) {
@@ -1241,7 +1265,7 @@ func (a *app) fileHoverActions(c *ui.Context, t *repoTab, i int, hovered bool) {
 		bg = theme.Accent
 	}
 	f := t.compareFiles[i]
-	ui.Row(c).Gap(2).AlignItems(ui.Center).Padding(4, 8).Background(bg).Radius(0, theme.Radius, theme.Radius, 0).Label("文件操作").Absolute().Top(0).Right(0).Bottom(0).Children(func() {
+	ui.Row(c).Gap(2).AlignItems(ui.Center).Padding(2, 6).Background(bg).Radius(0, theme.Radius, theme.Radius, 0).Label("文件操作").Absolute().Top(0).Right(0).Bottom(0).Children(func() {
 		if t.worktree {
 			a.worktreeStageHoverButtons(c, t, f)
 		}
@@ -1422,7 +1446,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 		ui.Text(c, "无匹配文件").Padding(12).TextColor(theme.TextMuted)
 		return
 	}
-	t.fileOutline.Indent = theme.Space(5)
+	t.fileOutline.Indent = theme.Space(3)
 	t.syncFileOutlineSel(tree)
 	t.fileOutline.List.Selected = &t.fileOutlineSel
 	t.fileOutline.List.Label = func(i int) string {
@@ -1441,7 +1465,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 		if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
 			tip = t.compareFiles[n.file].fullPath()
 		}
-		row := ui.Row(c).Gap(8).MinWidth(0).Grow(1).MinHeight(32).Padding(6, 4).AlignItems(ui.Center)
+		row := ui.Row(c).Gap(6).MinWidth(0).Grow(1).MinHeight(20).Padding(1, 2).AlignItems(ui.Center)
 		hovered := row.Hovered()
 		row.Tooltip(filePathTip(tip, scrolling || t.fileRowMoving(c, row, "tree:"+tip, hovered)))
 		if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
@@ -1464,7 +1488,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 				a.fileHoverActions(c, t, n.file, hovered)
 			}
 		})
-	}).Grow(1).MinHeight(0).Padding(6, 8).Gap(4).TrackScroll(&t.fileTreeScroll)
+	}).Grow(1).MinHeight(0).Padding(4, 6).Gap(1).TrackScroll(&t.fileTreeScroll)
 	if outline.Changed() {
 		if t.fileOutlineSel < 0 || t.fileOutlineSel >= t.fileOutline.Rows() {
 			return

@@ -204,3 +204,43 @@ func TestFileHoverShowsActionsOnThatRow(t *testing.T) {
 		t.Fatalf("离开后仍显示文件操作: %q", tt.Texts())
 	}
 }
+
+func TestFileTreeSpacingAndIndentation(t *testing.T) {
+	tab := newTab(1, "/tmp/prototype-repo")
+	tab.loaded = true
+	tab.branch = "main"
+	tab.commits = []commit{
+		{hash: hashN(1), author: "Ada", subject: "初始提交", when: 1700000000},
+	}
+	tab.graph.add(&tab.commits[0])
+	tab.inspecting = hashN(1)
+	tab.compareFiles = []fileChange{
+		{status: "M", path: "LICENSE"},
+		{status: "M", path: "cmd/gitclient/main.go"},
+		{status: "A", path: "cmd/gitclient/compare.go"},
+	}
+	tab.fileSel = 0
+	tab.fileSplit = 28
+	tab.diffNote = "没有载入内容"
+	a := &app{tabs: []*repoTab{tab}, fileView: 1, dispatch: func(func()) {}}
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+
+	rCmd, okCmd := tt.Find("cmd/gitclient")
+	rMain, okMain := tt.Find("main.go")
+	rComp, okComp := tt.Find("compare.go")
+	if !okCmd || !okMain || !okComp {
+		t.Fatalf("树节点未找到: cmd=%v main=%v comp=%v", okCmd, okMain, okComp)
+	}
+
+	// Verify compact row height: delta between consecutive sibling rows should be <= 32px (previously 44px)
+	rowDelta := rComp.Y - rMain.Y
+	if rowDelta > 32 {
+		t.Fatalf("树行间距过大: delta=%.1f (期望 <= 32)", rowDelta)
+	}
+
+	// Verify compact directory row height: should be <= 30px (previously 40px)
+	if rCmd.H > 30 {
+		t.Fatalf("目录行高度过大: H=%.1f (期望 <= 30)", rCmd.H)
+	}
+}
