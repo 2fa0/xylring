@@ -192,9 +192,7 @@ func (a *app) renderImageCard(c *ui.Context, key string, title string, badge str
 		ui.Row(c).FillWidth().Padding(6, 10).Gap(8).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Shrink(0).Children(func() {
 			ui.Text(c, title).Bold().FontSize(12).SingleLine()
 			if badge != "" {
-				ui.Box(c).Padding(1, 6).Radius(theme.Radius).Background(badgeColor.Alpha(0.15)).Border(1, badgeColor.Alpha(0.3)).Shrink(0).Children(func() {
-					ui.Text(c, badge).FontSize(11).TextColor(badgeColor).SingleLine()
-				})
+				chipSoft(c, key+"-badge", badge, badgeColor, false)
 			}
 			ui.Box(c).Grow(1)
 			if info != nil {
@@ -215,18 +213,14 @@ func (a *app) renderImageCard(c *ui.Context, key string, title string, badge str
 					ui.Text(c, fmt.Sprintf("(%s)", diffStr)).FontSize(11).TextColor(col).SingleLine()
 				}
 				if info.format != "" {
-					ui.Box(c).Padding(1, 4).Radius(theme.Radius).Background(theme.Border.Alpha(0.5)).Shrink(0).Children(func() {
-						ui.Text(c, info.format).FontSize(10).TextColor(theme.TextMuted).SingleLine()
-					})
+					chip(c, key+"-format", info.format, chipStyle{Text: theme.TextMuted, Background: theme.Border.Alpha(0.5), FontSize: 10})
 				}
 			}
 		})
 
 		// 图像展示区
 		if info == nil || info.img == nil {
-			ui.Column(c).Grow(1).Center().Children(func() {
-				ui.Text(c, "无图片内容").TextColor(theme.TextMuted)
-			})
+			emptyHint(c, key+"-empty", emptyHintProps{Icon: iconImage, Title: "无图片内容"}).Grow(1)
 			return
 		}
 		ui.Scroll(c.Key(key+"-scroll")).Grow(1).FillWidth().Children(func() {
@@ -266,9 +260,7 @@ func (a *app) imageDiffView(c *ui.Context, imgDiff *imageDiff, viewMode int, fit
 				})
 			}
 		default:
-			ui.Column(c).Grow(1).Center().Children(func() {
-				ui.Text(c, "无图片内容").TextColor(theme.TextMuted)
-			})
+			emptyHint(c, "image-diff-empty", emptyHintProps{Icon: iconImage, Title: "无图片内容"}).Grow(1)
 		}
 	})
 }

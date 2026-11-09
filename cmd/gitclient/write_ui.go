@@ -478,7 +478,7 @@ func (a *app) commitWriteModal(c *ui.Context) {
 			}
 		default:
 			if d.preparing {
-				ui.Text(c, "正在读取说明…").TextColor(c.Theme().TextMuted)
+				busyRow(c, "write-preparing", "正在读取说明…", "")
 			} else {
 				ui.Text(c, "会生成新的提交哈希；若不是 HEAD，其后的提交也会改写。").FontSize(12).TextColor(c.Theme().TextMuted)
 				provenanceInputs(c, "reword-ring", &d.prov, disabled)
@@ -490,7 +490,7 @@ func (a *app) commitWriteModal(c *ui.Context) {
 			ui.Text(c, d.err).TextColor(c.Theme().Danger)
 		}
 		if d.busy {
-			ui.Text(c, "Git 正在执行…").TextColor(c.Theme().TextMuted)
+			busyRow(c, "write-busy", "Git 正在执行…", "")
 		}
 	}, func() {
 		if ui.Button(c.Key("write-cancel"), "取消").Disabled(d.busy).Clicked() {

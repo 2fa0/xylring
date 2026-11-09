@@ -160,7 +160,7 @@ func (a *app) fetchModal(c *ui.Context) {
 		ui.Text(c, "从所有远程获取最新引用。不会合并或改动工作区。").FontSize(12).TextColor(c.Theme().TextMuted)
 		switch {
 		case d.preparing:
-			ui.Text(c, "正在读取远程…").TextColor(c.Theme().TextMuted)
+			busyRow(c, "fetch-preparing", "正在读取远程…", "")
 		case len(d.remotes) > 0:
 			ui.Text(c, "远程："+strings.Join(d.remotes, "、")).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
@@ -170,7 +170,7 @@ func (a *app) fetchModal(c *ui.Context) {
 			ui.Text(c, d.err).TextColor(c.Theme().Danger)
 		}
 		if d.busy {
-			ui.Text(c, "正在获取…").TextColor(c.Theme().TextMuted)
+			busyRow(c, "fetch-busy", "正在获取远程更新…", "")
 		}
 	}, func() {
 		if ui.Button(c.Key("fetch-cancel"), "取消").Clicked() {

@@ -488,7 +488,16 @@ func (a *app) emptyState(c *ui.Context) {
 						}
 					}
 					if a.recentSearch != "" && matches == 0 {
-						ui.Text(c, "未找到匹配的仓库").FontSize(13).TextColor(t.TextMuted).Padding(12, 10)
+						emptyHint(c, "recent-empty", emptyHintProps{
+							Icon:        iconSearch,
+							Title:       "未找到匹配的仓库",
+							Description: "换个关键词，或清空搜索查看全部",
+							Action: func() {
+								if ui.Button(c.Key("recent-clear-search"), "清空搜索").Clicked() {
+									a.recentSearch = ""
+								}
+							},
+						})
 					}
 					if forget != "" {
 						a.forget(forget)
@@ -904,10 +913,7 @@ func (a *app) graphMain(c *ui.Context, includeBottom bool) {
 func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	t := c.Theme()
 	if tab.loading && len(tab.commits) == 0 && tab.err == "" {
-		ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
-			ui.Spinner(c).Label("正在读取提交图谱")
-			ui.Text(c, "正在读取提交图谱…").TextColor(t.TextMuted)
-		})
+		busyBlock(c, "history-loading", "正在读取提交图谱…", "").Grow(1)
 		return
 	}
 	if tab.err != "" && len(tab.commits) == 0 {
@@ -951,17 +957,7 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	graph := func() {
 		ui.Column(c.Key("commit-graph-host")).Grow(1).MinWidth(0).MinHeight(0).Transition(commitGraphMotion(tab.id)).Children(func() {
 			if tab.rows() == 0 && !tab.loading {
-				text := "这个仓库还没有提交"
-				if tab.query.term != "" {
-					text = "没有匹配的提交"
-				} else if tab.query.filePath != "" {
-					text = "这个文件在所选版本之前没有历史"
-				} else if tab.query.ref != "" || tab.query.hideRemote {
-					text = "当前范围没有提交"
-				}
-				ui.Column(c).Grow(1).Center().Children(func() {
-					ui.Text(c, text).TextColor(t.TextMuted)
-				})
+				a.commitListEmpty(c, tab).Grow(1)
 				return
 			}
 			ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
@@ -1000,6 +996,42 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	a.maybeInspectOrCompare(tab)
 }
 
+// commitListEmpty says why the graph has no rows, and how to widen a filter
+// that hid them, instead of leaving one sentence in the middle of the pane.
+func (a *app) commitListEmpty(c *ui.Context, tab *repoTab) ui.Element {
+	p := emptyHintProps{
+		Icon:        iconGitCommit,
+		Title:       "这个仓库还没有提交",
+		Description: "做出第一次提交后，历史会出现在这里",
+	}
+	switch {
+	case tab.query.term != "":
+		p = emptyHintProps{
+			Icon:        iconSearch,
+			Title:       "没有匹配的提交",
+			Description: "换个关键词，或退出筛选查看全部历史",
+			Action: func() {
+				if ui.Button(c.Key("empty-leave-search"), "退出筛选").Clicked() {
+					a.leaveSearch(tab)
+				}
+			},
+		}
+	case tab.query.filePath != "":
+		p = emptyHintProps{
+			Icon:        iconHistory,
+			Title:       "这个文件在所选版本之前没有历史",
+			Description: "选择更新的版本，或退出文件历史",
+		}
+	case tab.query.ref != "" || tab.query.hideRemote:
+		p = emptyHintProps{
+			Icon:        iconGitBranch,
+			Title:       "当前范围没有提交",
+			Description: "扩大分支范围可以看到更多历史",
+		}
+	}
+	return emptyHint(c, "commits-empty", p)
+}
+
 func (a *app) searchFilterBanner(c *ui.Context, tab *repoTab) {
 	th := c.Theme()
 	ui.Row(c.Key(fmt.Sprintf("search-banner-%d", tab.id))).
@@ -1034,8 +1066,7 @@ func (a *app) commitTableFooter(c *ui.Context, tab *repoTab) {
 	theme := c.Theme()
 	if tab.loading {
 		ui.Row(c.Key("commit-footer-loading")).FillWidth().Padding(6, 12).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Background(theme.Surface.Alpha(0.6)).Transition(fadeEnter()).Children(func() {
-			ui.Spinner(c).Label("正在加载更多历史提交")
-			ui.Text(c, "正在加载更多历史提交…").FontSize(12).TextColor(theme.TextMuted)
+			busyRow(c, "history-footer-busy", "正在加载更多历史提交…", "")
 		})
 		return
 	}
@@ -1196,13 +1227,13 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 			if worktree {
 				ui.Text(c, item.subject).SingleLine().Shrink(0)
 				for _, label := range worktreeBadges(tab.worktreeFiles) {
-					ui.Text(c, label).SingleLine().Shrink(0).TextColor(color).Background(color.Alpha(0.12)).Padding(2, 6).Radius(4)
+					chip(c, "worktree-badge-"+label, label, chipStyle{Text: color, Background: color.Alpha(0.12)})
 				}
 				ui.Box(c).Grow(1).MinWidth(0)
 				return
 			}
 			if item.hash == tab.head && tab.head != zeroHash {
-				ui.Text(c, "HEAD").FontWeight(600).TextColor(ui.RGBA(255, 255, 255, 1)).Background(color).Padding(2, 6).Radius(4).Shrink(0).
+				chip(c, "chip-head", "HEAD", chipStyle{Text: ui.RGBA(255, 255, 255, 1), Background: color, Bold: true}).
 					Tooltip("当前检出位置 (HEAD)")
 			}
 			badges := groupCommitRefs(tab.refs[item.hash], tab.query.hideRemote)
@@ -1223,23 +1254,19 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 					if len(b.remotes) > 0 {
 						tip = "本地分支 " + b.name + " · 同步远端 " + strings.Join(b.remotes, ", ") + "（右键更多操作）"
 					}
-					pill := ui.Row(c.Key(fmt.Sprintf("ref-branch-%s-%s", hashHex(item.hash), b.name))).
-						Gap(4).AlignItems(ui.Center).Shrink(0).
-						Background(color.Alpha(0.14)).Border(1, color.Alpha(0.45)).Padding(1, 6).Radius(4).
+					pill := chipSoft(c, fmt.Sprintf("ref-branch-%s-%s", hashHex(item.hash), b.name), b.name, color, true).
 						Cursor(ui.CursorPointer).Tooltip(tip)
 					pill.ContextMenu(func(m *ui.Menu) {
 						a.branchBadgeMenu(c, m, tab, commitCopy, b.name)
 					})
-					pill.Children(func() {
-						ui.Text(c, b.name).FontWeight(600).SingleLine().TextColor(color)
-						if len(b.remotes) > 0 {
+					if len(b.remotes) > 0 {
+						pill.Children(func() {
 							ui.Text(c, "· "+strings.Join(b.remotes, ",")).FontSize(11).SingleLine().TextColor(muted)
-						}
-					})
+						})
+					}
 				case refRemote:
-					pill := ui.Row(c.Key(fmt.Sprintf("ref-remote-%s-%s", hashHex(item.hash), b.name))).
-						AlignItems(ui.Center).Shrink(0).
-						Background(t.Surface).Border(1, t.Border).Padding(1, 6).Radius(4).
+					pill := chip(c, fmt.Sprintf("ref-remote-%s-%s", hashHex(item.hash), b.name), b.name,
+						chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
 						Cursor(ui.CursorPointer).Tooltip("远程分支 " + b.name + "（双击检出跟踪分支，右键更多操作）")
 					if pill.RowDoubleClicked() {
 						a.openCommitWrite(tab, writeBranch, commitCopy)
@@ -1253,19 +1280,11 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 					pill.ContextMenu(func(m *ui.Menu) {
 						a.remoteBadgeMenu(c, m, tab, commitCopy, b.name)
 					})
-					pill.Children(func() {
-						ui.Text(c, b.name).SingleLine().TextColor(muted)
-					})
 				case refTag:
-					pill := ui.Row(c.Key(fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name))).
-						AlignItems(ui.Center).Shrink(0).
-						Background(t.Warning.Alpha(0.14)).Border(1, t.Warning.Alpha(0.45)).Padding(1, 6).Radius(4).
+					pill := chipSoft(c, fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name), "标签 "+b.name, t.Warning, false).
 						Cursor(ui.CursorPointer).Tooltip("标签 " + b.name + "（右键更多操作）")
 					pill.ContextMenu(func(m *ui.Menu) {
 						a.tagBadgeMenu(c, m, tab, commitCopy, b.name)
-					})
-					pill.Children(func() {
-						ui.Text(c, "标签 "+b.name).SingleLine().TextColor(t.Warning)
 					})
 				}
 			}
