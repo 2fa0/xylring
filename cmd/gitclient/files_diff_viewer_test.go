@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
@@ -495,6 +496,7 @@ func TestDiffFindInView(t *testing.T) {
 	// 2. Type query in find bar
 	assertFindBarVisible(t, tt)
 	tt.Type("xylring")
+	tt.Advance(findQueryDelay)
 	tt.Frame()
 	if tab.diff.Cursor() != len("hello xylring") || !tt.HasText("1 of 1") {
 		t.Fatalf("查找未选中匹配: cursor=%d, texts=%v", tab.diff.Cursor(), tt.Texts())
@@ -634,6 +636,7 @@ func TestDiffFindAboveCollapsedLines(t *testing.T) {
 			}
 			tt.Key(commandModifier(), ui.KeyA)
 			tt.Type("new")
+			tt.Advance(findQueryDelay)
 			tt.Frame()
 			if !tt.HasText("1 of 1") {
 				t.Fatalf("查找未匹配新内容: %v", tt.Texts())
@@ -647,6 +650,73 @@ func TestDiffFindAboveCollapsedLines(t *testing.T) {
 				if err := png.Encode(f, tt.Image()); err != nil {
 					t.Fatal(err)
 				}
+			}
+		})
+	}
+}
+
+func TestDiffFindTypingSettles(t *testing.T) {
+	for _, layout := range []editor.DiffLayout{editor.DiffSplit, editor.DiffUnified} {
+		t.Run(fmt.Sprint(layout), func(t *testing.T) {
+			common := strings.Repeat("unchanged line\n", 300)
+			diff := &editor.DiffState{
+				Old:           editor.NewBuffer(common + "old\n"),
+				New:           editor.NewBuffer(common + "if needle\nif next\n"),
+				Layout:        layout,
+				RenderFindBar: renderFindBar,
+			}
+			tt := ui.NewTester(func(c *ui.Context) {
+				editor.DiffView(c, diff).Fill()
+			}, 1100, 500)
+			defer retireTester(tt)
+			tt.Frame()
+			diff.Run(editor.Find)
+			tt.Frame()
+			panel, _ := tt.Find("文件内查找")
+			// The status row keeps its room with an empty query, so the panel
+			// does not grow as the first character arrives.
+			tt.Key(commandModifier(), ui.KeyA)
+			tt.Key(0, ui.KeyBackspace)
+			tt.Frame()
+			if empty, _ := tt.Find("文件内查找"); empty != panel {
+				t.Fatalf("清空后面板伸缩: %+v, 期望 %+v", empty, panel)
+			}
+			cursor, scroll := diff.Cursor(), diff.ScrollY()
+			for _, char := range []string{"i", "f"} {
+				tt.Type(char)
+				tt.Advance(100 * time.Millisecond)
+				if diff.Cursor() != cursor || diff.ScrollY() != scroll {
+					t.Fatal("输入未结束时正文发生了定位跳动")
+				}
+				if typing, _ := tt.Find("文件内查找"); typing != panel {
+					t.Fatalf("输入中面板伸缩: %+v, 期望 %+v", typing, panel)
+				}
+			}
+			tt.Advance(findQueryDelay)
+			if !tt.HasText("1 of 2") || diff.Cursor() != len(common+"if") {
+				t.Fatalf("输入停顿后未定位匹配: cursor=%d texts=%v", diff.Cursor(), tt.Texts())
+			}
+			if after, _ := tt.Find("文件内查找"); after != panel {
+				t.Fatalf("结果更新导致面板伸缩: before=%+v after=%+v", panel, after)
+			}
+			for range 3 {
+				scroll := diff.ScrollY()
+				tt.Frame()
+				if tt.FramePending() || diff.ScrollY() != scroll || !tt.Focused("查找内容") {
+					t.Fatal("匹配后视图没有稳定或输入框丢失焦点")
+				}
+			}
+			// Enter searches the latest input without waiting for the delay.
+			tt.Type(" needle")
+			tt.Key(0, ui.KeyEnter)
+			if !tt.HasText("1 of 1") || diff.Cursor() != len(common+"if needle") {
+				t.Fatalf("回车没有立即查询最新输入: %v", tt.Texts())
+			}
+			// Clearing the query removes matches immediately.
+			tt.Key(commandModifier(), ui.KeyA)
+			tt.Key(0, ui.KeyBackspace)
+			if tt.HasText("1 of 1") || tt.HasText("No results") {
+				t.Fatal("清空后仍显示旧结果")
 			}
 		})
 	}
@@ -687,6 +757,7 @@ func TestDiffFindBothSidesAcceptInput(t *testing.T) {
 	tt.ClickAt(left.X+30, left.Y+left.H/2)
 	tt.Key(commandModifier(), ui.KeyA)
 	tt.Type("leftneedle")
+	tt.Advance(findQueryDelay)
 	tt.Frame()
 	if *leftQuery != "leftneedle" {
 		t.Fatalf("左侧查找框无法独立输入：left=%q, right=%q", *leftQuery, *rightQuery)
@@ -695,6 +766,7 @@ func TestDiffFindBothSidesAcceptInput(t *testing.T) {
 	tt.ClickAt(left.X+550.5+30, left.Y+left.H/2)
 	tt.Key(commandModifier(), ui.KeyA)
 	tt.Type("rightneedle")
+	tt.Advance(findQueryDelay)
 	tt.Frame()
 	if *rightQuery != "rightneedle" || *leftQuery != "leftneedle" {
 		t.Fatalf("左右查找内容串扰：left=%q, right=%q", *leftQuery, *rightQuery)
@@ -707,6 +779,7 @@ func TestDiffFindBothSidesAcceptInput(t *testing.T) {
 	tt.ClickAt(left.X+30, left.Y+left.H/2)
 	tt.Key(commandModifier(), ui.KeyA)
 	tt.Type("old text")
+	tt.Advance(findQueryDelay)
 	tt.Frame()
 	if *leftQuery != "old text" {
 		t.Fatal("关闭右侧后左侧无法继续输入")
