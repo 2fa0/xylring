@@ -12,4 +12,4 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 )
 
-require github.com/egoist/mygo v0.7.4
+require github.com/egoist/mygo v0.8.3
