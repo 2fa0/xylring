@@ -101,6 +101,12 @@ var iconColumns2SVG []byte
 //go:embed icons/rows-2.svg
 var iconRows2SVG []byte
 
+//go:embed icons/tree-rings.svg
+var iconTreeRingsSVG []byte
+
+//go:embed icons/settings.svg
+var iconRingSettingsSVG []byte
+
 var (
 	iconFolder      = ui.MustParseSVG(iconFolderSVG)
 	iconFolderPlus  = ui.MustParseSVG(iconFolderPlusSVG)
@@ -133,6 +139,11 @@ var (
 	iconCheck       = ui.MustParseSVG(iconCheckSVG)
 	iconColumns2    = ui.MustParseSVG(iconColumns2SVG)
 	iconRows2       = ui.MustParseSVG(iconRows2SVG)
+)
+
+var (
+	iconTreeRings    = ui.MustParseSVG(iconTreeRingsSVG)
+	iconRingSettings = ui.MustParseSVG(iconRingSettingsSVG)
 )
 
 func iconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {

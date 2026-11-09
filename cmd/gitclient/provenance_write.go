@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -145,14 +146,22 @@ func clearStamp(ctx context.Context, dir string) error {
 
 const ringHookMarker = "# xylring-ring-hook v1"
 
+const strictHookMarker = "# xylring-strict-hook v1"
+
+//go:embed ring_check.sh
+var strictRingScript string
+
 // Custom hooksPath directories always require manual integration. This also
 // avoids silently changing a shared or externally managed hook directory.
 func ringHookPath(ctx context.Context, dir string) (string, error) {
+	return provenanceHookPath(ctx, dir, "prepare-commit-msg")
+}
+func provenanceHookPath(ctx context.Context, dir, name string) (string, error) {
 	out, _ := runGit(ctx, dir, "config", "--get", "core.hooksPath")
 	if strings.TrimSpace(string(out)) != "" {
 		return "", errors.New("需手动集成：已设置 core.hooksPath，请在现有 Hook 中调用年轮脚本")
 	}
-	return gitFile(ctx, dir, "hooks/prepare-commit-msg")
+	return gitFile(ctx, dir, "hooks/"+name)
 }
 func ringHookStatus(ctx context.Context, dir string) string {
 	path, err := ringHookPath(ctx, dir)
@@ -172,7 +181,10 @@ func ringHookStatus(ctx context.Context, dir string) string {
 	return "未开启"
 }
 func installRingHook(ctx context.Context, dir string) error {
-	path, err := ringHookPath(ctx, dir)
+	return installProvenanceHook(ctx, dir, "prepare-commit-msg", ringHookMarker, ringHookScript())
+}
+func installProvenanceHook(ctx context.Context, dir, name, marker, script string) error {
+	path, err := provenanceHookPath(ctx, dir, name)
 	if err != nil {
 		return err
 	}
@@ -181,11 +193,11 @@ func installRingHook(ctx context.Context, dir string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if strings.Contains(string(b), ringHookMarker) {
+	if strings.Contains(string(b), marker) {
 		return nil
 	}
 	if _, err := os.Lstat(path + ".xylring-orig"); err == nil {
-		return errors.New("备份 Hook 已存在，请先检查 prepare-commit-msg.xylring-orig")
+		return fmt.Errorf("备份 Hook 已存在，请先检查 %s.xylring-orig", name)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -195,7 +207,7 @@ func installRingHook(ctx context.Context, dir string) error {
 			return err
 		}
 	}
-	if err := os.WriteFile(path, []byte(ringHookScript()), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 		if existed {
 			_ = os.Rename(path+".xylring-orig", path)
 		}
@@ -204,7 +216,10 @@ func installRingHook(ctx context.Context, dir string) error {
 	return nil
 }
 func uninstallRingHook(ctx context.Context, dir string) error {
-	path, err := ringHookPath(ctx, dir)
+	return uninstallProvenanceHook(ctx, dir, "prepare-commit-msg", "# xylring-ring-hook")
+}
+func uninstallProvenanceHook(ctx context.Context, dir, name, marker string) error {
+	path, err := provenanceHookPath(ctx, dir, name)
 	if err != nil {
 		return err
 	}
@@ -215,7 +230,7 @@ func uninstallRingHook(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(b), "# xylring-ring-hook") {
+	if !strings.Contains(string(b), marker) {
 		return errors.New("现有 Hook 不属于 Xylring，未修改")
 	}
 	if err := os.Remove(path); err != nil {
@@ -268,6 +283,14 @@ AI-Agent: <your agent/product name>
 AI-Model: <your exact model name>
 
 Only include AI-Model if you are certain of your exact model name; never guess.
+Use exactly one nonempty AI-Agent and at most one nonempty AI-Model.
+Assisted-by and Co-authored-by do not replace the AI-Agent trailer.
+After committing, inspect git log -1 --format=%B and fix missing or invalid
+trailers on this task's own commit before reporting completion.
+If a provenance hook rejects the message, follow its template and retry normally.
+Never bypass it with --no-verify, core.hooksPath overrides, or hook changes.
+Never declare AI-Agent: human for AI-assisted work. Strict mode reserves that
+value for explicitly human-only commits; an unknown model is omitted instead.
 Do not add these trailers to commits the user authored without your help.
 If you ran xylring stamp during this task, run xylring stamp --clear when finished.
 <!-- xylring:provenance:end -->

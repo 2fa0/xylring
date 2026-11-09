@@ -80,11 +80,39 @@ func (a *app) ringAction(t *repoTab, action string) {
 	}()
 }
 func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
-	label := "年轮 · " + t.ring.status
-	if t.ring.status == "" {
-		label = "年轮 · 未开启"
+	th := c.Theme()
+	wood := ui.Hex("#986b46")
+	if th.Dark {
+		wood = ui.Hex("#cba47c")
 	}
-	if ui.Button(c.Key(key), label).Tooltip("管理本仓库终端提交的年轮记录").Clicked() {
+	status := t.ring.status
+	if status == "" {
+		status = "未开启"
+	}
+	row := ui.ButtonBase(c.Key(key)).Label("年轮 · "+status).
+		Tooltip("管理本仓库终端提交的年轮记录").
+		FillWidth().MinWidth(0).Shrink(0).Padding(6, 8).Gap(9).
+		Radius(22).Border(1, th.Border).Background(th.Surface).
+		AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
+	switch {
+	case row.Pressed():
+		row.Background(th.SurfacePressed)
+	case row.Hovered():
+		row.Background(th.SurfaceHover)
+	}
+	row.Children(func() {
+		ui.Box(c).Size(28, 28).Radius(14).Background(wood.Alpha(0.12)).Center().Shrink(0).Children(func() {
+			ui.Icon(c, iconTreeRings).Size(22, 22).TextColor(wood)
+		})
+		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+			ui.Text(c, "年轮").FontSize(13).FontWeight(600).TextColor(th.Text).SingleLine()
+			ui.Text(c, status).FontSize(11).TextColor(th.TextMuted).SingleLine().MinWidth(0)
+		})
+		ui.Box(c).Size(24, 24).Radius(12).Border(1, th.Border).Center().Shrink(0).Children(func() {
+			ui.Icon(c, iconRingSettings).Size(13, 13).TextColor(th.TextMuted)
+		})
+	})
+	if row.Clicked() {
 		t.ring.open = true
 		a.refreshRing(t)
 	}
@@ -95,7 +123,7 @@ func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
 func provenanceInputs(c *ui.Context, key string, p *provenance, disabled bool) bool {
 	changed := false
 	ui.Row(c).Gap(6).FillWidth().Children(func() {
-		if ui.TextInput(c.Key(key+"-agent"), &p.agent).Placeholder("Agent（留空为纯人工）").Label("AI Agent").Grow(1).MinWidth(0).Disabled(disabled).Changed() {
+		if ui.TextInput(c.Key(key+"-agent"), &p.agent).Placeholder("Agent（严格模式人工填 human）").Label("AI Agent").Grow(1).MinWidth(0).Disabled(disabled).Changed() {
 			changed = true
 		}
 		if ui.TextInput(c.Key(key+"-model"), &p.model).Placeholder("模型（确知时填写）").Label("AI 模型").Grow(1).MinWidth(0).Disabled(disabled).Changed() {

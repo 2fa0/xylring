@@ -6,16 +6,48 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 )
 
 func runRingCLI(ctx context.Context, dir string, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("用法：xylring stamp … 或 ring install|uninstall|status|snippet|script")
+		return errors.New("用法：xylring stamp … 或 ring install|uninstall|status|snippet|script 或 ring strict install|uninstall|status|script")
 	}
 	if args[0] == "ring" {
+		if len(args) >= 2 && args[1] == "strict" {
+			if len(args) != 3 {
+				return errors.New("用法：xylring ring strict install|uninstall|status|script")
+			}
+			switch args[2] {
+			case "install":
+				return installProvenanceHook(ctx, dir, "commit-msg", strictHookMarker, strictRingScript)
+			case "uninstall":
+				return uninstallProvenanceHook(ctx, dir, "commit-msg", strictHookMarker)
+			case "status":
+				path, err := provenanceHookPath(ctx, dir, "commit-msg")
+				if err != nil {
+					return err
+				}
+				b, err := os.ReadFile(path)
+				if err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				status := "严格模式未开启"
+				if strings.Contains(string(b), strictHookMarker) {
+					status = "严格模式已开启（v1）"
+				}
+				fmt.Fprintln(out, status)
+				return nil
+			case "script":
+				fmt.Fprint(out, strictRingScript)
+				return nil
+			}
+			return errors.New("未知 ring strict 子命令")
+		}
 		if len(args) != 2 {
-			return errors.New("用法：xylring ring install|uninstall|status|snippet|script")
+			return errors.New("用法：xylring ring install|uninstall|status|snippet|script 或 ring strict install|uninstall|status|script")
 		}
 		switch args[1] {
 		case "install":
