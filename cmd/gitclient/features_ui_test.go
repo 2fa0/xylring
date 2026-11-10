@@ -32,7 +32,7 @@ func TestHistoryControlsStayVisible(t *testing.T) {
 				tt.SetDark(dark)
 				tt.Frame()
 				hoverSelectedFile(t, tt, tab)
-				for _, text := range []string{"搜索", "本地分支", "全部分支", "筛选分支", "图谱", "复制哈希", "完整信息", "复制路径", "文件历史", "获取", "比较"} {
+				for _, text := range []string{"搜索", "本地分支", "全部分支", "筛选分支", "图谱", "复制哈希", "完整信息", "复制路径", "文件历史", "同步", "比较"} {
 					r, ok := tt.Find(text)
 					if !ok || r.W <= 0 || r.H <= 0 || r.X < 0 || r.Y < 0 || r.X+r.W > float32(size.w)+1 || r.Y+r.H > float32(size.h)+1 {
 						t.Fatalf("%q is outside the window: %+v", text, r)

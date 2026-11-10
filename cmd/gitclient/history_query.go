@@ -660,18 +660,6 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 	}
 
 	actionButtons := func() {
-		fetchBtn := iconButton(c, "fetch", "获取", iconDownload).Shrink(0).Disabled(t.loading || a.fetch.busy)
-		fetchBtn.ContextMenu(func(m *ui.Menu) {
-			if m.Item("立即获取").Chosen() {
-				a.quickFetch(t)
-			}
-			if m.Item("获取选项…").Chosen() {
-				a.openFetch(t)
-			}
-		})
-		if fetchBtn.Clicked() {
-			a.quickFetch(t)
-		}
 		if iconButton(c, "compare", "比较", iconGitCompare).Shrink(0).Disabled(t.loading).Clicked() {
 			a.openCompareModal(t)
 		}
