@@ -11,8 +11,17 @@ func TestFetchDialogOpensFromToolbar(t *testing.T) {
 	a := &app{tabs: []*repoTab{tab}, dispatch: func(func()) {}}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if err := tt.RightClick("获取"); err != nil {
+	if err := tt.Click("同步"); err != nil {
 		t.Fatal(err)
+	}
+	for _, label := range []string{"获取远程更新", "拉取到当前分支", "推送当前分支", "获取选项…"} {
+		found := false
+		for _, item := range tt.Menu() {
+			found = found || item == label
+		}
+		if !found {
+			t.Fatalf("missing sync action %q in %q", label, tt.Menu())
+		}
 	}
 	if err := tt.ChooseMenuItem("获取选项…"); err != nil {
 		t.Fatal(err)
@@ -30,7 +39,10 @@ func TestFetchDialogOpensFromToolbar(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if err := tt.Click("获取"); err != nil {
+	if err := tt.Click("同步"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("获取远程更新"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

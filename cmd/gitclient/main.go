@@ -380,27 +380,33 @@ func (a *app) chrome(c *ui.Context) {
 				return
 			}
 			if tab != nil {
-				pullTip := "从远程拉取更新 (git pull)"
-				if tab.behind > 0 {
-					pullTip = fmt.Sprintf("从远程拉取更新 (git pull) [落后 %d 个提交]", tab.behind)
-				}
-				if chromeIconButton(c, "topbar-pull", "拉取", iconArrowDown).
-					Disabled(tab.unavailable || tab.loading || a.write.busy || tab.syncBusy).
-					Tooltip(pullTip).
-					Clicked() {
-					a.quickPull(tab)
-				}
-
-				pushTip := "推送到远程 (git push)"
-				if tab.ahead > 0 {
-					pushTip = fmt.Sprintf("推送到远程 (git push) [领先 %d 个提交]", tab.ahead)
-				}
-				if chromeIconButton(c, "topbar-push", "推送", iconUpload).
-					Disabled(tab.unavailable || tab.loading || a.write.busy || tab.syncBusy).
-					Tooltip(pushTip).
-					Clicked() {
-					a.quickPush(tab)
-				}
+				disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
+				ui.MenuButton(c.Key("topbar-sync"), "同步", func(m *ui.Menu) {
+					if m.Item("获取远程更新").Disabled(disabled).
+						Tooltip("git fetch --all：更新远程分支信息，不修改本地代码").Chosen() {
+						a.quickFetch(tab)
+					}
+					pullLabel := "拉取到当前分支"
+					if tab.behind > 0 {
+						pullLabel += fmt.Sprintf("（落后 %d 个提交）", tab.behind)
+					}
+					if m.Item(pullLabel).Disabled(disabled).
+						Tooltip("git pull：获取并整合远程更新，会修改本地代码").Chosen() {
+						a.quickPull(tab)
+					}
+					pushLabel := "推送当前分支"
+					if tab.ahead > 0 {
+						pushLabel += fmt.Sprintf("（领先 %d 个提交）", tab.ahead)
+					}
+					if m.Item(pushLabel).Disabled(disabled).
+						Tooltip("git push：将当前分支的本地提交推送到远程").Chosen() {
+						a.quickPush(tab)
+					}
+					m.Separator()
+					if m.Item("获取选项…").Disabled(disabled).Chosen() {
+						a.openFetch(tab)
+					}
+				}).Height(26).Padding(0, 8).FontSize(12).Shrink(0).Disabled(disabled)
 			}
 			if tab == nil {
 				return
