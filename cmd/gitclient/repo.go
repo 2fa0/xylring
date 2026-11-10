@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -129,6 +130,9 @@ func (a *app) openRepo(path string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		root, err := repoRoot(ctx, path)
+		if _, statErr := os.Stat(path); statErr == nil && !isGitWorkTree(path) {
+			err = errRepoUnavailable
+		}
 		a.post(func() {
 			if err != nil {
 				a.setBanner(trimMsg(err.Error()), path)
@@ -331,6 +335,7 @@ func (a *app) reload(t *repoTab) {
 	t.err, t.locateErr, t.notice = "", "", ""
 	t.locateHash = zeroHash
 	path, query := t.path, t.query
+	previousWatch := t.refWatch
 	query.provs = &t.provenance
 	n := max(pageFirst, len(t.commits))
 	budget := max(int64(historyMemoryStep), t.historyBudget)
@@ -343,6 +348,15 @@ func (a *app) reload(t *repoTab) {
 		defer cancel()
 		watch := newRefWatch(ctx, path)
 		meta, err := loadMeta(ctx, path)
+		if err == nil && previousWatch.replaced(path, watch) {
+			a.post(func() {
+				if t.generation == gen && !t.closed {
+					a.resetRepoHistory(t)
+					a.reload(t)
+				}
+			})
+			return
+		}
 		if err == nil {
 			meta.ringStatus = ringHookStatus(ctx, path)
 			meta.stamp, _ = readStamp(ctx, path)
@@ -390,9 +404,14 @@ func (a *app) reload(t *repoTab) {
 				if p != nil {
 					p.close()
 				}
-				t.err = err.Error()
+				if errors.Is(err, errRepoUnavailable) {
+					a.markRepoUnavailable(t)
+				} else {
+					t.err = err.Error()
+				}
 				return
 			}
+			t.unavailable = false
 			t.historyTips, t.metaKey, t.pager = tips, key, p
 			t.refWatch, t.refsChecked = watch, time.Now()
 			if a.activeTab() != t || !more {

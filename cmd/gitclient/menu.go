@@ -84,9 +84,9 @@ func (a *app) syncMenu() {
 	empty := tab == nil && len(a.found) <= 1
 	a.setMenuEnabled("toggle-sidebar", !empty)
 	a.setMenuEnabled("toggle-bottom-full-width", has)
-	a.setMenuEnabled("fetch", has && !a.fetch.busy && !a.write.busy)
+	a.setMenuEnabled("fetch", has && !tab.unavailable && !a.fetch.busy && !a.write.busy)
 	a.setMenuEnabled("refresh", has && !busy)
-	a.setMenuEnabled("compare", has && !busy)
+	a.setMenuEnabled("compare", has && !tab.unavailable && !busy)
 	a.setMenuEnabled("close-tab", has)
 }
 

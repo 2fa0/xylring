@@ -51,6 +51,7 @@ type repoTab struct {
 	loading          bool
 	loaded           bool
 	err              string
+	unavailable      bool
 	holdAuto         bool
 	closed           bool
 	checking         bool

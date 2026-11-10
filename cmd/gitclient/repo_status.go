@@ -22,13 +22,21 @@ func queryRepoSummary(ctx context.Context, dir string) repoSummary {
 	if dir == "" {
 		return s
 	}
+	if !isGitWorkTree(dir) {
+		s.branch = "仓库不可用"
+		return s
+	}
 	branch, err := runGit(ctx, dir, "symbolic-ref", "-q", "--short", "HEAD")
 	if err == nil {
 		s.branch = strings.TrimSpace(string(branch))
 	} else if short, serr := runGit(ctx, dir, "rev-parse", "--short", "HEAD"); serr == nil {
 		s.branch = "分离头指针 " + strings.TrimSpace(string(short))
 	} else {
-		s.branch = "尚无提交"
+		if _, e := runGit(ctx, dir, "rev-parse", "--git-dir"); e != nil {
+			s.branch = "仓库不可用"
+		} else {
+			s.branch = "尚无提交"
+		}
 	}
 	out, err := runGit(ctx, dir, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	if err == nil {

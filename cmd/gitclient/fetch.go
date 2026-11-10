@@ -64,7 +64,7 @@ func fetchAll(ctx context.Context, dir string, opts fetchOpts) error {
 }
 
 func (a *app) quickFetch(tab *repoTab) {
-	if tab == nil {
+	if tab == nil || tab.unavailable {
 		return
 	}
 	tab.stopAutoFetch()
@@ -116,7 +116,7 @@ func (a *app) quickFetch(tab *repoTab) {
 }
 
 func (a *app) openFetch(tab *repoTab) {
-	if tab == nil {
+	if tab == nil || tab.unavailable {
 		return
 	}
 	tab.stopAutoFetch()
@@ -260,7 +260,7 @@ func (t *repoTab) stopAutoFetch() {
 
 func (a *app) maybeAutoFetch() {
 	t := a.activeTab()
-	if a.closed || t == nil || t.closed || t.loading || t.fetching || !t.loaded {
+	if a.closed || t == nil || t.closed || t.unavailable || t.loading || t.fetching || !t.loaded {
 		return
 	}
 	if a.fetch.busy || a.showFetch || a.write.busy {

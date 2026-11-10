@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"sort"
 	"unsafe"
 
@@ -188,7 +189,12 @@ func (t *repoTab) evictHistory() {
 	t.restore = l
 	t.restoreDiff, t.restoreFile = nil, ""
 	t.commits, t.authors, t.commitIndex = nil, nil, nil
-	t.refs, t.historyTips, t.refWatch = nil, nil, nil
+	t.refs, t.historyTips = nil, nil
+	// Keep only the repository identity so a rebuild while evicted resets old queries.
+	if t.refWatch != nil {
+		marker := filepath.Join(t.path, ".git")
+		t.refWatch = refWatch{marker: t.refWatch[marker]}
+	}
 	t.metaKey = ""
 	t.graph = graph{}
 	t.historyBytes = 0

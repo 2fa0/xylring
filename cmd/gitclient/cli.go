@@ -13,7 +13,7 @@ import (
 	"github.com/egoist/mygo"
 )
 
-const defaultVersion = "0.8.0"
+const defaultVersion = "0.8.1"
 
 func getAppVersion() string {
 	if v := mygo.App.Version(); v != "" {

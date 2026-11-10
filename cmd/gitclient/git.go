@@ -58,6 +58,18 @@ func gitEnv() []string {
 	return mergeGitEnv(nil)
 }
 
+// Commands on an opened repository must not fall back to a parent repository.
+func repoGitEnv(dir string, extra []string) []string {
+	abs, err := filepath.Abs(dir)
+	if err == nil {
+		if real, e := filepath.EvalSymlinks(abs); e == nil {
+			abs = real
+		}
+		extra = append([]string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(abs)}, extra...)
+	}
+	return mergeGitEnv(extra)
+}
+
 func mergeGitEnv(extra []string) []string {
 	drop := map[string]bool{
 		"LC_ALL": true, "LANG": true, "LC_MESSAGES": true,
@@ -140,7 +152,7 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	hideConsoleWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
-	cmd.Env = mergeGitEnv(extraEnv)
+	cmd.Env = repoGitEnv(dir, extraEnv)
 	stdout := limitedBuffer{limit: limit, cancel: cancel}
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stdout = &stdout
@@ -193,7 +205,8 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 	if !info.IsDir() {
 		return "", errors.New("不是 Git 仓库")
 	}
-	out, err := runGit(ctx, dir, "rev-parse", "--show-toplevel")
+	// Opening a directory deliberately allows discovery of an enclosing repository.
+	out, err := runGitExtra(ctx, dir, 16<<20, []string{"GIT_CEILING_DIRECTORIES=" + os.Getenv("GIT_CEILING_DIRECTORIES")}, "rev-parse", "--show-toplevel")
 	if err != nil {
 		if strings.Contains(err.Error(), "找不到 git") {
 			return "", err
@@ -346,7 +359,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	hideConsoleWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
-	cmd.Env = gitEnv()
+	cmd.Env = repoGitEnv(dir, nil)
 	cmd.Stdin = strings.NewReader(input)
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stderr = &stderr
@@ -517,8 +530,13 @@ type repoMeta struct {
 	hasUpstream bool
 }
 
+var errRepoUnavailable = errors.New("仓库不可用：.git 已被删除或无法访问。恢复 .git 或重新初始化后将自动重新加载；git init 不会恢复原提交历史。")
+
 func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 	var m repoMeta
+	if !isGitWorkTree(dir) {
+		return m, errRepoUnavailable
+	}
 	m.refs = map[[20]byte][]refInfo{}
 	if branch, err := runGit(ctx, dir, "symbolic-ref", "-q", "--short", "HEAD"); err == nil {
 		m.branch = strings.TrimSpace(string(branch))
@@ -539,6 +557,9 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 	m.behind = sync.behind
 	rawRefs, err := runGit(ctx, dir, "for-each-ref", "--format=%(objectname) %(refname) %(*objectname)")
 	if err != nil {
+		if strings.Contains(err.Error(), "not a git repository") {
+			return m, errRepoUnavailable
+		}
 		return m, err
 	}
 	m.refs = parseRefs(rawRefs)
