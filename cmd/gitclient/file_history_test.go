@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -192,5 +193,59 @@ func TestFileHistoryFromLaterFile(t *testing.T) {
 	tt.Frame()
 	if tab.query.filePath != want {
 		t.Fatalf("file history path=%q want=%q", tab.query.filePath, want)
+	}
+}
+
+func TestFileHistoryFromContextMenu(t *testing.T) {
+	dir, git := initTestRepo(t)
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o600)
+	}
+	git("add", ".")
+	git("commit", "-m", "four files")
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		os.WriteFile(filepath.Join(dir, name), []byte("changed\n"), 0o600)
+	}
+	for _, worktree := range []bool{true, false} {
+		for _, view := range []int{0, 1} {
+			for _, path := range []string{"a.txt", "d.txt"} {
+				t.Run(fmt.Sprintf("worktree=%t/view=%d/%s", worktree, view, path), func(t *testing.T) {
+					tab := newTab(1, dir)
+					updates := make(chan func(), 64)
+					a := &app{tabs: []*repoTab{tab}, fileView: view, dispatch: func(fn func()) { updates <- fn }}
+					defer tab.cancel()
+					a.reload(tab)
+					waitUpdates(t, updates, func() bool { return !tab.loading })
+					if worktree {
+						a.showWorktree(tab)
+					} else {
+						a.selectCommit(tab, tab.rowIndex(tab.head))
+					}
+					waitUpdates(t, updates, func() bool { return !tab.compareLoading && !tab.diffLoading })
+					tt := ui.NewTester(a.view, 1100, 720)
+					tt.Frame()
+					if err := tt.RightClick(path); err != nil {
+						t.Fatal(err)
+					}
+					if err := tt.ChooseMenuItem("查看文件历史"); err != nil {
+						t.Fatal(err)
+					}
+					waitUpdates(t, updates, func() bool { return !tab.loading })
+					tt.Frame()
+					tt.Frame()
+					if tab.query.filePath != path || len(tab.commits) != 1 {
+						t.Fatalf("history path=%q commits=%d", tab.query.filePath, len(tab.commits))
+					}
+					if err := tt.Click("返回"); err != nil {
+						t.Fatal(err)
+					}
+					waitUpdates(t, updates, func() bool { return !tab.loading && !tab.compareLoading && !tab.diffLoading })
+					tt.Frame()
+					if tab.query.filePath != "" || tab.worktree != worktree || len(tab.compareFiles) != 4 {
+						t.Fatal("return lost comparison")
+					}
+				})
+			}
+		}
 	}
 }

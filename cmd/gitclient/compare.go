@@ -1401,6 +1401,7 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 		}
 	}
 	selectedRow := currentSel
+	var action func()
 	t.fileList.Selected = &selectedRow
 	t.fileList.Key = func(i int) any {
 		if i >= 0 && i < len(indices) && indices[i] >= 0 && indices[i] < len(t.compareFiles) {
@@ -1436,7 +1437,7 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 			a.openFileTabAt(t, origIdx)
 		}
 		row.ContextMenu(func(m *ui.Menu) {
-			a.fileRowMenu(c, m, t, origIdx)
+			action = a.fileRowMenu(c, m, t, origIdx)
 		})
 		row.Children(func() {
 			ui.Row(c).Gap(6).MinWidth(0).AlignItems(ui.Center).Children(func() {
@@ -1450,6 +1451,10 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 			a.fileHoverActions(c, t, origIdx, hovered)
 		})
 	}).Grow(1).MinHeight(0).Padding(4, 8).Gap(2).TrackScroll(&t.fileListScroll)
+	if action != nil {
+		action()
+		return
+	}
 	if list.Changed() && selectedRow >= 0 && selectedRow < len(indices) {
 		t.fileSel = indices[selectedRow]
 		a.loadFileDiff(t, t.fileSel)
@@ -1477,6 +1482,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 		}
 		return t.compareFiles[n.file].label()
 	}
+	var action func()
 	outline := ui.Outline(c.Key(fmt.Sprintf("compare-tree-%d", t.id)), &t.fileOutline, tree.roots, tree.children, func(key string) {
 		n := tree.nodes[key]
 		tip := key
@@ -1492,7 +1498,7 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 				a.openFileTabAt(t, idx)
 			}
 			row.ContextMenu(func(m *ui.Menu) {
-				a.fileRowMenu(c, m, t, idx)
+				action = a.fileRowMenu(c, m, t, idx)
 			})
 		}
 		row.Children(func() {
@@ -1507,6 +1513,10 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 			}
 		})
 	}).Grow(1).MinHeight(0).Padding(4, 6).Gap(1).TrackScroll(&t.fileTreeScroll)
+	if action != nil {
+		action()
+		return
+	}
 	if outline.Changed() {
 		if t.fileOutlineSel < 0 || t.fileOutlineSel >= t.fileOutline.Rows() {
 			return
@@ -1520,10 +1530,12 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 	}
 }
 
-func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) {
+// Return history navigation so it cannot clear compareFiles while rows are being built.
+func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func() {
 	if idx < 0 || idx >= len(t.compareFiles) {
-		return
+		return nil
 	}
+	var after func()
 	f := t.compareFiles[idx]
 	if m.Item("在新标签页打开").Chosen() {
 		a.openFileTabAt(t, idx)
@@ -1549,7 +1561,7 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) {
 	}
 	if t.query.filePath == "" {
 		if m.Item("查看文件历史").Chosen() {
-			a.openFileHistoryAt(t, idx)
+			after = func() { a.openFileHistoryAt(t, idx) }
 		}
 	}
 	m.Separator()
@@ -1579,6 +1591,7 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) {
 			c.Toast("定位失败: " + err.Error())
 		}
 	}
+	return after
 }
 
 func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *simpleDiff, imgDiff *imageDiff, note string, loading bool, viewMode int, fitActual bool) {
