@@ -203,12 +203,15 @@ func (a *app) handleShortcuts(c *ui.Context) {
 			if c.Shortcut(commandModifier(), ui.KeyR) {
 				a.refresh(tab)
 			}
-			if c.Shortcut(commandModifier(), ui.KeyEnter) && strings.TrimSpace(tab.commitMsg) != "" {
-				a.runCommitWorktree(tab)
-			}
 			if c.Shortcut(commandModifier(), ui.KeyW) {
 				a.closeCurrentTab()
 				return
+			}
+			if tab.unavailable {
+				return
+			}
+			if c.Shortcut(commandModifier(), ui.KeyEnter) && strings.TrimSpace(tab.commitMsg) != "" {
+				a.runCommitWorktree(tab)
 			}
 			if !tab.loading && !a.showCompare && c.Shortcut(commandModifier(), ui.KeyD) {
 				a.openCompareModal(tab)
@@ -216,6 +219,9 @@ func (a *app) handleShortcuts(c *ui.Context) {
 		}
 	}
 	tab = a.activeTab()
+	if tab != nil && tab.unavailable {
+		return
+	}
 	if !empty && tab != nil && !a.showCompare {
 		if c.Shortcut(commandModifier(), ui.KeyF) {
 			if tab.contentTab > 0 && tab.contentTab <= len(tab.fileTabs) {
@@ -379,7 +385,7 @@ func (a *app) chrome(c *ui.Context) {
 					pullTip = fmt.Sprintf("从远程拉取更新 (git pull) [落后 %d 个提交]", tab.behind)
 				}
 				if chromeIconButton(c, "topbar-pull", "拉取", iconArrowDown).
-					Disabled(tab.loading || a.write.busy || tab.syncBusy).
+					Disabled(tab.unavailable || tab.loading || a.write.busy || tab.syncBusy).
 					Tooltip(pullTip).
 					Clicked() {
 					a.quickPull(tab)
@@ -390,7 +396,7 @@ func (a *app) chrome(c *ui.Context) {
 					pushTip = fmt.Sprintf("推送到远程 (git push) [领先 %d 个提交]", tab.ahead)
 				}
 				if chromeIconButton(c, "topbar-push", "推送", iconUpload).
-					Disabled(tab.loading || a.write.busy || tab.syncBusy).
+					Disabled(tab.unavailable || tab.loading || a.write.busy || tab.syncBusy).
 					Tooltip(pushTip).
 					Clicked() {
 					a.quickPush(tab)
@@ -637,7 +643,7 @@ func (a *app) repoItems() []string {
 func (a *app) repoList(c *ui.Context) {
 	ui.Themed(c, listTheme(c)).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Padding(6, 8, 8, 8).Children(func() {
 		a.sidebarRepoSection(c)
-		if tab := a.activeTab(); tab != nil {
+		if tab := a.activeTab(); tab != nil && !tab.unavailable {
 			a.ringStatusControl(c, tab, "sidebar-ring-settings")
 		}
 	})
@@ -890,6 +896,16 @@ func (a *app) graphMain(c *ui.Context, includeBottom bool) {
 	tab := a.activeTab()
 	if tab == nil {
 		ui.Box(c).Grow(1)
+		return
+	}
+	if tab.unavailable {
+		ui.Column(c.Key("repo-unavailable")).Grow(1).Center().Padding(24).Gap(12).Children(func() {
+			ui.Text(c, "仓库不可用").Bold().TextColor(t.Danger)
+			ui.Text(c, tab.err).FontSize(13).FillWidth().MaxWidth(560)
+			if ui.Button(c.Key("repo-retry"), "重新检查").Disabled(tab.loading).Clicked() {
+				a.reload(tab)
+			}
+		})
 		return
 	}
 	if tab.comparison != nil {

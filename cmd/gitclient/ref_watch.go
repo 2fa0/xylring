@@ -85,3 +85,13 @@ func (w refWatch) changed() bool {
 	}
 	return false
 }
+
+// A replacement can have the same refs as the old repository (including no refs).
+func (w refWatch) replaced(path string, next refWatch) bool {
+	p := filepath.Join(path, ".git")
+	old, now := w[p], next[p]
+	if old == nil || now == nil {
+		return false
+	}
+	return !os.SameFile(old, now) || !old.IsDir() && !sameFileVersion(old, now)
+}

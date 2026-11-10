@@ -65,7 +65,7 @@ func gitPush(ctx context.Context, dir string) (string, error) {
 }
 
 func (a *app) quickPull(tab *repoTab) {
-	if tab == nil {
+	if tab == nil || tab.unavailable {
 		return
 	}
 	if a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy {
@@ -98,7 +98,7 @@ func (a *app) quickPull(tab *repoTab) {
 }
 
 func (a *app) quickPush(tab *repoTab) {
-	if tab == nil {
+	if tab == nil || tab.unavailable {
 		return
 	}
 	if a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy {

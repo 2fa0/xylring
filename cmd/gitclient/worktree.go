@@ -453,10 +453,10 @@ func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
 }
 
 func (a *app) runCommitWorktree(t *repoTab) {
-	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+	if t == nil || t.unavailable {
 		return
 	}
-	if t == nil {
+	if a.write.busy || a.fetch.busy || t.commitBusy || t.syncBusy {
 		return
 	}
 	msg := strings.TrimSpace(t.commitMsg)

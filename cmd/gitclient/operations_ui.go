@@ -18,7 +18,7 @@ func (a *app) openOperation(action, target, path string) {
 		d.hub = action
 	}
 	if t := a.activeTab(); t != nil {
-		if t.syncBusy || t.commitBusy {
+		if t.syncBusy || t.commitBusy || t.unavailable && action != "克隆仓库" && action != "初始化仓库" {
 			return
 		}
 		t.stopAutoFetch()

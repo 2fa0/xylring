@@ -1,35 +1,27 @@
-# Xylring v0.8.0
+# Xylring v0.8.1
 
-Release date: 2026-11-09
+Release date: 2026-11-10
 
 ## 更新内容
 
-- **年轮溯源**：在提交列表、图谱和详情中展示 Agent 与模型，支持筛选、搜索及 GUI 编辑。
-- **终端印章**：提供仓库级 Hook、限时印章和 Agent 规则片段；支持单次消费和 Linked worktree。
-- **严格校验**：可选的 `commit-msg` Hook 与 PR 检查要求 AI 提交同时填写唯一、非空的 `AI-Agent` 和 `AI-Model`；完全人工提交使用 `AI-Agent: human`，不填写模型。
-- **年轮入口**：采用紧凑的圆角信息栏、年轮图标和两行状态文字，适配浅色与深色模式。
-- **查找栏修复**：Diff 和文件查看器使用浮层查找栏，避免遮挡分隔线或折叠内容。
-
-升级提示：重新运行 `xylring ring install` 和 `xylring ring strict install`，同步已安装的 Hook。AI 提交和印章现在必须提供真实模型名；未知时先确认，不能留空或猜测。历史提交保持不变。
+- 删除 `.git` 后明确显示“仓库不可用”，清除旧图谱与差异缓存，暂停仓库操作并保留提交说明草稿。
+- 恢复 `.git` 或重新初始化后自动重新加载仓库，清除旧分支筛选；`git init` 不会恢复已删除的提交历史。
+- 阻止已打开仓库的 Git 命令回退到父仓库，保留首次打开目录和终端子目录命令的仓库查找能力。
 
 ## Changes
 
-- Display, search, filter and edit Agent and model provenance in commit history, the graph and commit details.
-- Add repository-scoped terminal hooks, expiring stamps, single-use stamps and Agent rule snippets, with linked worktree support.
-- Require both a unique, nonempty `AI-Agent` and `AI-Model` for AI commits in optional strict hooks and PR checks. Human-only commits use `AI-Agent: human` without a model.
-- Introduce a compact rounded provenance control with a tree-ring icon and two-line status in light and dark modes.
-- Overlay find bars in diff and file viewers to avoid occlusion around separators and collapsed content.
-
-Upgrade note: rerun `xylring ring install` and `xylring ring strict install` to update installed hooks. AI commits and stamps now require an actual model name; confirm it if unknown. Existing history is unchanged.
+- Show an unavailable state when Git metadata disappears, discard stale history and diffs, and pause repository actions while preserving the commit message draft.
+- Reload restored or reinitialized repositories and reset stale branch filters. Running `git init` does not recover deleted history.
+- Prevent commands on opened repositories from falling back to a parent repository, while preserving initial directory discovery and CLI commands from subdirectories.
 
 ## 安装包 / Packages
 
 | Platform | Architecture | File |
 | --- | --- | --- |
-| macOS | Apple Silicon | `xylring-0.8.0-arm64.dmg` |
-| macOS | Intel x86_64 | `xylring-0.8.0-amd64.dmg` |
-| Windows 10 / 11 | x64 installer | `xylring-setup-0.8.0-amd64.exe` |
-| Windows 10 / 11 | x64 portable | `Xylring 0.8.0 windows-x64.zip` |
+| macOS | Apple Silicon | `xylring-0.8.1-arm64.dmg` |
+| macOS | Intel x86_64 | `xylring-0.8.1-amd64.dmg` |
+| Windows 10 / 11 | x64 installer | `xylring-setup-0.8.1-amd64.exe` |
+| Windows 10 / 11 | x64 portable | `Xylring 0.8.1 windows-x64.zip` |
 
 SHA-256 hashes are provided in `checksums.txt` alongside the packages.
 

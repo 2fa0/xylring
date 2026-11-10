@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -68,16 +69,20 @@ func (a *app) checkActiveRepo() {
 	t.checking = true
 	gen, path := t.generation, t.path
 	watch, lastCheck := t.refWatch, t.refsChecked
+	unavailable := t.unavailable
 	cachedStatus := t.worktreeCache
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		full := watch.changed() || time.Since(lastCheck) >= 30*time.Second
+		full := unavailable || watch.changed() || time.Since(lastCheck) >= 30*time.Second
 		var meta repoMeta
 		var err error
 		var key string
+		replaced := false
 		if full {
-			watch = newRefWatch(ctx, path)
+			next := newRefWatch(ctx, path)
+			replaced = watch.replaced(path, next)
+			watch = next
 			meta, err = loadMeta(ctx, path)
 			key = meta.key()
 		}
@@ -97,9 +102,20 @@ func (a *app) checkActiveRepo() {
 			if a.closed || t.closed || t.generation != gen || a.activeTab() != t {
 				return
 			}
+			if errors.Is(err, errRepoUnavailable) {
+				a.markRepoUnavailable(t)
+				changed = true
+				return
+			}
 			if err != nil {
 				msg := "检查仓库更新失败：" + err.Error()
 				changed, t.err = t.err != msg, msg
+				return
+			}
+			if unavailable || replaced {
+				a.resetRepoHistory(t)
+				a.reload(t)
+				changed = true
 				return
 			}
 			t.worktreeCache = cachedStatus
@@ -143,4 +159,32 @@ func (a *app) onMain(fn func()) {
 	} else {
 		mygo.RunOnMain(fn)
 	}
+}
+
+// Discard repository-derived state, keeping the path and the user's draft message.
+func (a *app) resetRepoHistory(t *repoTab) {
+	t.evictHistory()
+	t.refWatch = nil
+	a.closeAllFileTabs(t)
+	t.restore, t.restoreDiff, t.historyBack, t.fileBack, t.pendingSession = nil, nil, nil, nil, nil
+	t.query = historyQuery{hideRemote: t.query.hideRemote}
+	t.searchText, t.locate, t.branchFilter = "", "", ""
+	t.searchSuggestOpen, t.openFileTabAfterLoad = false, false
+	t.branch, t.operation, t.upstream = "", "", ""
+	t.head, t.diffFrom, t.diffTo = zeroHash, zeroHash, zeroHash
+	t.ahead, t.behind, t.hasUpstream = 0, 0, false
+	t.hasMore, t.commitAmend = false, false
+	t.ring = ringUI{}
+	t.err, t.locateErr, t.notice = "", "", ""
+	t.lastFetch = time.Time{}
+	t.unavailable = false
+}
+
+func (a *app) markRepoUnavailable(t *repoTab) {
+	if !t.unavailable {
+		a.resetRepoHistory(t)
+	}
+	t.loaded, t.unavailable = true, true
+	t.branch = "仓库不可用"
+	t.err = errRepoUnavailable.Error()
 }

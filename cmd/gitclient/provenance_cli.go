@@ -15,6 +15,12 @@ func runRingCLI(ctx context.Context, dir string, args []string, out io.Writer) e
 	if len(args) == 0 {
 		return errors.New("用法：xylring stamp … 或 ring install|uninstall|status|snippet|script 或 ring strict install|uninstall|status|script")
 	}
+	// CLI commands intentionally resolve the repository from the caller's directory.
+	if args[0] == "stamp" || args[0] == "ring" && len(args) > 1 && args[1] != "script" && args[1] != "snippet" {
+		if root, err := repoRoot(ctx, dir); err == nil {
+			dir = root
+		}
+	}
 	if args[0] == "ring" {
 		if len(args) >= 2 && args[1] == "strict" {
 			if len(args) != 3 {
