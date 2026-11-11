@@ -49,19 +49,7 @@
 
 新增 `lobe_states_test.go` 覆盖忙碌提示、空状态按钮、徽章菜单、无匹配文件与空提交列表的文案和操作，以及路径压缩规则与窄窗口下的面包屑不溢出；`files_diff_viewer_test.go` 的详情用例改为验证折叠后卡片保留到动画结束才移除；`lobe_layout_test.go` 增加空状态与路径头预览。原有覆盖包括六类弹窗在 420×320、1100×720 和深浅主题下的边界与页脚可见性，以及 Esc 关闭、执行中防误关、取消、重开、搜索清空后的焦点、加载防重复提交、标签切换和移除后重建。原有搜索语法、联想、文件标签菜单及 Git 操作测试也纳入全量检查。
 
-预览使用本地 MyGo Tester 渲染器生成，属于应用渲染截图，不代表已经在 macOS/Windows 原生窗口中做过人工端到端验收。
-
-- [主界面（浅色）](validation/lobe-mygo/main-light.png)
-- [主界面（深色）](validation/lobe-mygo/main-dark.png)
-- [窄窗口主界面](validation/lobe-mygo/main-narrow.png)
-- [短窗口年轮设置](validation/lobe-mygo/ring-narrow.png)
-- [短窗口仓库操作（深色）](validation/lobe-mygo/operation-narrow-dark.png)
-- [文件标签页](validation/lobe-mygo/file-tabs.png)
-- [空状态（浅色）](validation/lobe-mygo/empty-light.png)
-- [空状态（深色）](validation/lobe-mygo/empty-dark.png)
-- [路径面包屑（浅色）](validation/lobe-mygo/path-header-860-dark-false.png)
-- [路径面包屑（窄窗口·深色）](validation/lobe-mygo/path-header-420-dark-true.png)
-- [内联完整信息卡片](validation/lobe-mygo/commit-details.png)
+预览使用本地 MyGo Tester 渲染器生成，属于应用渲染截图，不代表已经在 macOS/Windows 原生窗口中做过人工端到端验收。相关截图保存在本地验证记录中，不随仓库发布。
 
 复现：
 
