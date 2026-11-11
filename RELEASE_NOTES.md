@@ -1,4 +1,4 @@
-# Xylring v0.8.1
+# Xylring v0.8.2
 
 Release date: 2026-11-11
 
@@ -10,6 +10,7 @@ Release date: 2026-11-11
 - 修复从右键菜单进入文件历史时崩溃、返回后丢失对比列表的问题。
 - 将获取、拉取和推送整合到工具栏的同步菜单，并显示分支领先和落后数量。
 - 兼容不同 Git 版本对失效关联工作区的错误提示，及时清除旧仓库状态。
+- 修复 Windows 上仓库会话恢复、仓库替换检测及文件差异比较的问题。
 
 ## Changes
 
@@ -19,15 +20,16 @@ Release date: 2026-11-11
 - Fix a crash when opening file history from a row context menu and the comparison lost after returning.
 - Combine fetch, pull, and push in the toolbar sync menu, with ahead and behind counts.
 - Recognize invalid linked worktrees across Git versions and clear stale repository state.
+- Fix repository session restoration, replacement detection, and file comparisons on Windows.
 
 ## 安装包 / Packages
 
 | Platform | Architecture | File |
 | --- | --- | --- |
-| macOS | Apple Silicon | `xylring-0.8.1-arm64.dmg` |
-| macOS | Intel x86_64 | `xylring-0.8.1-amd64.dmg` |
-| Windows 10 / 11 | x64 installer | `xylring-setup-0.8.1-amd64.exe` |
-| Windows 10 / 11 | x64 portable | `Xylring 0.8.1 windows-x64.zip` |
+| macOS | Apple Silicon | `xylring-0.8.2-arm64.dmg` |
+| macOS | Intel x86_64 | `xylring-0.8.2-amd64.dmg` |
+| Windows 10 / 11 | x64 installer | `xylring-setup-0.8.2-amd64.exe` |
+| Windows 10 / 11 | x64 portable | `xylring-0.8.2-windows-x64.zip` |
 
 SHA-256 hashes are provided in `checksums.txt` alongside the packages.
 

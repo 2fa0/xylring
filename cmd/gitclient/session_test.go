@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -29,7 +30,7 @@ func TestSessionPersistsWorkspaceAndDraft(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if info.Mode().Perm()&0077 != 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
 		t.Fatal("session contains drafts and must remain private")
 	}
 }

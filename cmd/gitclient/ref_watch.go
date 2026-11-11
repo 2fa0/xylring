@@ -30,6 +30,9 @@ func newRefWatch(ctx context.Context, path string) refWatch {
 	w := refWatch{}
 	for _, p := range []string{filepath.Join(path, ".git"), filepath.Join(gitDir, "HEAD"), filepath.Join(gitDir, "commondir"), filepath.Join(common, "packed-refs"), filepath.Join(common, "shallow"), filepath.Join(common, "info", "grafts"), filepath.Join(common, "reftable"), filepath.Join(common, "reftable", "tables.list")} {
 		w[p], _ = os.Stat(p)
+		if w[p] != nil {
+			os.SameFile(w[p], w[p]) // Capture the file identity before it can be replaced on Windows.
+		}
 	}
 	dirs := []string{filepath.Join(common, "refs")}
 	if filepath.Clean(common) != filepath.Clean(gitDir) {
@@ -37,6 +40,9 @@ func newRefWatch(ctx context.Context, path string) refWatch {
 	}
 	for _, dir := range dirs {
 		w[dir], _ = os.Stat(dir)
+		if w[dir] != nil {
+			os.SameFile(w[dir], w[dir])
+		}
 		err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -49,6 +55,7 @@ func newRefWatch(ctx context.Context, path string) refWatch {
 				if err != nil {
 					return err
 				}
+				os.SameFile(info, info)
 				w[p] = info
 			}
 			return nil

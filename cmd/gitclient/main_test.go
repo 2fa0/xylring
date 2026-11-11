@@ -191,7 +191,7 @@ func TestRepoListShows(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	for _, text := range []string{"alpha", "lib/nested", "beta"} {
+	for _, text := range []string{"alpha", filepath.FromSlash("lib/nested"), "beta"} {
 		if !tt.HasText(text) {
 			t.Fatalf("缺少 %q，当前文本：%q", text, tt.Texts())
 		}
@@ -203,7 +203,7 @@ func TestRepoListShows(t *testing.T) {
 	if !ok {
 		t.Fatal("没有父仓库")
 	}
-	child, ok := tt.Find("lib/nested")
+	child, ok := tt.Find(filepath.FromSlash("lib/nested"))
 	if !ok {
 		t.Fatal("没有子仓库")
 	}
@@ -602,7 +602,7 @@ func TestRecentReposSearchDeleteToThreshold(t *testing.T) {
 		nine[i] = fmt.Sprintf("/tmp/repo-%d", i+1)
 	}
 	a := &app{recent: nine}
-	tt := ui.NewTester(a.view, 1100, 720)
+	tt := ui.NewTester(a.view, 1100, 1000)
 	tt.Frame()
 	if !tt.HasText("查找最近仓库") {
 		t.Fatal("9个仓库应显示查找")

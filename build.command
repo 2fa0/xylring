@@ -137,7 +137,7 @@ if [ -d "$win_dir" ]; then
       esac
       cp -R "$entry" "$inner/"
     done
-    zip_name="Xylring ${version} windows-x64.zip"
+    zip_name="xylring-${version}-windows-x64.zip"
     if ! ditto -c -k --norsrc "$inner" "$staging/$zip_name"; then
       rm -rf "$payload"
       fail "无法压缩 Windows 文件。"

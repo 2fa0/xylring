@@ -34,6 +34,11 @@ jobs:
       - name: Generate Checksums
         run: |
           cd release
+          version=$(python3 -c 'import json; print(json.load(open("../cmd/gitclient/mygo.json"))["version"])')
+          test -f "xylring-${version}-arm64.dmg"
+          test -f "xylring-${version}-amd64.dmg"
+          test -f "xylring-setup-${version}-amd64.exe"
+          test -f "xylring-${version}-windows-x64.zip"
           shasum -a 256 * > checksums.txt
 
       - name: Create GitHub Release

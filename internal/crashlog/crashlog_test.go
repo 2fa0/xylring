@@ -12,9 +12,8 @@ import (
 
 func TestInstallNotesUncleanSession(t *testing.T) {
 	resetForTest()
-	t.Cleanup(resetForTest)
-
 	dir := t.TempDir()
+	t.Cleanup(resetForTest)
 	logs := filepath.Join(dir, "logs")
 	if err := os.MkdirAll(logs, 0o700); err != nil {
 		t.Fatal(err)
@@ -59,9 +58,8 @@ func TestBreadcrumbBeforeInstall(t *testing.T) {
 
 func TestRotateKeepsPreviousFile(t *testing.T) {
 	resetForTest()
-	t.Cleanup(resetForTest)
-
 	dir := t.TempDir()
+	t.Cleanup(resetForTest)
 	logs := filepath.Join(dir, "logs")
 	if err := os.MkdirAll(logs, 0o700); err != nil {
 		t.Fatal(err)
@@ -104,8 +102,9 @@ func TestBreadcrumbDoesNotWaitForBlockedWriter(t *testing.T) {
 
 func TestCrashLogRotatesWhileRunning(t *testing.T) {
 	resetForTest()
+	dir := t.TempDir()
 	t.Cleanup(resetForTest)
-	path, err := Install(t.TempDir())
+	path, err := Install(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

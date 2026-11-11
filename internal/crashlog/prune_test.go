@@ -205,9 +205,8 @@ func TestOrdinaryWriterDropsAgedContent(t *testing.T) {
 
 func TestInstallDropsExpiredCrashLog(t *testing.T) {
 	resetForTest()
-	t.Cleanup(resetForTest)
-
 	dir := t.TempDir()
+	t.Cleanup(resetForTest)
 	logs := filepath.Join(dir, "logs")
 	if err := os.MkdirAll(logs, 0o700); err != nil {
 		t.Fatal(err)
@@ -241,8 +240,8 @@ func TestInstallKeepsRecentCrashFromOldSession(t *testing.T) {
 	for _, rotated := range []bool{false, true} {
 		t.Run(fmt.Sprint(rotated), func(t *testing.T) {
 			resetForTest()
-			t.Cleanup(resetForTest)
 			dir := t.TempDir()
+			t.Cleanup(resetForTest)
 			logs := filepath.Join(dir, "logs")
 			if err := os.MkdirAll(logs, 0o700); err != nil {
 				t.Fatal(err)

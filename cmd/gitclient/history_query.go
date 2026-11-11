@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -80,8 +81,8 @@ func (q historyQuery) searchArgs() []string {
 }
 
 func searchPathspec(term string) string {
-	term = strings.TrimPrefix(term, "./")
-	term = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`).Replace(term)
+	term = strings.TrimPrefix(filepath.ToSlash(term), "./")
+	term = strings.NewReplacer(`\`, `\\`, `*`, `[*]`, `?`, `[?]`, `[`, `[[]`, `]`, `[]]`).Replace(term)
 	return ":(icase)*" + term + "*"
 }
 

@@ -29,7 +29,7 @@ func TestCommitDetailsAndClipboard(t *testing.T) {
 	waitUpdates(t, updates, func() bool { return !tab.loading })
 	a.selectCommit(tab, 0)
 	waitUpdates(t, updates, func() bool { return !tab.compareLoading && !tab.diffLoading })
-	tt := ui.NewTester(a.view, 1100, 720)
+	tt := ui.NewTester(a.view, 1100, 900)
 	tt.Frame()
 	if err := tt.Click("复制哈希"); err != nil {
 		t.Fatal(err)
