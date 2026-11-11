@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -24,6 +25,9 @@ type savedProvenance struct {
 	Attribution  string `json:"Attribution,omitempty"`
 }
 type savedSession struct {
+	Preferences      *appPreferences   `json:"preferences,omitempty"`
+	RepoAutoFetch    map[string]string `json:"repo_auto_fetch,omitempty"`
+	ThemeMode        string            `json:"theme_mode,omitempty"`
 	RingSkipNotice   bool              `json:"ring_skip_notice,omitempty"`
 	RecentProvenance []savedProvenance `json:"recent_provenance,omitempty"`
 	Repos            []savedRepo
@@ -60,8 +64,12 @@ func (a *app) queueSession() {
 	default:
 	}
 	// Compare the persisted fields directly; unchanged frames allocate no JSON.
+	prefs := a.preferences()
 	bw := a.bottomFullWidth
 	s := savedSession{
+		Preferences:     &prefs,
+		RepoAutoFetch:   maps.Clone(a.repoAutoFetch),
+		ThemeMode:       a.themeMode,
 		RingSkipNotice:  a.ringSkipNotice,
 		Repos:           make([]savedRepo, 0, len(a.tabs)),
 		BottomFullWidth: &bw,
@@ -104,7 +112,8 @@ func (a *app) queueSession() {
 		(s.BottomFullWidth != nil && a.lastSession != nil && a.lastSession.BottomFullWidth != nil && *s.BottomFullWidth == *a.lastSession.BottomFullWidth)
 	repoOrderEqual := (a.lastSession == nil && len(s.RepoOrder) == 0) ||
 		(a.lastSession != nil && slices.Equal(s.RepoOrder, a.lastSession.RepoOrder))
-	if a.lastSession != nil && s.Active == a.lastSession.Active && s.RingSkipNotice == a.lastSession.RingSkipNotice && slices.Equal(s.RecentProvenance, a.lastSession.RecentProvenance) && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
+	prefsEqual := a.lastSession != nil && a.lastSession.Preferences != nil && *a.lastSession.Preferences == prefs
+	if prefsEqual && maps.Equal(s.RepoAutoFetch, a.lastSession.RepoAutoFetch) && s.ThemeMode == a.lastSession.ThemeMode && s.Active == a.lastSession.Active && s.RingSkipNotice == a.lastSession.RingSkipNotice && slices.Equal(s.RecentProvenance, a.lastSession.RecentProvenance) && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
 		return
 	}
 	if a.sessionWrites == nil {
@@ -176,17 +185,24 @@ func writeSessionQueue(ch <-chan savedSession, results chan error, write func(sa
 
 func (a *app) restoreSession() {
 	s := loadSession()
+	restoreRepos := !a.restoreDisabled
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var valid []savedRepo
 		var found []string
 		for _, path := range s.Found {
+			if !restoreRepos {
+				break
+			}
 			if isGitWorkTree(path) {
 				found = append(found, path)
 			}
 		}
 		for _, r := range s.Repos {
+			if !restoreRepos {
+				break
+			}
 			if root, e := repoRoot(ctx, r.Path); e == nil && root == r.Path {
 				valid = append(valid, r)
 			}
@@ -199,13 +215,10 @@ func (a *app) restoreSession() {
 				}
 				a.recentProvenance = append(a.recentProvenance, provenance{agent: p.Agent, model: p.Model})
 			}
-			if s.BottomFullWidth != nil {
-				a.bottomFullWidth = *s.BottomFullWidth
-			}
 			if len(s.RepoOrder) > 0 {
 				a.repoOrder = s.RepoOrder
 			}
-			if len(a.tabs) == 0 {
+			if restoreRepos && len(a.tabs) == 0 {
 				if a.foundFrom == "" {
 					a.found, a.foundFrom = found, s.FoundFrom
 				}
