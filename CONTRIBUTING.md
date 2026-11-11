@@ -51,9 +51,9 @@ Use a short imperative subject line with a type prefix, for example
 `fix: handle repository loss after .git is deleted` or
 `refactor(ui): combine top-bar pull and push into a sync menu`.
 
-### Commit trailers (required)
+### Commit trailers
 
-This repository records how a commit was produced. **AI-assisted commits must
+This project records how each commit was produced. **AI-assisted commits should
 end with a blank line followed by the `AI-Agent` and `AI-Model` trailers**, and
 both values must be truthful — use the real agent product name and the real
 model name. Do not guess, and do not leave placeholders such as
@@ -70,9 +70,9 @@ A commit written entirely by a human should declare `AI-Agent: human` and omit
 the model. Existing human authorship, co-author, and `Signed-off-by` trailers
 must be preserved.
 
-Note that a CI workflow checks these trailers on pull requests. If your commit
-is rejected for a missing or malformed trailer, fix the commit message and push
-again — please do not bypass it with `--no-verify` or by altering the hooks.
+These trailers are not enforced on pull requests, so your build will not fail
+if they are missing — but the project uses them to trace how changes were
+produced, and they are appreciated.
 
 ## Pull requests
 
@@ -81,7 +81,7 @@ again — please do not bypass it with `--no-verify` or by altering the hooks.
 3. Add or update tests when you change behavior, and make sure `go test ./...`
    passes on your machine.
 4. Describe what changed and why. Screenshots help a lot for UI changes.
-5. Make sure your commits follow the trailer rules above.
+5. Make sure your commits follow the trailer conventions above.
 
 ## License
 
