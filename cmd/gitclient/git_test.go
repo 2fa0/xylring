@@ -29,6 +29,7 @@ func initTestRepo(t *testing.T) (string, func(...string) []byte) {
 	git("config", "user.email", "test@example.com")
 	git("config", "user.name", "Test")
 	git("config", "commit.gpgsign", "false")
+	git("config", "core.autocrlf", "false")
 	git("config", "core.hooksPath", filepath.Join(dir, "no-hooks"))
 	return dir, git
 }
@@ -519,5 +520,16 @@ func TestGitNoIndexDistinguishesChangesFromErrors(t *testing.T) {
 	}
 	if _, err := runGit(context.Background(), dir, "diff", "--no-index", "--", "missing", "new"); err == nil {
 		t.Fatal("missing-file error was swallowed")
+	}
+}
+
+func TestGitWarningsOnly(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{{"", true}, {"warning: line endings\nwarning: another\n", true}, {"warning: line endings\nfatal: missing file\n", false}} {
+		if got := gitWarningsOnly(tc.text); got != tc.want {
+			t.Errorf("gitWarningsOnly(%q) = %v, want %v", tc.text, got, tc.want)
+		}
 	}
 }

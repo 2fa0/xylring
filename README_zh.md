@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.1-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.8.2-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
 </p>
@@ -52,8 +52,8 @@ Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Gi
 ### macOS 用户 (Apple Silicon / Intel)
 
 1. 根据芯片架构下载对应磁盘镜像：
-   - **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.8.1-arm64.dmg`
-   - **Intel 芯片 (x86_64)**：`xylring-0.8.1-amd64.dmg`
+   - **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.8.2-arm64.dmg`
+   - **Intel 芯片 (x86_64)**：`xylring-0.8.2-amd64.dmg`
 2. 双击打开 `.dmg`，将 **Xylring** 拖入「应用程序（Applications）」文件夹。
 
 > [!NOTE]
@@ -65,8 +65,8 @@ Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Gi
 
 ### Windows 用户 (Windows 10 & 11 x64)
 
-- **安装版**：下载运行 `xylring-setup-0.8.1-amd64.exe`（安装到当前用户目录，无需管理员权限）。
-- **便携版**：下载解压 `Xylring 0.8.1 windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
+- **安装版**：下载运行 `xylring-setup-0.8.2-amd64.exe`（安装到当前用户目录，无需管理员权限）。
+- **便携版**：下载解压 `xylring-0.8.2-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
 
 ### 源码编译安装
 

@@ -171,7 +171,7 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	// git diff --no-index returns 1 for a successful comparison with changes.
 	if err != nil && len(args) > 1 && args[0] == "diff" && args[1] == "--no-index" {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && stderr.Len() == 0 {
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && gitWarningsOnly(stderr.String()) {
 			return stdout.Bytes(), nil
 		}
 	}
@@ -184,6 +184,15 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 		return stdout.Bytes(), errors.New(trimMsg(msg))
 	}
 	return stdout.Bytes(), nil
+}
+
+func gitWarningsOnly(stderr string) bool {
+	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
+		if line != "" && !strings.HasPrefix(line, "warning:") {
+			return false
+		}
+	}
+	return true
 }
 
 func trimMsg(s string) string {
@@ -213,7 +222,7 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 		}
 		return "", errors.New("不是 Git 仓库")
 	}
-	root := strings.TrimSpace(string(out))
+	root := filepath.FromSlash(strings.TrimSpace(string(out)))
 	if root == "" {
 		return "", errors.New("不是 Git 仓库")
 	}

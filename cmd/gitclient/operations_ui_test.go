@@ -5,6 +5,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"image/png"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -119,7 +120,7 @@ func TestParseLineRangeAndDeriveClonePath(t *testing.T) {
 	}
 	nonEmpty := t.TempDir()
 	os.WriteFile(nonEmpty+"/existing.txt", []byte("x"), 0o600)
-	if got := deriveClonePath(nonEmpty, "https://github.com/org/xylring.git"); got != nonEmpty+"/xylring" {
+	if got := deriveClonePath(nonEmpty, "https://github.com/org/xylring.git"); got != filepath.Join(nonEmpty, "xylring") {
 		t.Fatalf("deriveClonePath on non-empty dir = %q", got)
 	}
 	emptyDir := t.TempDir()
