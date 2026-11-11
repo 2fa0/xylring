@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitclient/internal/crashlog"
+	"github.com/2fa0/xylring/internal/crashlog"
 )
 
 func TestLoggerWritesFileWithoutConsole(t *testing.T) {

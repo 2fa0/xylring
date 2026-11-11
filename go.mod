@@ -1,4 +1,4 @@
-module gitclient
+module github.com/2fa0/xylring
 
 go 1.27.3
 
