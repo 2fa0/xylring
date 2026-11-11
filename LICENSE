@@ -1,41 +1,21 @@
-# Xylring 非商业源码可用许可
+MIT License
 
 Copyright (c) 2026 Guangzhe Niu
 
-## 适用范围
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-本许可适用于 Xylring 中由项目权利人按此许可提供的代码、文档及素材
-（以下称“本软件”）。第三方组件仍适用其各自的许可，本许可不改变第三方
-已授予的权利；相关声明见随本软件提供的第三方许可说明。
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-## 非商业使用
-
-遵守本许可的前提下，你可以为非商业目的使用、复制、修改和分发本软件
-及其修改版本。非商业使用可以包括个人学习、研究、实验和兴趣项目。
-
-商业使用包括以获得直接或间接商业利益或报酬为目的的使用，例如在
-营利性组织的业务中使用、将本软件用于收费产品或服务，或者出售、出租
-本软件。商业使用须事先取得相关权利人的单独书面授权。
-
-## 分发修改版本
-
-你可以为非商业目的私下修改本软件并自行使用，无须因此公开修改内容。
-
-如果你向他人分发修改版本，无论分发源码还是可执行文件，你必须：
-
-1. 向每位接收者免费提供该版本的完整对应源码，或在分发时提供明确、
-   免费且可访问的源码获取方式；
-2. 以本许可相同的条款许可你有权许可的修改，不得将这些修改作为闭源
-   版本提供；
-3. 说明你作了修改，并随分发物保留本许可、版权声明及第三方许可声明。
-
-对应源码包括生成该版本所需的源代码、修改、构建脚本和配置；通用开发
-工具、操作系统组件和私钥等秘密不必提供。第三方组件按其原有许可处理。
-
-## 其他条款
-
-除本许可明确授予的权利外，其他权利由各权利人保留。本许可不影响第三方
-组件原有的授权，也不限制适用法律允许的合理使用等权利。
-
-在适用法律允许的范围内，本软件按“现状”提供，不提供任何明示或默示
-担保；对于因使用本软件产生的损失，权利人不承担责任。
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
