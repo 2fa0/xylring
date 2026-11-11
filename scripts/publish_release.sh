@@ -15,9 +15,10 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "📦 正在发布 ${TAG} 到 GitHub Releases..."
+echo "📦 正在为 ${TAG} 创建 GitHub Release 草稿..."
 gh release create "$TAG" "$RELEASE_DIR"/* \
+  --draft \
   --title "Xylring ${TAG}" \
   --notes-file "$NOTES_FILE"
 
-echo "✅ 发布完成！访问 GitHub 仓库的 Releases 页面即可查看。"
+echo "✅ 发布草稿已创建，请在 GitHub 仓库的 Releases 页面检查后再发布。"
