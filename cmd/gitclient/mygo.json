@@ -3,5 +3,6 @@
   "identifier": "dev.xylring.app",
   "version": "0.8.1",
   "icon": "resources/logo.png",
+  "resources": ["../../LICENSE"],
   "out": "build"
 }
