@@ -47,7 +47,7 @@ installation to browse and change local repositories.
 
 ## 📦 Installation
 
-Prebuilt packages for **macOS** and **Windows** will be published on [**GitHub Releases**](https://github.com/2fa0/xylring/releases). Until the first release is out, build from source below.
+Download prebuilt packages for **macOS** and **Windows** from [**GitHub Releases**](https://github.com/2fa0/xylring/releases).
 
 ### macOS (Apple Silicon & Intel)
 

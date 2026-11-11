@@ -532,6 +532,12 @@ type repoMeta struct {
 
 var errRepoUnavailable = errors.New("仓库不可用：.git 已被删除或无法访问。恢复 .git 或重新初始化后将自动重新加载；git init 不会恢复原提交历史。")
 
+func isRepoUnavailable(err error) bool {
+	return err != nil && (errors.Is(err, errRepoUnavailable) ||
+		strings.Contains(err.Error(), "not a git repository") ||
+		strings.Contains(err.Error(), "gitfile does not point to a valid repository"))
+}
+
 func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 	var m repoMeta
 	if !isGitWorkTree(dir) {
@@ -557,7 +563,7 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 	m.behind = sync.behind
 	rawRefs, err := runGit(ctx, dir, "for-each-ref", "--format=%(objectname) %(refname) %(*objectname)")
 	if err != nil {
-		if strings.Contains(err.Error(), "not a git repository") {
+		if isRepoUnavailable(err) {
 			return m, errRepoUnavailable
 		}
 		return m, err
