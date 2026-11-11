@@ -66,7 +66,7 @@ func TestFetchAllPrunesDeletedBranch(t *testing.T) {
 		t.Fatal("clone missing origin/gone")
 	}
 	gitOrigin("branch", "-D", "gone")
-	if err := fetchAll(ctx, local, fetchOpts{}); err != nil {
+	if err := fetchAll(ctx, local, fetchOpts{explicit: true}); err != nil {
 		t.Fatal(err)
 	}
 	meta, err = loadMeta(ctx, local)
@@ -171,5 +171,38 @@ func TestAutoFetchSkipsRepoWithoutRemote(t *testing.T) {
 	}
 	if tab.notice != "" {
 		t.Fatalf("auto fetch without remote set notice %q", tab.notice)
+	}
+}
+
+func TestFetchRespectsConfiguredPruneAndExplicitOptOut(t *testing.T) {
+	isolateSettingsGit(t)
+	origin, gitOrigin := initTestRepo(t)
+	gitOrigin("commit", "--allow-empty", "-m", "base")
+	gitOrigin("branch", "gone")
+	local := cloneTestRepo(t, origin)
+	gitOrigin("branch", "-D", "gone")
+	ctx := context.Background()
+	if _, err := runGit(ctx, local, "config", "fetch.prune", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fetchAll(ctx, local, fetchOpts{explicit: true}); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := loadMeta(ctx, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRefName(meta.refs, "origin/gone") {
+		t.Fatal("explicit opt-out ignored")
+	}
+	if err := fetchAll(ctx, local, fetchOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	meta, err = loadMeta(ctx, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasRefName(meta.refs, "origin/gone") {
+		t.Fatal("configured prune ignored")
 	}
 }

@@ -12,6 +12,7 @@ import (
 type fetchOpts struct {
 	prune     bool
 	pruneTags bool
+	explicit  bool
 }
 
 type fetchDialog struct {
@@ -51,7 +52,7 @@ func fetchAll(ctx context.Context, dir string, opts fetchOpts) error {
 	args := []string{"fetch", "--all"}
 	if opts.prune || opts.pruneTags {
 		args = append(args, "--prune")
-	} else {
+	} else if opts.explicit {
 		args = append(args, "--no-prune")
 	}
 	if opts.pruneTags {
@@ -135,6 +136,14 @@ func (a *app) openFetch(tab *repoTab) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		remotes, err := listRemotes(ctx, path)
+		prune := false
+		if err == nil {
+			b, e := configCommand(ctx, path, "--type=bool", "--get", "fetch.prune")
+			if e != nil && !configExit(e, 1) {
+				err = e
+			}
+			prune = strings.TrimSpace(string(b)) == "true"
+		}
 		a.post(func() {
 			if a.closed || !a.showFetch || a.fetch.gen != gen {
 				return
@@ -145,6 +154,7 @@ func (a *app) openFetch(tab *repoTab) {
 				return
 			}
 			a.fetch.remotes = remotes
+			a.fetch.prune = prune
 			if len(remotes) == 0 {
 				a.fetch.err = "没有配置远程"
 			}
@@ -198,7 +208,7 @@ func (a *app) runFetch() {
 	}
 	d.err = ""
 	repo := d.repo
-	opts := fetchOpts{prune: d.prune, pruneTags: d.pruneTags}
+	opts := fetchOpts{prune: d.prune, pruneTags: d.pruneTags, explicit: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	d.cancel = cancel
 	d.busy = true
@@ -263,10 +273,14 @@ func (a *app) maybeAutoFetch() {
 	if a.closed || t == nil || t.closed || t.unavailable || t.loading || t.fetching || !t.loaded {
 		return
 	}
-	if a.fetch.busy || a.showFetch || a.write.busy {
+	if a.fetch.busy || a.showFetch || a.write.busy || a.settings.open {
 		return
 	}
-	if !t.lastFetch.IsZero() && time.Since(t.lastFetch) < autoFetchInterval {
+	interval := a.autoFetchDelay(t.path)
+	if interval == 0 {
+		return
+	}
+	if !t.lastFetch.IsZero() && time.Since(t.lastFetch) < interval {
 		return
 	}
 	t.fetchGen++

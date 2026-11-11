@@ -7,6 +7,7 @@ import (
 )
 
 func (a *app) installMenu() {
+	settingsItem := &mygo.MenuItem{ID: "settings", Label: "设置…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }}
 	file := []*mygo.MenuItem{
 		{ID: "import", Label: "导入仓库…", Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.pickRepo()
@@ -24,7 +25,7 @@ func (a *app) installMenu() {
 		}},
 	}
 	if runtime.GOOS != "darwin" {
-		file = append(file, mygo.Separator(), &mygo.MenuItem{Role: mygo.RoleQuit})
+		file = append(file, settingsItem, mygo.Separator(), &mygo.MenuItem{Role: mygo.RoleQuit})
 	}
 	operations := []*mygo.MenuItem{
 		{Label: "新建仓库", Submenu: []*mygo.MenuItem{
@@ -68,7 +69,10 @@ func (a *app) installMenu() {
 		{Role: mygo.RoleWindowMenu},
 	}
 	if runtime.GOOS == "darwin" {
-		items = append([]*mygo.MenuItem{{Role: mygo.RoleAppMenu}}, items...)
+		items = append([]*mygo.MenuItem{{Role: mygo.RoleAppMenu, Submenu: []*mygo.MenuItem{
+			{Role: mygo.RoleAbout}, mygo.Separator(), settingsItem, mygo.Separator(),
+			{Role: mygo.RoleServices}, mygo.Separator(), {Role: mygo.RoleHide}, {Role: mygo.RoleHideOthers}, {Role: mygo.RoleUnhide}, mygo.Separator(), {Role: mygo.RoleQuit},
+		}}}, items...)
 	}
 	a.menu = mygo.NewMenu(items)
 	mygo.App.SetMenu(a.menu)

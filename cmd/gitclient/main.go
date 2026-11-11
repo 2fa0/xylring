@@ -48,6 +48,11 @@ type app struct {
 	recentProvenance []provenance
 	ringSkipNotice   bool
 
+	settings         settingsState
+	restoreDisabled  bool
+	autoFetch        string
+	repoAutoFetch    map[string]string
+	themeMode        string
 	win              *mygo.Window
 	menu             *mygo.Menu
 	dispatch         func(func())
@@ -117,18 +122,55 @@ type discardDialog struct {
 }
 
 func newApp() *app {
-	return &app{
+	session := loadSession()
+	mode := session.ThemeMode
+	if mode != "light" && mode != "dark" {
+		mode = ""
+	}
+	a := &app{
+		themeMode:       mode,
 		recent:          loadRecent(),
 		persist:         true,
 		repoSummaries:   make(map[string]repoSummary),
 		summaryRunning:  make(map[string]bool),
 		bottomFullWidth: true,
 	}
+	if p := session.Preferences; p != nil {
+		a.restoreDisabled, a.fileView, a.diffLayout = p.RestoreDisabled, p.FileView, p.DiffLayout
+		a.diffIgnoreWhitespace = p.IgnoreWhitespace
+		if validAutoFetch(p.AutoFetch) {
+			a.autoFetch = p.AutoFetch
+		}
+		if a.fileView != 1 {
+			a.fileView = 0
+		}
+		if a.diffLayout != 1 {
+			a.diffLayout = 0
+		}
+	}
+	a.repoAutoFetch = session.RepoAutoFetch
+	for path, value := range a.repoAutoFetch {
+		if !validAutoFetch(value) {
+			delete(a.repoAutoFetch, path)
+		}
+	}
+	if session.BottomFullWidth != nil {
+		a.bottomFullWidth = *session.BottomFullWidth
+	}
+	return a
 }
 
 func (a *app) view(c *ui.Context) {
+	switch a.themeMode {
+	case "light":
+		c.SetTheme(ui.LightTheme())
+	case "dark":
+		c.SetTheme(ui.DarkTheme())
+	}
 	defer a.queueSession()
-	a.handleShortcuts(c)
+	if !a.settings.open {
+		a.handleShortcuts(c)
+	}
 	a.syncMenu()
 	if a.pendingToast != "" {
 		c.Toast(a.pendingToast)
@@ -187,9 +229,14 @@ func (a *app) view(c *ui.Context) {
 	a.discardModal(c)
 	a.ringModal(c)
 	a.operationModal(c)
+	a.settingsModal(c)
 }
 
 func (a *app) handleShortcuts(c *ui.Context) {
+	if a.menu == nil && c.Shortcut(commandModifier(), ui.KeyComma) {
+		a.openSettings()
+		return
+	}
 	tab := a.activeTab()
 	empty := a.showHome || (tab == nil && len(a.found) <= 1)
 	if a.menu == nil {
@@ -338,6 +385,9 @@ func (a *app) chrome(c *ui.Context) {
 							Clicked() {
 							a.toggleSidebar()
 						}
+						if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Clicked() {
+							a.openSettings()
+						}
 						ui.Text(c, "仓库").FontSize(12).Bold().TextColor(c.Theme().TextMuted).SingleLine().MinWidth(0)
 						ui.Box(c).Grow(1)
 						if chromeIconButton(c, "sidebar-import-btn", "导入仓库", iconFolderPlus).
@@ -368,6 +418,15 @@ func (a *app) chrome(c *ui.Context) {
 				Tooltip(sidebarToggleTip(a.showRepoSidebar()))
 			if btn.Clicked() {
 				a.toggleSidebar()
+			}
+		}
+		if !sidebarOpen {
+			x := padL
+			if !empty {
+				x += 30
+			}
+			if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Absolute().Left(x).Top(btnY).Clicked() {
+				a.openSettings()
 			}
 		}
 		rightPadL := padL
