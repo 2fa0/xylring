@@ -5,3 +5,12 @@
 .DS_Store
 /gitclient
 .claude/
+
+# 内部文档与工作记录，不随开源仓库发布
+/产品功能与体验完整度评估.md
+/年轮功能（Agent与模型溯源）落地方案.md
+/docs/P0-*.md
+/docs/P1-*.md
+/docs/改进计划-*.md
+/docs/performance-memory-review-*.md
+/docs/validation/
