@@ -23,6 +23,10 @@
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
 </p>
 
+<p align="center">
+  <img src="docs/images/screenshot.jpg" alt="Xylring repository history and diff" width="900" />
+</p>
+
 ---
 
 ## 💡 Why Xylring?
