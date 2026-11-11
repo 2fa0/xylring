@@ -5,13 +5,12 @@
 <h1 align="center">Xylring</h1>
 
 <p align="center">
-  <strong>基于 Go 开发的极速、轻量、现代化原生 Git 客户端。</strong><br>
-  拒绝 Electron 的笨重与高内存消耗。带来瞬间冷启动、丝滑贝塞尔提交图谱与极致高效的 Diff 审阅体验。
+  <strong>基于 Go 开发的原生 Git 客户端。</strong><br>
+  在桌面界面中浏览仓库历史、审阅改动和执行 Git 操作。
 </p>
 
 <p align="center">
   <a href="#为什么要做-xylring">核心特性</a> •
-  <a href="#主流客户端横向对比">竞品对比</a> •
   <a href="#下载与安装">下载安装</a> •
   <a href="#命令行-cli-使用">命令行</a> •
   <a href="#路线图-roadmap">路线图</a> •
@@ -28,46 +27,27 @@
 
 ## 💡 为什么要做 Xylring？
 
-日常开发中，Git 客户端总让人陷入两难：
-- **Electron 系客户端**（如 GitKraken、VS Code 插件）：UI 虽丰富，但动辄几百 MB 内存，冷启动慢半拍；
-- **顶尖原生客户端**（如 Sublime Merge、Fork）：手感极佳、性能优越，但均为闭源商业付费软件；
-- **终端 TUI 工具**（如 Lazygit）：键盘流极快，但复杂多分支拓扑展示、并排富文本 Diff 和图片比对在终端中受限。
-
-**Xylring** 的诞生就是为了填补这块空白：**兼具 Go 原生的高性能与低内存占用、现代美观的交互设计、秒级终端唤醒，项目采用非商业源码可用许可。**
+Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Git，
+通过原生界面浏览和操作本地仓库。
 
 ---
 
 ## ⚡ 核心亮点
 
-- 🚀 **毫秒级启动与极低内存占用**：纯 Go 原生渲染编译，秒级启动，初始内存仅约 50MB。彻底告别臃肿的 WebView 和 Chromium 内核。
+- 🚀 **原生桌面应用**：使用 Go 和 MyGo 构建，不依赖 Electron 界面。
 - 🎨 **平滑三次贝塞尔提交图谱**：第一父链同色追踪，跨行连线平滑过渡；大仓库分页滚动时已渲染节点不抖动，合并节点空心区分。
 - 🔍 **全能搜索与智能联想（Omni Search）**：一个搜索框覆盖提交信息、代码变动（Pickaxe -S）、作者、文件路径、分支、标签与 SHA 哈希；支持输入前缀语法（如 `code:`、`author:`、`path:`）与下拉建议；Diff 审阅内支持 ⌘F / Ctrl+F 页面内快速查找与高亮。
 - ⚖️ **快照与分叉点任意比对**：任意选择两个提交或分支比对，支持两点快照比较或三点（`...` 分叉点起）改动审查。
 - 🧩 **块级交互式暂存（Hunk Staging）**：精细审阅单个文本改动块，支持块级暂存/取消暂存/丢弃改动，支持工作区提交与 Amend 上次提交。
 - 💻 **深度契合终端工作流**：支持在终端像 VS Code 一样随时输入 `xylring .` 唤醒当前仓库，支持同时打开多仓库。
 - 🖼️ **全量文件语法高亮与图片 Diff**：支持查看任意历史快照的完整只读文件，支持多格式图片并排对比。
-- 🛡️ **本地隐私安全**：100% 离线可用，不收集任何日志或上报指标；直接沿用系统已有的 SSH 密钥与 Git 凭据配置。
-
----
-
-## 📊 主流客户端横向对比
-
-| 评测维度 | **Xylring** | **Sublime Merge** | **Fork** | **GitKraken** | **Lazygit** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **许可状态** | **非商业使用** | ❌ 闭源 | ❌ 闭源 | ❌ 闭源 | ✅ 开源 |
-| **技术栈** | **Go (原生渲染)** | C++ (自研原生) | Swift / WPF | Electron / Web | Go (TUI 终端) |
-| **初始内存占用** | **~50 MB** | ~60 MB | ~100 MB | ~300 MB+ | ~20 MB |
-| **冷启动耗时** | **< 0.2s** | < 0.3s | < 1.0s | 2~4s | < 0.1s |
-| **终端唤起 (`.`)** | ✅ `xylring .` | ✅ `smerge .` | ✅ `fork .` | ⚠️ 较慢 | ✅ `lazygit` |
-| **可视化图谱** | ✅ **贝塞尔曲线** | ✅ 平滑曲线 | ✅ 原生绘制 | ✅ Web SVG | ⚠️ ASCII 字符 |
-| **块级暂存 (Hunk)**| ✅ **支持** | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| **商业使用价格** | **完全免费** | \$99 (买断) | \$49.99 (买断) | \$60+/年 (订阅) | 完全免费 |
+- 🛡️ **本地仓库操作**：本地操作调用系统 Git；获取、拉取和推送会连接配置的 Git 远程仓库。
 
 ---
 
 ## 📦 下载与安装
 
-预编译安装包已发布在 [**GitHub Releases**](../../releases)：
+预编译安装包见 [**GitHub Releases**](https://github.com/2fa0/xylring/releases)，也可以按下文从源码构建。
 
 ### macOS 用户 (Apple Silicon / Intel)
 
@@ -78,7 +58,7 @@
 
 > [!NOTE]
 > **macOS 首次打开安全提示**：  
-> 如果发行版本未进行 Apple 开发者证书公证，初次打开若提示“无法验证开发者”，请在访达（Finder）中对 `Xylring.app` 按住 **Control** 点按并选择「打开」，或在终端执行：
+> 如果发行版本未经过 Apple 开发者证书公证，初次打开若提示“无法验证开发者”，请在访达（Finder）中对 `Xylring.app` 按住 **Control** 点按并选择「打开」，或在终端执行：
 > ```sh
 > xattr -cr /Applications/Xylring.app
 > ```
@@ -94,7 +74,7 @@
 
 ```sh
 # 克隆仓库
-git clone REPOSITORY_URL
+git clone https://github.com/2fa0/xylring.git
 cd xylring
 
 # 直接运行
@@ -141,7 +121,7 @@ xylring
 - [x] 块级（Hunk）审阅暂存与改动丢弃
 - [x] 两点快照与三点（`...`）分叉点对比
 - [x] 全文语法高亮快照阅读与图片 Diff
-- [x] 终端 `xylring .` 秒级联动
+- [x] 终端 `xylring .` 联动
 - [x] macOS (ARM64/x64) 与 Windows (x64) 原生打包
 - [ ] 交互式变基（Interactive Rebase / Squash UI）
 - [ ] Linux 桌面环境支持（X11 / Wayland）
@@ -150,9 +130,33 @@ xylring
 
 ---
 
+## 🔒 隐私与本地数据
+
+Xylring 的诊断日志位于 macOS 的 `~/Library/Application Support/Xylring/logs/`
+或 Windows 的 `%AppData%\Xylring\logs\`。普通日志 `xylring.log` 和崩溃日志
+`crash.log` 可能包含本地仓库路径、操作错误和崩溃信息。日志约达到 1 MiB 时轮转，
+并按 7 天的保留策略清理；正在使用的文件或清理失败的文件可能保留更久。
+macOS 也可能生成独立的系统诊断报告。
+
+最近仓库和会话状态保存在同一 `Xylring` 配置目录下的 `recent.json`、
+`session.json` 中，其中可能包含仓库路径和未提交的提交说明草稿。应用没有实现
+自动遥测或日志上传；用户主动获取、拉取或推送时，系统 Git 会使用已有配置连接远程仓库。
+分享日志或会话文件前，请先检查其中的内容。
+
+---
+
+## 🛡️ 报告安全漏洞
+
+请通过 [11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com) 私下报告潜在漏洞，
+不要将漏洞细节直接发布到公开 Issue。请说明受影响版本、复现步骤和影响；
+分享日志或示例仓库前，请移除凭据及其他敏感信息。维护者将尽力处理报告；
+条件允许时，请先使用最新默认分支或最新已发布版本复现。
+
+---
+
 ## 🤝 参与贡献
 
-非常欢迎提交 Issue、提出新功能建议或 Pull Request！
+欢迎在 [Issue 页面](https://github.com/2fa0/xylring/issues)反馈普通问题、提出建议或提交 Pull Request；安全漏洞请按下文私下报告。
 
 1. Fork 本仓库
 2. 创建特性分支 (`git checkout -b feat/AmazingFeature`)
@@ -164,4 +168,11 @@ xylring
 
 ## 📄 许可说明
 
-本项目采用非商业源码可用许可，详情见 [`LICENSE`](LICENSE)。
+Xylring 采用 [MIT 许可](LICENSE) 发布。
+
+简而言之：你可以出于商业或非商业目的使用、复制、修改、合并、发布、分发、
+再许可和/或销售本软件的副本，只需在所有副本或软件的实质性部分中保留版权声明
+与许可声明。本软件按“现状”提供，不附带任何形式的担保。
+
+第三方组件继续适用其各自的许可，详见
+[第三方许可说明](cmd/gitclient/resources/THIRD_PARTY_NOTICES.txt)。

@@ -5,13 +5,12 @@
 <h1 align="center">Xylring</h1>
 
 <p align="center">
-  <strong>A blazing fast, lightweight, and native Git client built with Go.</strong><br>
-  No Electron overhead. No bloated WebViews. Just pure speed, fluid graph rendering, and effortless diff reviewing.
+  <strong>A native Git client built with Go.</strong><br>
+  Browse repository history, review changes, and work with Git from a desktop interface.
 </p>
 
 <p align="center">
   <a href="#why-xylring">Features</a> •
-  <a href="#comparison">Comparison</a> •
   <a href="#installation">Installation</a> •
   <a href="#cli-usage">CLI Usage</a> •
   <a href="#roadmap">Roadmap</a> •
@@ -28,46 +27,27 @@
 
 ## 💡 Why Xylring?
 
-Most developers face an awkward dilemma with Git clients:
-- **Electron-based clients** (GitKraken, VS Code GitLens) offer rich UI but consume hundreds of megabytes of RAM and feel sluggish to cold-start.
-- **Top-tier native clients** (Sublime Merge, Fork) offer exceptional performance, but are closed-source and paid commercial tools.
-- **Terminal TUIs** (Lazygit) are blazingly fast, but limited when inspecting multi-branch branch topology, side-by-side rich diffs, or images.
-
-**Xylring** is designed to bridge this gap: **Native Go performance, aesthetic modern UI, instant CLI invocation, under its noncommercial source-available license.**
+Xylring is a desktop Git client built with Go and MyGo. It uses the system Git
+installation to browse and change local repositories.
 
 ---
 
 ## ⚡ Highlights
 
-- 🚀 **Sub-second Startup & Minimal Footprint**: Built with Go and native rendering. Launches in milliseconds with ~50MB RAM usage. Zero Webview / Electron baggage.
+- 🚀 **Native Desktop App**: Built with Go and MyGo, without an Electron-based interface.
 - 🎨 **Cubic Bezier Graph**: Smooth branch curves tracking the first-parent lane. View the whole repository history without jitter or stutter across pagination.
 - 🔍 **Omni Search with Autocomplete**: A single search box covering commit messages, code changes (Pickaxe `-S`), author names, file paths, branches, tags, and commit hashes. Supports prefixes like `code:`, `author:`, and `path:`. Built-in in-diff find (⌘F / Ctrl+F) with match highlights.
 - ⚖️ **Arbitrary Snapshots & Merge-Base Comparison**: Compare any two commits, branches, or tags. Supports two-dot snapshot diffing or three-dot (`...`) branch fork diffing.
 - 🧩 **Hunk-Level Interactive Staging**: Review and stage individual patch hunks, discard changes, or amend previous commits with a single click.
 - 💻 **Terminal-First Workflow**: Launch any repository right from your terminal with `xylring .`, `xylring /path/to/repo`, or switch between multiple repositories effortlessly.
 - 🖼️ **Full-File Source View & Image Diff**: Read full-file snapshots with syntax highlighting and inspect visual image diffs side-by-side.
-- 🛡️ **Local & Privacy First**: 100% offline-ready. Never uploads logs, metrics, or credentials. Uses your existing system Git and SSH config directly.
-
----
-
-## 📊 Comparison with Popular Git Clients
-
-| Dimension | **Xylring** | **Sublime Merge** | **Fork** | **GitKraken** | **Lazygit** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **License** | **Noncommercial** | ❌ No | ❌ No | ❌ No | ✅ Yes |
-| **Tech Stack** | **Go (Native)** | C++ (Custom) | Swift / WPF | Electron / Web | Go (TUI) |
-| **Initial Memory** | **~50 MB** | ~60 MB | ~100 MB | ~300 MB+ | ~20 MB |
-| **Cold Startup** | **< 0.2s** | < 0.3s | < 1.0s | 2-4s | < 0.1s |
-| **CLI Wakeup (`.`)** | ✅ `xylring .` | ✅ `smerge .` | ✅ `fork .` | ⚠️ Limited | ✅ `lazygit` |
-| **Visual Graph** | ✅ **Bezier Lanes** | ✅ Smooth Lanes | ✅ Native | ✅ Web SVG | ⚠️ Text ASCII |
-| **Hunk / Patch Staging** | ✅ **Yes** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| **Price / License** | **Noncommercial** | \$99 (Commercial) | \$49.99 (Commercial)| \$60+/yr (Subscription) | Free |
+- 🛡️ **Local Repository Workflows**: Local operations use the system Git installation. Fetching, pulling, and pushing communicate with the configured Git remote.
 
 ---
 
 ## 📦 Installation
 
-Pre-built binaries are available on the [**GitHub Releases**](../../releases) page for **macOS** and **Windows**:
+Prebuilt packages for **macOS** and **Windows** are on [**GitHub Releases**](https://github.com/2fa0/xylring/releases). You can also build from source below.
 
 ### macOS (Apple Silicon & Intel)
 
@@ -78,7 +58,7 @@ Pre-built binaries are available on the [**GitHub Releases**](../../releases) pa
 
 > [!NOTE]
 > **First-time launch on macOS**:  
-> Since releases are currently self-distributed without Apple notarization, right-click (or Control-click) `Xylring.app` in Finder and select **Open** on the first launch. Or run:
+> If a release is distributed without Apple notarization, right-click (or Control-click) `Xylring.app` in Finder and select **Open** on the first launch. Or run:
 > ```sh
 > xattr -cr /Applications/Xylring.app
 > ```
@@ -94,7 +74,7 @@ Requirements: **Go 1.27+** and system **Git**.
 
 ```sh
 # Clone the repository
-git clone REPOSITORY_URL
+git clone https://github.com/2fa0/xylring.git
 cd xylring
 
 # Run directly
@@ -150,10 +130,39 @@ xylring
 
 ---
 
+## 🔒 Privacy and local data
+
+Xylring stores diagnostic logs under `~/Library/Application Support/Xylring/logs/`
+on macOS and `%AppData%\Xylring\logs\` on Windows. The normal log
+(`xylring.log`) and crash log (`crash.log`) can contain local repository paths,
+operation errors, and crash details. They rotate at approximately 1 MiB and are
+cleaned under a seven-day retention policy; active files or cleanup failures may
+remain longer. macOS may also create its own diagnostic reports.
+
+The application stores recent repository paths and session state locally,
+including unsent commit-message drafts, in `recent.json` and `session.json`
+under the same `Xylring` configuration directory. Xylring does not implement
+automatic telemetry or log uploads. Explicit remote Git operations use the
+system Git configuration and communicate with the configured remote. Review
+logs and session files before sharing them.
+
+---
+
+## 🛡️ Reporting security vulnerabilities
+
+Please report potential vulnerabilities privately to
+[11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com), rather than opening a public
+issue. Include the affected version, reproduction steps, and impact; remove
+credentials and other sensitive information from any logs or sample repositories.
+Reports will be reviewed on a best-effort basis. Please reproduce against the
+latest default branch or latest available release when practical.
+
+---
+
 ## 🤝 Contributing
 
 Contributions, issues, and feature requests are welcome!  
-Feel free to check out the [issues page](../../issues).
+Use the [issues page](https://github.com/2fa0/xylring/issues) for public issues; report security vulnerabilities privately as described below.
 
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feat/AmazingFeature`)
@@ -165,4 +174,13 @@ Feel free to check out the [issues page](../../issues).
 
 ## 📄 License
 
-Xylring is distributed under its noncommercial source-available license; see [`LICENSE`](LICENSE).
+Xylring is released under the [MIT License](LICENSE).
+
+In short: you may use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of this software, for commercial or non-commercial purposes,
+as long as the copyright notice and permission notice are included in all copies
+or substantial portions of the Software. The software is provided "as is",
+without warranty of any kind.
+
+Third-party components retain their own licenses; see the
+[third-party notices](cmd/gitclient/resources/THIRD_PARTY_NOTICES.txt).
