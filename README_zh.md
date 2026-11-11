@@ -23,6 +23,10 @@
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
 </p>
 
+<p align="center">
+  <img src="docs/images/screenshot.jpg" alt="Xylring 仓库历史和差异界面" width="900" />
+</p>
+
 ---
 
 ## 💡 为什么要做 Xylring？
