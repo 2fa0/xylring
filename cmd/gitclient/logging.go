@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"time"
 
-	"gitclient/internal/crashlog"
+	"github.com/2fa0/xylring/internal/crashlog"
 )
 
 // The crash recorder and rotating writer follow Snapover's implementation.

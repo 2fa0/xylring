@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"gitclient/internal/crashlog"
+	"github.com/2fa0/xylring/internal/crashlog"
 )
 
 const (

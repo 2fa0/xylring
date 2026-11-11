@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"gitclient/internal/crashlog"
+	"github.com/2fa0/xylring/internal/crashlog"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
