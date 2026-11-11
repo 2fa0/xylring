@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -102,7 +101,7 @@ func (a *app) checkActiveRepo() {
 			if a.closed || t.closed || t.generation != gen || a.activeTab() != t {
 				return
 			}
-			if errors.Is(err, errRepoUnavailable) {
+			if isRepoUnavailable(err) {
 				a.markRepoUnavailable(t)
 				changed = true
 				return

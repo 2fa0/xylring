@@ -11,6 +11,23 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestRepositoryUnavailableErrors(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{errRepoUnavailable, true},
+		{errors.New("fatal: not a git repository"), true},
+		{errors.New("fatal: gitfile does not point to a valid repository: /repo/.git"), true},
+		{errors.New("permission denied"), false},
+	} {
+		if got := isRepoUnavailable(tc.err); got != tc.want {
+			t.Errorf("isRepoUnavailable(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
 func TestRepositoryDeletionAndReinitialization(t *testing.T) {
 	for _, manual := range []bool{false, true} {
 		name := "automatic"

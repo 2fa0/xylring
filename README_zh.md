@@ -47,7 +47,7 @@ Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Gi
 
 ## 📦 下载与安装
 
-预编译安装包将在 [**GitHub Releases**](https://github.com/2fa0/xylring/releases) 发布；首个版本发布前，请按下文从源码构建。
+从 [**GitHub Releases**](https://github.com/2fa0/xylring/releases) 下载预编译安装包。
 
 ### macOS 用户 (Apple Silicon / Intel)
 

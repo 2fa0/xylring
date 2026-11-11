@@ -1,6 +1,6 @@
 # Xylring v0.8.1
 
-Release date: 2026-11-10
+Release date: 2026-11-11
 
 ## 更新内容
 
@@ -8,6 +8,8 @@ Release date: 2026-11-10
 - 恢复 `.git` 或重新初始化后自动重新加载仓库，清除旧分支筛选；`git init` 不会恢复已删除的提交历史。
 - 阻止已打开仓库的 Git 命令回退到父仓库，保留首次打开目录和终端子目录命令的仓库查找能力。
 - 修复从右键菜单进入文件历史时崩溃、返回后丢失对比列表的问题。
+- 将获取、拉取和推送整合到工具栏的同步菜单，并显示分支领先和落后数量。
+- 兼容不同 Git 版本对失效关联工作区的错误提示，及时清除旧仓库状态。
 
 ## Changes
 
@@ -15,6 +17,8 @@ Release date: 2026-11-10
 - Reload restored or reinitialized repositories and reset stale branch filters. Running `git init` does not recover deleted history.
 - Prevent commands on opened repositories from falling back to a parent repository, while preserving initial directory discovery and CLI commands from subdirectories.
 - Fix a crash when opening file history from a row context menu and the comparison lost after returning.
+- Combine fetch, pull, and push in the toolbar sync menu, with ahead and behind counts.
+- Recognize invalid linked worktrees across Git versions and clear stale repository state.
 
 ## 安装包 / Packages
 
