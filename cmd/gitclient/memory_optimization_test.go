@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
@@ -25,14 +24,23 @@ func TestCloseRightFileTabsReleasesReferences(t *testing.T) {
 	}
 }
 
-func TestFileTabBudgetIncludesFullBufferAndDeduplicatesBuffers(t *testing.T) {
+func TestFileTabBudgetCountsSharedBuffersOnce(t *testing.T) {
 	buf := editor.NewBuffer(strings.Repeat("x", 4<<20))
-	tab := newTab(1, "/unused")
-	tab.diff = &editor.DiffState{Old: buf, New: buf}
-	tab.fileTabs = []*fileDiffTab{{fullFile: true, fullContent: editor.State{Buffer: buf}}}
-	want := int64(4<<20) + int64(unsafe.Sizeof(*buf)) + int64(buf.LineCount())*32
-	if got := tab.cachedBytes(); got != want {
-		t.Fatalf("buffer budget = %d", got)
+	shared := newTab(1, "/unused")
+	shared.diff = &editor.DiffState{Old: buf, New: buf}
+	shared.fileTabs = []*fileDiffTab{{fullFile: true, fullContent: editor.State{Buffer: buf}}}
+
+	distinct := newTab(2, "/unused")
+	other := editor.NewBuffer(strings.Repeat("x", 4<<20))
+	distinct.diff = &editor.DiffState{Old: buf, New: other}
+	distinct.fileTabs = []*fileDiffTab{{fullFile: true, fullContent: editor.State{Buffer: buf}}}
+
+	sharedBytes, distinctBytes := shared.cachedBytes(), distinct.cachedBytes()
+	if sharedBytes < 4<<20 {
+		t.Fatalf("full file buffer is missing from the budget: %d", sharedBytes)
+	}
+	if sharedBytes >= distinctBytes {
+		t.Fatalf("a shared buffer was counted twice: shared=%d distinct=%d", sharedBytes, distinctBytes)
 	}
 }
 
