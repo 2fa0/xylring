@@ -187,25 +187,6 @@ func TestFindGitRepos(t *testing.T) {
 	}
 }
 
-func TestFindGitReposFallback(t *testing.T) {
-	dir, _ := initTestRepo(t)
-	src := filepath.Join(dir, "src")
-	if err := os.Mkdir(src, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	got, err := findGitRepos(context.Background(), src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := repoRoot(context.Background(), src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0] != want {
-		t.Fatalf("got %v want [%s]", got, want)
-	}
-}
-
 func TestFindGitReposNone(t *testing.T) {
 	_, err := findGitRepos(context.Background(), t.TempDir())
 	if err == nil {

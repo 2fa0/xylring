@@ -22,6 +22,9 @@ func TestInstallNotesUncleanSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Breadcrumbs can arrive before Install: they must not panic or touch disk.
+	Breadcrumb("before install")
+
 	path, err := Install(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -48,12 +51,6 @@ func TestInstallNotesUncleanSession(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(logs, sessionName)); !os.IsNotExist(err) {
 		t.Fatalf("session marker still present: %v", err)
 	}
-}
-
-func TestBreadcrumbBeforeInstall(t *testing.T) {
-	resetForTest()
-	t.Cleanup(resetForTest)
-	Breadcrumb("should not panic")
 }
 
 func TestRotateKeepsPreviousFile(t *testing.T) {
