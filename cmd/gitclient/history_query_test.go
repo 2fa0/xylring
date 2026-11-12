@@ -126,6 +126,19 @@ func waitUpdates(t *testing.T, updates <-chan func(), done func() bool) {
 	}
 }
 
+// drainUpdates 在测试 goroutine 上执行已排队的后台回调：生产环境由窗口循环串行化，
+// 这样才能避免回调与渲染争用 repoTab，同时不阻塞等待尚未完成的读取。
+func drainUpdates(updates <-chan func()) {
+	for {
+		select {
+		case fn := <-updates:
+			fn()
+		default:
+			return
+		}
+	}
+}
+
 func hoverSelectedFile(t *testing.T, tt *ui.Tester, tab *repoTab) {
 	t.Helper()
 	if tab.fileSel < 0 || tab.fileSel >= len(tab.compareFiles) {

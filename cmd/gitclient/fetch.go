@@ -166,24 +166,23 @@ func (a *app) fetchModal(c *ui.Context) {
 	wasOpen := a.showFetch
 	d := &a.fetch
 	disabled := d.preparing || d.busy
-	appModal(c.Key("fetch-modal"), &a.showFetch, "获取远程", 500, d.busy, func() {
-		ui.Text(c, "从所有远程获取最新引用。不会合并或改动工作区。").FontSize(12).TextColor(c.Theme().TextMuted)
+	appModal(c.Key("fetch-modal"), &a.showFetch, tr("获取远程"), 500, d.busy, func() {
 		switch {
 		case d.preparing:
-			busyRow(c, "fetch-preparing", "正在读取远程…", "")
+			busyRow(c, "fetch-preparing", tr("正在读取远程…"), "")
 		case len(d.remotes) > 0:
-			ui.Text(c, "远程："+strings.Join(d.remotes, "、")).FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Text(c, tr("远程：")+strings.Join(d.remotes, "、")).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
-		ui.Checkbox(c.Key("fetch-prune"), &d.prune, "清理远端已删除的分支").Disabled(disabled)
-		ui.Checkbox(c.Key("fetch-prune-tags"), &d.pruneTags, "同时清理远端已删除的标签").Disabled(disabled)
+		ui.Checkbox(c.Key("fetch-prune"), &d.prune, tr("清理远端已删除的分支")).Disabled(disabled)
+		ui.Checkbox(c.Key("fetch-prune-tags"), &d.pruneTags, tr("同时清理远端已删除的标签")).Disabled(disabled)
 		if d.err != "" {
-			ui.Text(c, d.err).TextColor(c.Theme().Danger)
+			ui.Text(c, trMessage(d.err)).TextColor(c.Theme().Danger)
 		}
 		if d.busy {
-			busyRow(c, "fetch-busy", "正在获取远程更新…", "")
+			busyRow(c, "fetch-busy", tr("正在获取远程更新…"), "")
 		}
 	}, func() {
-		if ui.Button(c.Key("fetch-cancel"), "取消").Clicked() {
+		if ui.Button(c.Key("fetch-cancel"), tr("取消")).Clicked() {
 			if d.busy {
 				if d.cancel != nil {
 					d.cancel()
@@ -192,7 +191,7 @@ func (a *app) fetchModal(c *ui.Context) {
 				a.showFetch = false
 			}
 		}
-		if ui.PrimaryButton(c.Key("fetch-apply"), "获取").Disabled(disabled || len(d.remotes) == 0).Clicked() {
+		if ui.PrimaryButton(c.Key("fetch-apply"), tr("获取")).Disabled(disabled || len(d.remotes) == 0).Clicked() {
 			a.runFetch()
 		}
 	})

@@ -46,7 +46,7 @@ func (a *app) commitRowMenu(c *ui.Context, m *ui.Menu, tab *repoTab, row int) {
 	commit := *item
 	refs := tab.refs[commit.hash]
 	if tab.query.term != "" || tab.query.filePath != "" {
-		if m.Item("在图谱中定位").Chosen() {
+		if m.Item(tr("在图谱中定位")).Chosen() {
 			a.locateCommitInGraph(tab, commit.hash)
 		}
 		m.Separator()
@@ -55,79 +55,79 @@ func (a *app) commitRowMenu(c *ui.Context, m *ui.Menu, tab *repoTab, row int) {
 		if ref.kind == refBranch {
 			branchName := ref.name
 			isCurrent := tab != nil && tab.branch == branchName
-			if m.Item("检出分支 " + branchName).Disabled(isCurrent).Chosen() {
+			if m.Item(tr("检出分支 ") + branchName).Disabled(isCurrent).Chosen() {
 				a.runCheckoutBranch(tab, branchName)
 			}
 		}
 	}
-	if m.Item("检出此提交").Chosen() {
+	if m.Item(tr("检出此提交")).Chosen() {
 		a.runCheckoutCommit(tab, commit.hash)
 	}
-	if m.Item("新建分支…").Chosen() {
+	if m.Item(tr("新建分支…")).Chosen() {
 		a.openCommitWrite(tab, writeBranch, commit)
 	}
-	m.Submenu("比较", func(sm *ui.Menu) {
+	m.Submenu(tr("比较"), func(sm *ui.Menu) {
 		if tab.comparison != nil {
-			if sm.Item("检视此提交").Chosen() {
+			if sm.Item(tr("检视此提交")).Chosen() {
 				a.selectCommit(tab, row)
 			}
 		}
 		if tab.inspecting != zeroHash && tab.inspecting != commit.hash {
-			if sm.Item("与当前选中提交比较").Chosen() {
+			if sm.Item(tr("与当前选中提交比较")).Chosen() {
 				a.compareCommitPair(tab, tab.inspecting, commit.hash)
 			}
 		}
 		if tab.head != zeroHash && tab.head != commit.hash {
-			if sm.Item("与 HEAD 比较").Chosen() {
+			if sm.Item(tr("与 HEAD 比较")).Chosen() {
 				a.compareCommitPair(tab, commit.hash, tab.head)
 			}
 		}
-		if sm.Item("以此提交进行比较…").Chosen() {
+		if sm.Item(tr("以此提交进行比较…")).Chosen() {
 			a.openCompareModalWith(tab, hashHex(commit.hash), "")
 		}
 	})
-	if m.Item("复制哈希").Chosen() {
+	if m.Item(tr("复制哈希")).Chosen() {
 		c.Services().WriteClipboard(hashHex(commit.hash))
-		c.Toast("已复制哈希")
+		c.Toast(tr("已复制哈希"))
 	}
-	if m.Item("复制提交信息").Chosen() {
+	if m.Item(tr("复制提交信息")).Chosen() {
 		a.copyCommitInfo(c, tab, commit.hash)
 	}
 	m.Separator()
-	if m.Item("添加标签…").Chosen() {
+	if m.Item(tr("添加标签…")).Chosen() {
 		a.openCommitWrite(tab, writeTag, commit)
 	}
-	if m.Item("修改说明…").Chosen() {
+	if m.Item(tr("修改说明…")).Chosen() {
 		a.openCommitWrite(tab, writeMessage, commit)
 	}
 	for _, ref := range refs {
 		switch ref.kind {
 		case refBranch:
 			branchName := ref.name
-			if m.Item("重命名分支 " + branchName + "…").Chosen() {
+			if m.Item(tr("重命名分支 ") + branchName + "…").Chosen() {
 				a.openRefWrite(tab, writeRenameBranch, commit, branchName)
 			}
-			if m.Item("删除分支 " + branchName + "…").Chosen() {
+			if m.Item(tr("删除分支 ") + branchName + "…").Chosen() {
 				a.openRefWrite(tab, writeDeleteBranch, commit, branchName)
 			}
 		case refTag:
 			tagName := ref.name
-			if m.Item("删除标签 " + tagName + "…").Chosen() {
+			if m.Item(tr("删除标签 ") + tagName + "…").Chosen() {
 				a.openRefWrite(tab, writeDeleteTag, commit, tagName)
 			}
 		}
 	}
-	m.Submenu("应用到当前分支", func(sm *ui.Menu) {
+	m.Submenu(tr("应用到当前分支"), func(sm *ui.Menu) {
 		for _, action := range []string{"合并", "变基", "拣选", "撤销提交"} {
-			if sm.Item(action + "…").Chosen() {
+			if sm.Item(tr(action) + "…").Chosen() {
 				a.openOperation(action, hashHex(commit.hash), "")
 			}
 		}
 	})
 	m.Separator()
-	m.Submenu("重置当前分支", func(sm *ui.Menu) {
+	m.Submenu(tr("重置当前分支"), func(sm *ui.Menu) {
 		for _, action := range []string{"软重置", "混合重置", "硬重置"} {
-			if sm.Item(action + "…").Chosen() {
+			if sm.Item(tr(action) + "…").Chosen() {
 				a.openOperation(action, hashHex(commit.hash), "")
 			}
 		}
@@ -136,13 +136,13 @@ func (a *app) commitRowMenu(c *ui.Context, m *ui.Menu, tab *repoTab, row int) {
 
 func (a *app) branchBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item commit, branchName string) {
 	isCurrent := tab != nil && tab.branch == branchName
-	if m.Item("检出分支 " + branchName).Disabled(isCurrent).Chosen() {
+	if m.Item(tr("检出分支 ") + branchName).Disabled(isCurrent).Chosen() {
 		a.runCheckoutBranch(tab, branchName)
 	}
-	if m.Item("重命名分支…").Chosen() {
+	if m.Item(tr("重命名分支…")).Chosen() {
 		a.openRefWrite(tab, writeRenameBranch, item, branchName)
 	}
-	if m.Item("删除分支…").Chosen() {
+	if m.Item(tr("删除分支…")).Chosen() {
 		a.openRefWrite(tab, writeDeleteBranch, item, branchName)
 	}
 	m.Separator()
@@ -151,29 +151,29 @@ func (a *app) branchBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item comm
 		curBranch = "HEAD"
 	}
 	if branchName != curBranch {
-		if m.Item("与当前分支 (" + curBranch + ") 比较").Chosen() {
+		if m.Item(tr("与当前分支 (") + curBranch + tr(") 比较")).Chosen() {
 			a.compareRefs(tab, curBranch, branchName, true)
 		}
 	} else {
-		if m.Item("与 HEAD 比较").Chosen() {
+		if m.Item(tr("与 HEAD 比较")).Chosen() {
 			a.compareRefs(tab, "HEAD", branchName, true)
 		}
 	}
-	if m.Item("以此分支进行比较…").Chosen() {
+	if m.Item(tr("以此分支进行比较…")).Chosen() {
 		a.openCompareModalWith(tab, branchName, "")
 	}
 	m.Separator()
-	if m.Item("基于此提交新建分支…").Chosen() {
+	if m.Item(tr("基于此提交新建分支…")).Chosen() {
 		a.openCommitWrite(tab, writeBranch, item)
 	}
-	if m.Item("复制分支名").Chosen() {
+	if m.Item(tr("复制分支名")).Chosen() {
 		c.Services().WriteClipboard(branchName)
-		c.Toast("已复制分支名")
+		c.Toast(tr("已复制分支名"))
 	}
 }
 
 func (a *app) remoteBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item commit, remoteName string) {
-	if m.Item("检出并跟踪 " + remoteName + "…").Chosen() {
+	if m.Item(tr("检出并跟踪 ") + remoteName + "…").Chosen() {
 		a.openCommitWrite(tab, writeBranch, item)
 		a.write.track = true
 		a.write.trackRemote = remoteName
@@ -187,24 +187,24 @@ func (a *app) remoteBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item comm
 	if curBranch == "" || strings.HasPrefix(curBranch, "分离头指针") || curBranch == "尚无提交" {
 		curBranch = "HEAD"
 	}
-	if m.Item("与当前分支 (" + curBranch + ") 比较").Chosen() {
+	if m.Item(tr("与当前分支 (") + curBranch + tr(") 比较")).Chosen() {
 		a.compareRefs(tab, curBranch, remoteName, true)
 	}
-	if m.Item("以此分支进行比较…").Chosen() {
+	if m.Item(tr("以此分支进行比较…")).Chosen() {
 		a.openCompareModalWith(tab, remoteName, "")
 	}
 	m.Separator()
-	if m.Item("复制远程分支名").Chosen() {
+	if m.Item(tr("复制远程分支名")).Chosen() {
 		c.Services().WriteClipboard(remoteName)
-		c.Toast("已复制远程分支名")
+		c.Toast(tr("已复制远程分支名"))
 	}
 }
 
 func (a *app) tagBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item commit, tagName string) {
-	if m.Item("检出此标签提交").Chosen() {
+	if m.Item(tr("检出此标签提交")).Chosen() {
 		a.runCheckoutCommit(tab, item.hash)
 	}
-	if m.Item("删除标签…").Chosen() {
+	if m.Item(tr("删除标签…")).Chosen() {
 		a.openRefWrite(tab, writeDeleteTag, item, tagName)
 	}
 	m.Separator()
@@ -212,16 +212,16 @@ func (a *app) tagBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item commit,
 	if curBranch == "" || strings.HasPrefix(curBranch, "分离头指针") || curBranch == "尚无提交" {
 		curBranch = "HEAD"
 	}
-	if m.Item("与当前分支 (" + curBranch + ") 比较").Chosen() {
+	if m.Item(tr("与当前分支 (") + curBranch + tr(") 比较")).Chosen() {
 		a.compareRefs(tab, curBranch, tagName, true)
 	}
-	if m.Item("以此标签进行比较…").Chosen() {
+	if m.Item(tr("以此标签进行比较…")).Chosen() {
 		a.openCompareModalWith(tab, tagName, "")
 	}
 	m.Separator()
-	if m.Item("复制标签名").Chosen() {
+	if m.Item(tr("复制标签名")).Chosen() {
 		c.Services().WriteClipboard(tagName)
-		c.Toast("已复制标签名")
+		c.Toast(tr("已复制标签名"))
 	}
 }
 
@@ -311,7 +311,7 @@ func (a *app) openRefWrite(tab *repoTab, kind string, item commit, refName strin
 func (a *app) copyCommitInfo(c *ui.Context, tab *repoTab, hash [20]byte) {
 	if d := tab.details; d != nil && (d.hash == hashHex(hash) || tab.inspecting == hash) {
 		c.Services().WriteClipboard(d.text())
-		c.Toast("已复制提交信息")
+		c.Toast(tr("已复制提交信息"))
 		return
 	}
 	svc := c.Services()
@@ -402,17 +402,17 @@ func prepareBranchWrite(d *commitWrite, commitRefs []refInfo, allRefs map[[20]by
 func writeTitle(kind string) string {
 	switch kind {
 	case writeTag:
-		return "添加标签"
+		return tr("添加标签")
 	case writeBranch:
-		return "新建分支"
+		return tr("新建分支")
 	case writeRenameBranch:
-		return "重命名分支"
+		return tr("重命名分支")
 	case writeDeleteBranch:
-		return "删除分支"
+		return tr("删除分支")
 	case writeDeleteTag:
-		return "删除标签"
+		return tr("删除标签")
 	default:
-		return "修改说明"
+		return tr("修改说明")
 	}
 }
 
@@ -429,71 +429,71 @@ func (a *app) commitWriteModal(c *ui.Context) {
 		switch d.kind {
 		case writeBranch:
 			var input ui.Element
-			ui.Field(c, "分支名", func() {
+			ui.Field(c, tr("分支名"), func() {
 				input = ui.TextInput(c.Key("write-branch-name"), &d.name).Placeholder("feature/fix").Disabled(disabled).AutoFocus()
 			})
 			if len(d.remotes) > 0 {
 				label := "跟踪远程分支"
 				if d.trackRemote != "" {
-					label = "跟踪 " + d.trackRemote
+					label = tr("跟踪 ") + d.trackRemote
 				}
-				ui.Checkbox(c.Key("write-track"), &d.track, label).Disabled(disabled)
+				ui.Checkbox(c.Key("write-track"), &d.track, tr(label)).Disabled(disabled)
 				if d.track && len(d.remotes) > 1 {
 					ui.Select(c.Key("write-track-remote"), &d.trackRemote, d.remotes).Disabled(disabled)
 				}
 			}
-			ui.Checkbox(c.Key("write-checkout"), &d.checkout, "创建后检出").Disabled(disabled)
-			ui.Checkbox(c.Key("write-overwrite-branch"), &d.overwrite, "覆盖已有同名分支").Disabled(disabled)
+			ui.Checkbox(c.Key("write-checkout"), &d.checkout, tr("创建后检出")).Disabled(disabled)
+			ui.Checkbox(c.Key("write-overwrite-branch"), &d.overwrite, tr("覆盖已有同名分支")).Disabled(disabled)
 			if input.Submitted() && !disabled {
 				a.runCommitWrite()
 			}
 		case writeRenameBranch:
 			var input ui.Element
-			ui.Field(c, "新分支名", func() {
+			ui.Field(c, tr("新分支名"), func() {
 				input = ui.TextInput(c.Key("write-rename-branch"), &d.name).Placeholder(d.oldName).Disabled(disabled).AutoFocus()
 			})
-			ui.Checkbox(c.Key("write-overwrite-rename"), &d.overwrite, "覆盖已有同名分支").Disabled(disabled)
+			ui.Checkbox(c.Key("write-overwrite-rename"), &d.overwrite, tr("覆盖已有同名分支")).Disabled(disabled)
 			if input.Submitted() && !disabled {
 				a.runCommitWrite()
 			}
 		case writeDeleteBranch:
-			ui.Text(c, "确定删除本地分支 "+d.name+" 吗？").FontSize(13)
-			ui.Checkbox(c.Key("write-force-delete-branch"), &d.overwrite, "强制删除（即使尚未完全合并）").Disabled(disabled)
+			ui.Text(c, tr("确定删除本地分支 ")+d.name+tr(" 吗？")).FontSize(13)
+			ui.Checkbox(c.Key("write-force-delete-branch"), &d.overwrite, tr("强制删除（即使尚未完全合并）")).Disabled(disabled)
 		case writeDeleteTag:
-			ui.Text(c, "确定删除本地标签 "+d.name+" 吗？").FontSize(13)
+			ui.Text(c, tr("确定删除本地标签 ")+d.name+tr(" 吗？")).FontSize(13)
 		case writeTag:
 			var input ui.Element
-			ui.Field(c, "标签名", func() {
+			ui.Field(c, tr("标签名"), func() {
 				input = ui.TextInput(c.Key("write-tag-name"), &d.name).Placeholder("v1.0.0").Disabled(disabled).AutoFocus()
 			})
-			ui.Checkbox(c.Key("write-annotated"), &d.annotated, "附注标签").Disabled(disabled)
+			ui.Checkbox(c.Key("write-annotated"), &d.annotated, tr("附注标签")).Disabled(disabled)
 			if d.annotated {
-				ui.Field(c, "消息", func() {
-					ui.TextInput(c.Key("write-tag-message"), &d.message).Placeholder("标签说明").Disabled(disabled)
+				ui.Field(c, tr("消息"), func() {
+					ui.TextInput(c.Key("write-tag-message"), &d.message).Placeholder(tr("标签说明")).Disabled(disabled)
 				})
 			}
-			ui.Checkbox(c.Key("write-overwrite-tag"), &d.overwrite, "覆盖已有同名标签").Disabled(disabled)
+			ui.Checkbox(c.Key("write-overwrite-tag"), &d.overwrite, tr("覆盖已有同名标签")).Disabled(disabled)
 			if input.Submitted() && !disabled {
 				a.runCommitWrite()
 			}
 		default:
 			if d.preparing {
-				busyRow(c, "write-preparing", "正在读取说明…", "")
+				busyRow(c, "write-preparing", tr("正在读取说明…"), "")
 			} else {
-				ui.Text(c, "会生成新的提交哈希；若不是 HEAD，其后的提交也会改写。").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, tr("会生成新的提交哈希；若不是 HEAD，其后的提交也会改写。")).FontSize(12).TextColor(c.Theme().TextMuted)
 				provenanceInputs(c, "reword-ring", &d.prov, disabled)
-				ui.Text(c, "若提交已推送，保存将改写已推送历史，需要强制推送。").FontSize(12).TextColor(c.Theme().Warning)
+				ui.Text(c, tr("若提交已推送，保存将改写已推送历史，需要强制推送。")).FontSize(12).TextColor(c.Theme().Warning)
 				ui.TextArea(c.Key("write-message"), &d.message).Height(160).Disabled(disabled).AutoFocus()
 			}
 		}
 		if d.err != "" {
-			ui.Text(c, d.err).TextColor(c.Theme().Danger)
+			ui.Text(c, trMessage(d.err)).TextColor(c.Theme().Danger)
 		}
 		if d.busy {
-			busyRow(c, "write-busy", "Git 正在执行…", "")
+			busyRow(c, "write-busy", tr("Git 正在执行…"), "")
 		}
 	}, func() {
-		if ui.Button(c.Key("write-cancel"), "取消").Disabled(d.busy).Clicked() {
+		if ui.Button(c.Key("write-cancel"), tr("取消")).Disabled(d.busy).Clicked() {
 			a.showWrite = false
 		}
 		label := "创建"
@@ -503,7 +503,7 @@ func (a *app) commitWriteModal(c *ui.Context) {
 		case writeDeleteBranch, writeDeleteTag:
 			label = "删除"
 		}
-		if ui.PrimaryButton(c.Key("write-apply"), label).Disabled(disabled).Clicked() {
+		if ui.PrimaryButton(c.Key("write-apply"), tr(label)).Disabled(disabled).Clicked() {
 			a.runCommitWrite()
 		}
 	})

@@ -215,33 +215,33 @@ func (a *app) comparisonModal(c *ui.Context) {
 	theme := c.Theme()
 
 	var fromInput, toInput ui.Element
-	appModal(c.Key("compare-modal"), &a.showCompare, "比较", 480, false, func() {
+	appModal(c.Key("compare-modal"), &a.showCompare, tr("比较"), 480, false, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.End).Children(func() {
 			ui.Column(c).Grow(1).Gap(4).Children(func() {
-				ui.Text(c, "从").FontSize(12).TextColor(theme.TextMuted)
+				ui.Text(c, tr("从")).FontSize(12).TextColor(theme.TextMuted)
 				fromInput = ui.Autocomplete(c.Key("compare-from"), &a.compareFrom, suggestions).Placeholder("HEAD").FillWidth()
 			})
-			if ui.Button(c.Key("compare-swap"), "⇄").Label("交换").Tooltip("交换起点与终点").Shrink(0).Clicked() {
+			if ui.Button(c.Key("compare-swap"), "⇄").Label(tr("交换")).Shrink(0).Clicked() {
 				a.compareFrom, a.compareTo = a.compareTo, a.compareFrom
 			}
 			ui.Column(c).Grow(1).Gap(4).Children(func() {
-				ui.Text(c, "到").FontSize(12).TextColor(theme.TextMuted)
-				toInput = ui.Autocomplete(c.Key("compare-to"), &a.compareTo, suggestions).Placeholder("分支、标签或哈希").FillWidth()
+				ui.Text(c, tr("到")).FontSize(12).TextColor(theme.TextMuted)
+				toInput = ui.Autocomplete(c.Key("compare-to"), &a.compareTo, suggestions).Placeholder(tr("分支、标签或哈希")).FillWidth()
 			})
 		})
 
-		ui.Checkbox(c.Key("compare-three"), &a.compareThree, "从分叉点起")
+		ui.Checkbox(c.Key("compare-three"), &a.compareThree, tr("从分叉点起"))
 
 		if a.compareErr != "" {
-			ui.Text(c, a.compareErr).FontSize(12).TextColor(theme.Danger)
+			ui.Text(c, trMessage(a.compareErr)).FontSize(12).TextColor(theme.Danger)
 		}
 	}, func() {
-		if ui.Button(c.Key("compare-cancel"), "取消").Clicked() {
+		if ui.Button(c.Key("compare-cancel"), tr("取消")).Clicked() {
 			a.showCompare = false
 		}
 		busy := t == nil || t.compareLoading
 		submitted := (fromInput.Submitted() || toInput.Submitted()) && !busy
-		if ui.PrimaryButton(c.Key("compare-apply"), "开始比较").Disabled(busy).Clicked() || submitted {
+		if ui.PrimaryButton(c.Key("compare-apply"), tr("开始比较")).Disabled(busy).Clicked() || submitted {
 			from, to, three, err := parseCompareRange(a.compareFrom, a.compareTo)
 			if err != nil {
 				a.compareErr = err.Error()
@@ -759,12 +759,12 @@ func (a *app) maybeCompareSelection(t *repoTab) {
 func fileViewToggleWidget(c *ui.Context, key, label string, view *int) {
 	theme := c.Theme()
 	seg := ui.SegmentedBase(c.Key(key), view, 2)
-	seg.Track.Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label(label)
+	seg.Track.Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label(tr(label))
 	seg.Track.Children(func() {
 		icons := [2]*ui.SVG{iconList, iconListTree}
 		names := [2]string{"列表", "树"}
 		for i, ic := range icons {
-			s := seg.Segment(i).Label(names[i]).Tooltip(names[i]).Padding(theme.Space(1), theme.Space(1.5)).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
+			s := seg.Segment(i).Label(tr(names[i])).Tooltip(tr(names[i])).Padding(theme.Space(1), theme.Space(1.5)).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
 			if i == *view {
 				bg := theme.Background
 				if theme.Dark {
@@ -790,12 +790,12 @@ func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 		}
 		a.fileFilterBar(c, t)
 		if t.compareLoading && len(t.compareFiles) == 0 {
-			busyBlock(c, "files-loading", "正在读取改动…", "").Grow(1)
+			busyBlock(c, "files-loading", tr("正在读取改动…"), "").Grow(1)
 			return
 		}
 		if t.compareErr != "" && len(t.compareFiles) == 0 {
 			ui.Column(c).Grow(1).Center().Padding(12).Children(func() {
-				ui.Text(c, t.compareErr).TextColor(theme.Danger)
+				ui.Text(c, trMessage(t.compareErr)).TextColor(theme.Danger)
 			})
 			return
 		}
@@ -807,9 +807,8 @@ func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 			}
 			if len(t.compareFiles) == 0 && !t.compareLoading {
 				emptyHint(c, "files-empty", emptyHintProps{
-					Icon:        iconGitCompare,
-					Title:       "没有文件变化",
-					Description: filesEmptyHint(t),
+					Icon:  iconGitCompare,
+					Title: filesEmptyHint(t),
 				}).Grow(1)
 			}
 		})
@@ -822,27 +821,26 @@ func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 // noMatchingFiles says the filter hid every file, and clears it on request.
 func noMatchingFiles(c *ui.Context, filter *string) {
 	emptyHint(c, "files-no-match", emptyHintProps{
-		Icon:        iconSearch,
-		Title:       "无匹配文件",
-		Description: "换个关键词，或清除筛选查看全部改动",
+		Icon:  iconSearch,
+		Title: tr("无匹配文件"),
 		Action: func() {
-			if ui.Button(c.Key("files-clear-filter"), "清除筛选").Clicked() {
+			if ui.Button(c.Key("files-clear-filter"), tr("清除筛选")).Clicked() {
 				*filter = ""
 			}
 		},
 	})
 }
 
-// filesEmptyHint says why the file list is empty: a clean worktree, a commit
-// that changed nothing, or two versions that match.
+// filesEmptyHint is the one sentence an empty file list shows: a clean
+// worktree, a commit that changed nothing, or two versions that match.
 func filesEmptyHint(t *repoTab) string {
 	switch {
 	case t.worktree:
-		return "工作区没有未提交的改动"
+		return tr("工作区没有未提交的改动")
 	case t.comparison != nil:
-		return "这两个版本没有文件差异"
+		return tr("这两个版本没有文件差异")
 	default:
-		return "这条提交没有改动任何文件"
+		return tr("这条提交没有改动任何文件")
 	}
 }
 
@@ -853,12 +851,12 @@ func (a *app) sidebarActiveInspect(c *ui.Context, t *repoTab) {
 func (a *app) fileDiffPane(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	if t.compareLoading && len(t.compareFiles) == 0 {
-		busyBlock(c, "diff-loading", "正在读取改动…", "").Grow(1)
+		busyBlock(c, "diff-loading", tr("正在读取改动…"), "").Grow(1)
 		return
 	}
 	if t.compareErr != "" && len(t.compareFiles) == 0 {
 		ui.Column(c).Grow(1).Center().Padding(24).Children(func() {
-			ui.Text(c, t.compareErr).TextColor(theme.Danger)
+			ui.Text(c, trMessage(t.compareErr)).TextColor(theme.Danger)
 		})
 		return
 	}
@@ -885,7 +883,7 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 			ui.Text(c, item.whenText()).FontSize(12).TextColor(theme.TextMuted).SingleLine()
 			ui.Text(c, "·").FontSize(12).TextColor(theme.TextMuted)
 			ui.Text(c, shortHash(item.hash)).Font("monospace").FontSize(12).TextColor(theme.TextMuted).SingleLine()
-			copyBtn := ui.ButtonBase(c.Key("copy-commit-hash")).Label("复制哈希").Tooltip("复制哈希").Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
+			copyBtn := ui.ButtonBase(c.Key("copy-commit-hash")).Label(tr("复制哈希")).Tooltip(tr("复制哈希")).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
 			switch {
 			case copyBtn.Pressed():
 				copyBtn.Background(theme.SurfacePressed)
@@ -897,20 +895,20 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 			})
 			if copyBtn.Clicked() {
 				c.Services().WriteClipboard(hashHex(item.hash))
-				c.Toast("已复制哈希")
+				c.Toast(tr("已复制哈希"))
 			}
 			label := "完整信息"
 			if t.detailsOpen {
 				label = "收起信息"
 			}
-			btn := ui.ButtonBase(c.Key("commit-details")).Label(label).Tooltip(label).Padding(1, 6).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
+			btn := ui.ButtonBase(c.Key("commit-details")).Label(tr(label)).Padding(1, 6).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
 			if t.detailsOpen {
 				btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 			} else {
 				btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
 			}
 			btn.Children(func() {
-				ui.Text(c, label).FontSize(11).SingleLine()
+				ui.Text(c, tr(label)).FontSize(11).SingleLine()
 			})
 			if btn.Clicked() {
 				a.toggleDetails(t)
@@ -918,16 +916,16 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 			if len(item.parents) > 1 {
 				for pi := range item.parents {
 					pIdx := pi
-					label := fmt.Sprintf("父提交 %d", pi+1)
+					label := fmt.Sprintf(tr("父提交 %d"), pi+1)
 					btn := ui.ButtonBase(c.Key(fmt.Sprintf("parent-%d", pi))).Padding(1, 6).Radius(theme.Radius).Cursor(ui.CursorPointer).
-						Tooltip("对比父提交 " + shortHash(item.parents[pi])).Transition(colorMotion())
+						Tooltip(tr("对比父提交 ") + shortHash(item.parents[pi])).Transition(colorMotion())
 					if t.inspectParent == pi {
 						btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 					} else {
 						btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
 					}
 					btn.Children(func() {
-						ui.Text(c, label).FontSize(11).SingleLine()
+						ui.Text(c, tr(label)).FontSize(11).SingleLine()
 					})
 					if btn.Clicked() && t.inspectParent != pIdx {
 						a.startCommitDiff(t, item, pIdx)
@@ -950,24 +948,24 @@ func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
 	ui.Row(c).FillWidth().Padding(4, 8).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
 		a.fileListTitle(c, t)
 		if t.worktree && len(t.compareFiles) > 0 {
-			paneIconButton(c, "inspect-stage-all", "全部暂存", iconPlus).Tooltip("全部暂存").OnClick(func() {
+			paneIconButton(c, "inspect-stage-all", tr("全部暂存"), iconPlus).Tooltip(tr("全部暂存")).OnClick(func() {
 				a.stageAllWorktree(t)
 			})
-			paneIconButton(c, "inspect-unstage-all", "全部取消暂存", iconMinus).Tooltip("全部取消暂存").OnClick(func() {
+			paneIconButton(c, "inspect-unstage-all", tr("全部取消暂存"), iconMinus).Tooltip(tr("全部取消暂存")).OnClick(func() {
 				a.unstageAllWorktree(t)
 			})
 		}
 		if t.comparison != nil {
-			if iconButton(c, "compare-close", "返回", iconBack).Shrink(0).Clicked() {
+			if iconButton(c, "compare-close", tr("返回"), iconBack).Shrink(0).Clicked() {
 				a.endComparison(t)
 			}
 		}
 		a.fileViewToggle(c)
 		if a.fileView == 1 {
-			if paneIconButton(c, "tree-expand-all", "全部展开", iconExpandAll).Clicked() {
+			if paneIconButton(c, "tree-expand-all", tr("全部展开"), iconExpandAll).Clicked() {
 				t.expandAllTree()
 			}
-			if paneIconButton(c, "tree-collapse-all", "全部收起", iconCollapseAll).Clicked() {
+			if paneIconButton(c, "tree-collapse-all", tr("全部收起"), iconCollapseAll).Clicked() {
 				t.collapseAllTree()
 			}
 		}
@@ -981,15 +979,15 @@ func (a *app) fileFilterBar(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	ui.Row(c.Key(fmt.Sprintf("file-filter-bar-%d", t.id))).FillWidth().Padding(2, 8, 4, 8).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 		ui.TextInput(c.Key(fmt.Sprintf("filter-files-input-%d", t.id)), &t.fileFilter).
-			Label("过滤文件").
-			Placeholder("过滤文件").
+			Label(tr("过滤文件")).
+			Placeholder(tr("过滤文件")).
 			Bind(&t.fileFilterInput).
 			Grow(1).MinWidth(60)
 		if t.fileFilter != "" {
 			indices := t.filteredFileIndices()
 			ui.Text(c, fmt.Sprintf("%d/%d", len(indices), len(t.compareFiles))).
 				FontSize(11).TextColor(theme.TextMuted).Shrink(0)
-			clearBtn := ui.ButtonBase(c.Key(fmt.Sprintf("clear-file-filter-%d", t.id))).Label("清除过滤").Tooltip("清除过滤").Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
+			clearBtn := ui.ButtonBase(c.Key(fmt.Sprintf("clear-file-filter-%d", t.id))).Label(tr("清除过滤")).Tooltip(tr("清除过滤")).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
 			clearBtn.Children(func() {
 				ui.Icon(c, iconClose).Size(12, 12).TextColor(theme.TextMuted)
 			})
@@ -1002,15 +1000,15 @@ func (a *app) fileFilterBar(c *ui.Context, t *repoTab) {
 
 func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
-	maxLabel := "放大阅读"
+	maxLabel := tr("放大阅读")
 	maxIcon := iconMaximize
 	if t.diffMaximized {
-		maxLabel = "还原布局"
+		maxLabel = tr("还原布局")
 		maxIcon = iconMinimize
 	}
 	ui.Row(c).FillWidth().Padding(4, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
 		if t.comparison != nil {
-			if ui.Checkbox(c.Key("compare-three-live"), &t.comparison.threeDot, "从分叉点起").Changed() {
+			if ui.Checkbox(c.Key("compare-three-live"), &t.comparison.threeDot, tr("从分叉点起")).Changed() {
 				a.loadComparisonDiff(t)
 			}
 		}
@@ -1029,7 +1027,7 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 				}
 			})
 		} else if t.worktree {
-			ui.Text(c, "选择文件").Bold().FontSize(12).TextColor(theme.TextMuted).SingleLine().Shrink(0)
+			ui.Text(c, tr("选择文件")).Bold().FontSize(12).TextColor(theme.TextMuted).SingleLine().Shrink(0)
 		}
 		ui.Box(c).Grow(1)
 		if t.imageDiff != nil {
@@ -1042,22 +1040,22 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 				if runtime.GOOS != "darwin" {
 					findTip = "在 Diff 中查找 (Ctrl+F)"
 				}
-				if paneIconButton(c, "find-in-diff", "在 Diff 中查找", iconSearch).Tooltip(findTip).Clicked() {
+				if paneIconButton(c, "find-in-diff", tr("在 Diff 中查找"), iconSearch).Tooltip(tr(findTip)).Clicked() {
 					a.openDiffFind(t)
 				}
 			}
 		}
-		fullWidthTip := "全宽展示 (展开至整窗宽度)"
+		fullWidthTip := tr("全宽展示 (展开至整窗宽度)")
 		if a.bottomFullWidth {
-			fullWidthTip = "侧栏旁展示 (还原底栏宽度)"
+			fullWidthTip = tr("侧栏旁展示 (还原底栏宽度)")
 		}
-		if paneToggleIconButton(c, "toggle-bottom-width", "切换底栏全宽", fullWidthTip, iconPanelBottom, a.bottomFullWidth).Clicked() {
+		if paneToggleIconButton(c, "toggle-bottom-width", tr("切换底栏全宽"), fullWidthTip, iconPanelBottom, a.bottomFullWidth).Clicked() {
 			a.toggleBottomFullWidth()
 		}
 		if paneIconButton(c, "toggle-diff-max", maxLabel, maxIcon).Clicked() {
 			t.diffMaximized = !t.diffMaximized
 		}
-		if closeIconButton(c, "close-bottom-pane", "关闭详情").Shrink(0).Clicked() {
+		if closeIconButton(c, "close-bottom-pane", tr("关闭详情")).Shrink(0).Clicked() {
 			a.closeBottomPane(t)
 		}
 	})
@@ -1088,13 +1086,13 @@ func (a *app) openDiffFind(t *repoTab) {
 func (a *app) diffLayoutToggle(c *ui.Context) {
 	theme := c.Theme()
 	seg := ui.SegmentedBase(c.Key("diff-layout-toggle"), &a.diffLayout, 2)
-	seg.Track.Height(24).Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label("差异排版")
+	seg.Track.Height(24).Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label(tr("差异排版"))
 	seg.Track.Children(func() {
 		icons := [2]*ui.SVG{iconColumns2, iconRows2}
 		names := [2]string{"并排", "内联"}
 		tips := [2]string{"左右分栏 (Split)", "内联展示 (Unified)"}
 		for i := 0; i < 2; i++ {
-			s := seg.Segment(i).Label(names[i]).Tooltip(tips[i]).Padding(0, 6).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
+			s := seg.Segment(i).Label(tr(names[i])).Tooltip(tr(tips[i])).Padding(0, 6).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
 			if i == a.diffLayout {
 				bg := theme.Background
 				if theme.Dark {
@@ -1115,14 +1113,14 @@ func (a *app) diffLayoutToggle(c *ui.Context) {
 
 func (a *app) diffIgnoreWhitespaceToggle(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
-	btn := ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label("忽略空白").Tooltip("忽略空白字符改动").Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+	btn := ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label(tr("忽略空白")).Tooltip(tr("忽略空白字符改动")).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
 	if a.diffIgnoreWhitespace {
 		btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 	} else {
 		btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
 	}
 	btn.Children(func() {
-		ui.Text(c, "忽略空白").FontSize(11).SingleLine()
+		ui.Text(c, tr("忽略空白")).FontSize(11).SingleLine()
 	})
 	if btn.Clicked() {
 		a.diffIgnoreWhitespace = !a.diffIgnoreWhitespace
@@ -1165,20 +1163,20 @@ func (a *app) comparisonBanner(c *ui.Context, tab *repoTab) {
 
 	ui.Row(c.Key("comparison-banner")).FillWidth().Padding(6, 12).Gap(10).AlignItems(ui.Center).Shrink(0).Background(t.Accent.Alpha(0.08)).Border(1, t.Accent.Alpha(0.2)).Transition(fadeEnter()).Children(func() {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(1).MinWidth(0).Children(func() {
-			ui.Text(c, "对比模式").Bold().FontSize(12).TextColor(t.Accent).Shrink(0)
+			ui.Text(c, tr("对比模式")).Bold().FontSize(12).TextColor(t.Accent).Shrink(0)
 			ui.Text(c, "·").TextColor(t.TextMuted).Shrink(0)
 			ui.Text(c, fromText).Font("monospace").FontSize(12).Bold().TextColor(t.Text).SingleLine().Shrink(1).MinWidth(0)
 			ui.Text(c, "⇄").FontSize(13).Bold().TextColor(t.Accent).Shrink(0)
 			ui.Text(c, toText).Font("monospace").FontSize(12).Bold().TextColor(t.Text).SingleLine().Shrink(1).MinWidth(0)
 			if cmp.threeDot {
-				ui.Text(c, "(三点)").FontSize(11).TextColor(t.TextMuted).Shrink(0)
+				ui.Text(c, tr("(三点)")).FontSize(11).TextColor(t.TextMuted).Shrink(0)
 			}
 		})
 
 		ui.Box(c).Grow(1)
 
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-			if ui.Button(c.Key("compare-banner-exit"), "退出对比").Label("退出对比").Tooltip("退出对比模式 (Esc)").Shrink(0).Clicked() {
+			if ui.Button(c.Key("compare-banner-exit"), tr("退出对比")).Label(tr("退出对比")).Shrink(0).Clicked() {
 				a.endComparison(tab)
 			}
 			kbdHint(c, "compare-banner-esc", "Esc")
@@ -1190,8 +1188,7 @@ func (a *app) fileListTitle(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	switch {
 	case t.worktree:
-		ui.Text(c, "未提交改动").Bold().SingleLine().Shrink(0)
-		ui.Text(c, "相对 HEAD").FontSize(12).TextColor(theme.TextMuted).SingleLine().Grow(1).MinWidth(0)
+		ui.Text(c, tr("未提交改动")).Bold().SingleLine().Shrink(0)
 	case t.comparison != nil:
 		from, to := t.comparison.fromLabel, t.comparison.toLabel
 		if from == "" {
@@ -1208,13 +1205,13 @@ func (a *app) fileListTitle(c *ui.Context, t *repoTab) {
 		ui.Text(c, sep).TextColor(theme.TextMuted).Shrink(0)
 		ui.Text(c, to).Font("monospace").SingleLine().Grow(1).MinWidth(0)
 	default:
-		text := "提交"
+		text := tr("提交")
 		idx := t.indexOf(t.inspecting)
 		row := t.rowIndex(t.inspecting)
 		if idx >= 0 {
 			text = t.commits[idx].subject
 			if text == "" {
-				text = "（无说明）"
+				text = tr("（无说明）")
 			}
 		}
 		title := ui.Text(c, text).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(text)
@@ -1228,7 +1225,7 @@ func (a *app) fileListTitle(c *ui.Context, t *repoTab) {
 
 func fileIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 	theme := c.Theme()
-	btn := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name).Padding(4).Radius(theme.Radius).Cursor(ui.CursorPointer).Transition(colorMotion())
+	btn := ui.ButtonBase(c.Key(key)).Label(tr(name)).Tooltip(tr(name)).Padding(4).Radius(theme.Radius).Cursor(ui.CursorPointer).Transition(colorMotion())
 	switch {
 	case btn.Pressed():
 		btn.Background(theme.SurfacePressed)
@@ -1247,9 +1244,9 @@ func copyPathTip(c *ui.Context) string {
 		alt = "⌥"
 	}
 	if c.Modifiers()&ui.Alt != 0 {
-		return "复制绝对路径"
+		return tr("复制绝对路径")
 	}
-	return "复制相对路径\n" + alt + " 复制绝对路径"
+	return tr("复制相对路径\n") + alt + tr(" 复制绝对路径")
 }
 
 func repoFilePath(repo, rel string, abs bool) string {
@@ -1267,9 +1264,9 @@ func copyFilePath(c *ui.Context, repo, rel string, mods ui.Modifiers) {
 	abs := mods&ui.Alt != 0
 	c.Services().WriteClipboard(repoFilePath(repo, rel, abs))
 	if abs {
-		c.Toast("已复制绝对路径")
+		c.Toast(tr("已复制绝对路径"))
 	} else {
-		c.Toast("已复制相对路径")
+		c.Toast(tr("已复制相对路径"))
 	}
 }
 
@@ -1283,7 +1280,7 @@ func (a *app) fileHoverActions(c *ui.Context, t *repoTab, i int, hovered bool) {
 		bg = theme.Accent
 	}
 	f := t.compareFiles[i]
-	ui.Row(c).Gap(2).AlignItems(ui.Center).Padding(2, 6).Background(bg).Radius(0, theme.Radius, theme.Radius, 0).Label("文件操作").Absolute().Top(0).Right(0).Bottom(0).Children(func() {
+	ui.Row(c).Gap(2).AlignItems(ui.Center).Padding(2, 6).Background(bg).Radius(0, theme.Radius, theme.Radius, 0).Label(tr("文件操作")).Absolute().Top(0).Right(0).Bottom(0).Children(func() {
 		if t.worktree {
 			a.worktreeStageHoverButtons(c, t, f)
 		}
@@ -1326,14 +1323,14 @@ func statusTip(f fileChange) string {
 func fileStatusMark(c *ui.Context, f fileChange) {
 	theme := c.Theme()
 	if f.extra == "未跟踪" {
-		ui.Text(c, "U").Font("monospace").FontSize(12).FontWeight(600).TextColor(theme.Success).TextAlign(ui.End).MinWidth(16).Shrink(0).Tooltip(statusTip(f))
+		ui.Text(c, "U").Font("monospace").FontSize(12).FontWeight(600).TextColor(theme.Success).TextAlign(ui.End).MinWidth(16).Shrink(0).Tooltip(tr(statusTip(f)))
 		return
 	}
 	mark := statusLetter(f.status)
 	if mark == "" || mark == "?" {
 		return
 	}
-	ui.Text(c, mark).Font("monospace").FontSize(12).FontWeight(600).TextColor(statusColor(theme, f.status)).TextAlign(ui.End).MinWidth(16).Shrink(0).Tooltip(statusTip(f))
+	ui.Text(c, mark).Font("monospace").FontSize(12).FontWeight(600).TextColor(statusColor(theme, f.status)).TextAlign(ui.End).MinWidth(16).Shrink(0).Tooltip(tr(statusTip(f)))
 }
 
 func takeScrollMove(s *ui.ScrollState, last *float32) bool {
@@ -1376,7 +1373,7 @@ func fileLineStats(c *ui.Context, f fileChange) {
 	}
 	theme := c.Theme()
 	muted := theme.TextMuted
-	ui.Row(c).Gap(4).Shrink(0).AlignItems(ui.Center).Tooltip(fmt.Sprintf("新增 %d 行，删除 %d 行", f.added, f.deleted)).Children(func() {
+	ui.Row(c).Gap(4).Shrink(0).AlignItems(ui.Center).Tooltip(fmt.Sprintf(tr("新增 %d 行，删除 %d 行"), f.added, f.deleted)).Children(func() {
 		ui.Text(c, "(").FontSize(12).TextColor(muted).Shrink(0)
 		ui.Text(c, fmt.Sprintf("+%d", f.added)).Font("monospace").FontSize(12).TextColor(theme.Success).Shrink(0)
 		ui.Text(c, "|").FontSize(12).TextColor(muted).Shrink(0)
@@ -1427,7 +1424,7 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 		}
 		dir := filepath.Dir(f.path)
 		if dir == "." {
-			dir = "仓库根目录"
+			dir = tr("仓库根目录")
 		}
 		row := ui.Column(c).FillWidth().MinHeight(48).Padding(6, 10).Gap(4)
 		hovered := row.Hovered()
@@ -1537,7 +1534,7 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func()
 	}
 	var after func()
 	f := t.compareFiles[idx]
-	if m.Item("在新标签页打开").Chosen() {
+	if m.Item(tr("在新标签页打开")).Chosen() {
 		a.openFileTabAt(t, idx)
 	}
 	if t.worktree {
@@ -1545,12 +1542,12 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func()
 	}
 	if !t.worktree {
 		for _, action := range []string{"Blame", "行历史", "恢复历史文件"} {
-			if m.Item(action + "…").Chosen() {
+			if m.Item(tr(action) + "…").Chosen() {
 				a.openOperation(action, hashHex(t.diffTo), f.path)
 			}
 		}
 	}
-	if m.Item("查看此版本完整文件").Chosen() {
+	if m.Item(tr("查看此版本完整文件")).Chosen() {
 		rev := hashHex(t.diffTo)
 		revLabel := shortHash(t.diffTo)
 		if t.worktree {
@@ -1560,35 +1557,35 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func()
 		a.openFullFileTab(t, f.path, rev, revLabel)
 	}
 	if t.query.filePath == "" {
-		if m.Item("查看文件历史").Chosen() {
+		if m.Item(tr("查看文件历史")).Chosen() {
 			after = func() { a.openFileHistoryAt(t, idx) }
 		}
 	}
 	m.Separator()
-	if m.Item("复制相对路径").Chosen() {
+	if m.Item(tr("复制相对路径")).Chosen() {
 		copyFilePath(c, t.path, f.path, 0)
 	}
-	if m.Item("复制绝对路径").Chosen() {
+	if m.Item(tr("复制绝对路径")).Chosen() {
 		copyFilePath(c, t.path, f.path, ui.Alt)
 	}
 	m.Separator()
 	fullPath := repoFilePath(t.path, f.path, true)
-	if m.Item("使用默认编辑器打开").Chosen() {
+	if m.Item(tr("使用默认编辑器打开")).Chosen() {
 		if _, err := os.Stat(fullPath); err != nil {
-			c.Toast("工作区中不存在此文件")
+			c.Toast(tr("工作区中不存在此文件"))
 		} else if err := openWithDefaultEditor(fullPath); err != nil {
-			c.Toast("打开失败: " + err.Error())
+			c.Toast(trMessage("打开失败: " + err.Error()))
 		}
 	}
 	revealName := "在访达中显示"
 	if runtime.GOOS != "darwin" {
 		revealName = "在文件管理器中显示"
 	}
-	if m.Item(revealName).Chosen() {
+	if m.Item(tr(revealName)).Chosen() {
 		if _, err := os.Stat(fullPath); err != nil {
-			c.Toast("工作区中不存在此文件")
+			c.Toast(tr("工作区中不存在此文件"))
 		} else if err := revealInFileManager(fullPath); err != nil {
-			c.Toast("定位失败: " + err.Error())
+			c.Toast(trMessage("定位失败: " + err.Error()))
 		}
 	}
 	return after
@@ -1598,14 +1595,16 @@ func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *sim
 	theme := c.Theme()
 	switch {
 	case loading:
-		busyBlock(c, "diff-file-loading", "正在读取文件…", "").Grow(1)
+		busyBlock(c, "diff-file-loading", tr("正在读取文件…"), "").Grow(1)
 	case imgDiff != nil:
 		a.imageDiffView(c, imgDiff, viewMode, fitActual)
 	case note != "":
 		ui.Column(c).Grow(1).Padding(16).Children(func() {
-			ui.Text(c, note).TextColor(theme.TextMuted)
+			ui.Text(c, trMessage(note)).TextColor(theme.TextMuted)
 		})
 	case simple != nil:
+		simple.old.Label = tr("原版本")
+		simple.new.Label = tr("新版本")
 		simple.old.RenderFindBar = renderFindBar
 		simple.new.RenderFindBar = renderFindBar
 		ui.Row(c).Grow(1).MinHeight(0).Children(func() {
@@ -1625,7 +1624,7 @@ func renderFindBar(c *ui.Context, anchor ui.Element, f *editor.FindBar) {
 	ui.Overlay(c, func() {
 		bar := ui.Column(c.Key(anchor.ID())).
 			AttachTo(anchor, ui.AnchorTopRight, ui.AnchorTopRight).
-			Width(360).MaxWidthPercent(100).Role(ui.RoleToolbar).Label("文件内查找").
+			Width(360).MaxWidthPercent(100).Role(ui.RoleToolbar).Label(tr("文件内查找")).
 			Cursor(ui.CursorDefault).HandleInput(func(ui.InputEvent) bool { return false })
 		renderFindBarContent(c, bar, f)
 	})
@@ -1659,8 +1658,8 @@ func renderFindBarContent(c *ui.Context, bar ui.Element, f *editor.FindBar) {
 	bar.Children(func() {
 		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 			before := query.text
-			input := ui.TextInput(c.Key("query"), &query.text).Label("查找内容").
-				Placeholder("查找").Grow(1).MinWidth(0)
+			input := ui.TextInput(c.Key("query"), &query.text).Label(tr("查找内容")).
+				Placeholder(tr("查找")).Grow(1).MinWidth(0)
 			if query.text != before {
 				query.edited = c.Now()
 			}
@@ -1679,12 +1678,12 @@ func renderFindBarContent(c *ui.Context, bar ui.Element, f *editor.FindBar) {
 		})
 		ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
 			toggle := func(value *bool, label, tip string) {
-				b := ui.ToggleBase(c.Key(tip), value).Label(tip).Tooltip(tip).
+				b := ui.ToggleBase(c.Key(tip), value).Label(tr(tip)).Tooltip(tr(tip)).
 					Padding(2, 4).Shrink(0).Radius(theme.Radius).KeepFocus()
 				if *value {
 					b.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent)
 				}
-				b.Children(func() { ui.Text(c, label).FontSize(11).SingleLine() })
+				b.Children(func() { ui.Text(c, tr(label)).FontSize(11).SingleLine() })
 			}
 			toggle(f.CaseSensitive(), "Aa", "区分大小写")
 			toggle(f.WholeWord(), "ab", "全字匹配")
@@ -1692,9 +1691,9 @@ func renderFindBarContent(c *ui.Context, bar ui.Element, f *editor.FindBar) {
 			toggle(f.InSelection(), "[ ]", "在选区中查找")
 			ui.Box(c).Grow(1)
 			button := func(label, tip string) bool {
-				b := ui.ButtonBase(c.Key(tip)).Label(tip).Tooltip(tip).
+				b := ui.ButtonBase(c.Key(tip)).Label(tr(tip)).Tooltip(tr(tip)).
 					Padding(2, 4).Shrink(0).Radius(theme.Radius).KeepFocus()
-				b.Children(func() { ui.Text(c, label).FontSize(11).SingleLine() })
+				b.Children(func() { ui.Text(c, tr(label)).FontSize(11).SingleLine() })
 				return b.Clicked()
 			}
 			if button("↑", "上一个匹配") {

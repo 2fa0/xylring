@@ -101,16 +101,16 @@ func worktreeBadges(files []fileChange) []string {
 	}
 	var out []string
 	if conflict > 0 {
-		out = append(out, fmt.Sprintf("冲突 %d", conflict))
+		out = append(out, fmt.Sprintf(tr("冲突 %d"), conflict))
 	}
 	if staged > 0 {
-		out = append(out, fmt.Sprintf("已暂存 %d", staged))
+		out = append(out, fmt.Sprintf(tr("已暂存 %d"), staged))
 	}
 	if unstaged > 0 {
-		out = append(out, fmt.Sprintf("未暂存 %d", unstaged))
+		out = append(out, fmt.Sprintf(tr("未暂存 %d"), unstaged))
 	}
 	if untracked > 0 {
-		out = append(out, fmt.Sprintf("未跟踪 %d", untracked))
+		out = append(out, fmt.Sprintf(tr("未跟踪 %d"), untracked))
 	}
 	return out
 }
@@ -515,12 +515,12 @@ func (a *app) runCommitWorktree(t *repoTab) {
 
 func commitPinTip(pinned, expanded bool) string {
 	if pinned {
-		return "取消固定（随鼠标移开自动折叠）"
+		return tr("取消固定（随鼠标移开自动折叠）")
 	}
 	if expanded {
-		return "固定展开提交面板"
+		return tr("固定展开提交面板")
 	}
-	return "展开提交面板"
+	return tr("展开提交面板")
 }
 
 func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
@@ -559,15 +559,13 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 			Cursor(ui.CursorPointer).
 			Tooltip(commitPinTip(t.commitPinned, isExpanded))
 		header.Children(func() {
-			ui.Text(c, "提交改动").Bold().FontSize(12).Shrink(0)
+			ui.Text(c, tr("提交改动")).Bold().FontSize(12).Shrink(0)
 			if t.operation != "" {
-				ui.Text(c, operationDisplayName(t.operation)+" 进行中").FontSize(12).TextColor(theme.Warning).Shrink(0)
+				ui.Text(c, tr(operationDisplayName(t.operation))+tr(" 进行中")).FontSize(12).TextColor(theme.Warning).Shrink(0)
 			}
 			ui.Box(c).Grow(1)
 			if stagedCount > 0 {
-				ui.Text(c, fmt.Sprintf("%d 个文件已暂存", stagedCount)).FontSize(11).TextColor(theme.Accent).Shrink(0)
-			} else {
-				ui.Text(c, "未暂存任何文件").FontSize(11).TextColor(theme.TextMuted).Shrink(0)
+				ui.Text(c, fmt.Sprintf(tr("%d 个文件已暂存"), stagedCount)).FontSize(11).TextColor(theme.Accent).Shrink(0)
 			}
 			toggleIcon := iconExpandAll
 			if isExpanded {
@@ -582,12 +580,12 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 		if isExpanded {
 			a.commitRingControl(c, t)
 			ui.TextArea(c.Key(fmt.Sprintf("commit-msg-%d", t.id)), &t.commitMsg).
-				Placeholder("写提交说明（⌘Enter）").
+				Placeholder(tr("写提交说明（⌘Enter）")).
 				Height(54).
 				Disabled(t.commitBusy)
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
 				if t.head != zeroHash {
-					if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, "修改上次提交").
+					if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, tr("修改上次提交")).
 						Disabled(t.commitBusy).Changed() {
 						t.amendGen++
 						if t.commitAmend {
@@ -599,7 +597,7 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 				}
 				ui.Box(c).Grow(1)
 				canCommit := !t.commitBusy && strings.TrimSpace(t.commitMsg) != "" && (stagedCount > 0 || t.commitAmend)
-				commitBtn := ui.PrimaryButton(c.Key(fmt.Sprintf("commit-submit-%d", t.id)), "提交").
+				commitBtn := ui.PrimaryButton(c.Key(fmt.Sprintf("commit-submit-%d", t.id)), tr("提交")).
 					Padding(2, 10).
 					FontSize(12).
 					Disabled(!canCommit)
@@ -608,7 +606,7 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 				}
 			})
 			if t.commitErr != "" {
-				ui.Text(c, t.commitErr).FontSize(11).TextColor(theme.Danger).SingleLine().Grow(1).MinWidth(0)
+				ui.Text(c, trMessage(t.commitErr)).FontSize(11).TextColor(theme.Danger).SingleLine().Grow(1).MinWidth(0)
 			}
 		}
 	})
@@ -625,19 +623,19 @@ func (a *app) discardModal(c *ui.Context) {
 	}
 	theme := c.Theme()
 	f := a.discard.file
-	appModal(c.Key("discard-confirm-modal"), &a.showDiscard, "确定丢弃文件修改？", 420, false, func() {
+	appModal(c.Key("discard-confirm-modal"), &a.showDiscard, tr("确定丢弃文件修改？"), 420, false, func() {
 		ui.Text(c, f.path).FontSize(12).Font("monospace").TextColor(theme.TextMuted)
 		if f.extra == "未跟踪" {
-			ui.Text(c, "此文件为未跟踪文件，丢弃将永久删除该文件，无法恢复。").FontSize(12).TextColor(theme.Danger)
+			ui.Text(c, tr("此文件为未跟踪文件，丢弃将永久删除该文件，无法恢复。")).FontSize(12).TextColor(theme.Danger)
 		} else {
-			ui.Text(c, "工作区的修改将被撤销并恢复，无法恢复。").FontSize(12).TextColor(theme.TextMuted)
+			ui.Text(c, tr("工作区的修改将被撤销并恢复，无法恢复。")).FontSize(12).TextColor(theme.TextMuted)
 		}
 	}, func() {
-		if ui.Button(c.Key("discard-cancel"), "取消").Clicked() {
+		if ui.Button(c.Key("discard-cancel"), tr("取消")).Clicked() {
 			a.showDiscard = false
 			a.discard.open = false
 		}
-		confirmBtn := ui.Button(c.Key("discard-confirm"), "确定丢弃").Padding(2, 12)
+		confirmBtn := ui.Button(c.Key("discard-confirm"), tr("确定丢弃")).Padding(2, 12)
 		if confirmBtn.Clicked() {
 			a.runDiscardWorktreeFile(tab, f)
 		}
@@ -681,7 +679,7 @@ func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, key
 		ui.Box(c.Key(fmt.Sprintf("%s-%d-%s", keyPrefix, t.id, f.path))).
 			Size(14, 14).Radius(3).
 			Background(theme.Danger.Alpha(0.15)).Border(1, theme.Danger.Alpha(0.5)).
-			Shrink(0).Center().Tooltip("存在合并冲突").Children(func() {
+			Shrink(0).Center().Tooltip(tr("存在合并冲突")).Children(func() {
 			ui.Text(c, "!").Font("monospace").FontSize(10).Bold().TextColor(theme.Danger)
 		})
 		return
@@ -701,7 +699,7 @@ func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, key
 	}
 	btn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-%d-%s", keyPrefix, t.id, f.path))).
 		Size(14, 14).Radius(3).
-		Label(label).Tooltip(tip).
+		Label(tr(label)).Tooltip(trMessage(tip)).
 		Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
 	if fullyStaged || partial {
 		btn.Background(theme.Accent.Alpha(0.18)).Border(1, theme.Accent.Alpha(0.6))
@@ -729,22 +727,22 @@ func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, key
 func (a *app) worktreeStageHoverButtons(c *ui.Context, t *repoTab, f fileChange) {
 	switch {
 	case f.hasStaged() && !f.hasUnstaged():
-		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip("取消暂存").OnClick(func() {
+		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip(tr("取消暂存")).OnClick(func() {
 			a.unstageWorktreeFile(t, f.path)
 		})
 	case f.hasStaged() && f.hasUnstaged():
-		fileIconButton(c, "inspect-stage-"+f.path, "暂存改动", iconPlus).Tooltip("暂存改动").OnClick(func() {
+		fileIconButton(c, "inspect-stage-"+f.path, "暂存改动", iconPlus).Tooltip(tr("暂存改动")).OnClick(func() {
 			a.stageWorktreeFile(t, f.path)
 		})
-		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip("取消暂存").OnClick(func() {
+		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip(tr("取消暂存")).OnClick(func() {
 			a.unstageWorktreeFile(t, f.path)
 		})
 	default:
-		fileIconButton(c, "inspect-stage-"+f.path, "暂存文件", iconPlus).Tooltip("暂存文件").OnClick(func() {
+		fileIconButton(c, "inspect-stage-"+f.path, "暂存文件", iconPlus).Tooltip(tr("暂存文件")).OnClick(func() {
 			a.stageWorktreeFile(t, f.path)
 		})
 	}
-	fileIconButton(c, "inspect-discard-"+f.path, "丢弃改动", iconTrash2).Tooltip("丢弃改动").OnClick(func() {
+	fileIconButton(c, "inspect-discard-"+f.path, "丢弃改动", iconTrash2).Tooltip(tr("丢弃改动")).OnClick(func() {
 		a.promptDiscardWorktreeFile(t, f)
 	})
 }
@@ -756,32 +754,32 @@ func (a *app) worktreeFileMenu(c *ui.Context, m *ui.Menu, t *repoTab, f fileChan
 		}
 	}
 	if f.extra == "冲突" {
-		if m.Item("使用外部合并工具解决…").Chosen() {
+		if m.Item(tr("使用外部合并工具解决…")).Chosen() {
 			a.openOperation("外部合并工具", "", f.path)
 		}
-		if m.Item("标记已解决").Chosen() {
+		if m.Item(tr("标记已解决")).Chosen() {
 			a.stageWorktreeFile(t, f.path)
 		}
 	}
 	m.Separator()
 	switch {
 	case f.hasStaged() && !f.hasUnstaged():
-		if m.Item("取消暂存").Chosen() {
+		if m.Item(tr("取消暂存")).Chosen() {
 			a.unstageWorktreeFile(t, f.path)
 		}
 	case f.hasStaged() && f.hasUnstaged():
-		if m.Item("暂存工作区改动").Chosen() {
+		if m.Item(tr("暂存工作区改动")).Chosen() {
 			a.stageWorktreeFile(t, f.path)
 		}
-		if m.Item("取消暂存").Chosen() {
+		if m.Item(tr("取消暂存")).Chosen() {
 			a.unstageWorktreeFile(t, f.path)
 		}
 	default:
-		if m.Item("暂存文件").Chosen() {
+		if m.Item(tr("暂存文件")).Chosen() {
 			a.stageWorktreeFile(t, f.path)
 		}
 	}
-	if m.Item("丢弃改动…").Chosen() {
+	if m.Item(tr("丢弃改动…")).Chosen() {
 		a.promptDiscardWorktreeFile(t, f)
 	}
 }
@@ -793,7 +791,7 @@ func (a *app) operationBanner(c *ui.Context, tab *repoTab) {
 	theme := c.Theme()
 	ui.Row(c.Key("operation-banner")).FillWidth().Padding(8, 14).Gap(10).AlignItems(ui.Center).
 		Background(theme.Warning.Alpha(0.12)).Border(1, theme.Warning.Alpha(0.28)).Radius(theme.Radius).Shrink(0).Children(func() {
-		ui.Text(c, "正在进行"+operationDisplayName(tab.operation)).FontSize(13).Grow(1).MinWidth(0)
+		ui.Text(c, tr("正在进行")+tr(operationDisplayName(tab.operation))).FontSize(13).Grow(1).MinWidth(0)
 		for _, action := range []string{"继续操作", "中止操作"} {
 			act := action
 			if ui.Button(c.Key("banner-"+act), act).Disabled(tab.commitBusy || a.write.busy).Clicked() {

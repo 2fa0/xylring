@@ -152,10 +152,10 @@ func (a *app) locateFileCommit(t *repoTab) {
 func (a *app) fileHistoryToolbar(c *ui.Context, t *repoTab) {
 	ui.Row(c).Padding(4, 12, 8, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
 		pathBreadcrumb(c, "file-history-path", t.query.filePath)
-		if ui.Button(c.Key("file-history-locate"), "在图谱中定位").Disabled(t.inspecting == zeroHash).Clicked() {
+		if ui.Button(c.Key("file-history-locate"), tr("在图谱中定位")).Disabled(t.inspecting == zeroHash).Clicked() {
 			a.locateFileCommit(t)
 		}
-		if iconButton(c, "file-history-back", "返回", iconBack).Clicked() {
+		if iconButton(c, "file-history-back", tr("返回"), iconBack).Clicked() {
 			a.leaveFileHistory(t)
 		}
 	})

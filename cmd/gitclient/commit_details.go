@@ -19,6 +19,7 @@ type commitDetails struct {
 	message                       string
 	formatted                     string
 	view                          editor.State
+	viewEnglish                   bool
 }
 
 func readCommitDetails(ctx context.Context, dir string, hash [20]byte) (*commitDetails, error) {
@@ -35,8 +36,6 @@ func readCommitDetails(ctx context.Context, dir string, hash [20]byte) (*commitD
 	if err != nil {
 		return nil, err
 	}
-	d.formatted = d.text()
-	d.view = editor.State{Buffer: editor.NewBuffer(d.formatted), ReadOnly: true, Label: "完整提交信息"}
 	return d, nil
 }
 
@@ -46,13 +45,22 @@ func (d *commitDetails) text() string {
 	}
 	parents := d.parents
 	if parents == "" {
-		parents = "无（初始提交）"
+		parents = tr("无（初始提交）")
 	}
 	ring := ""
 	if p := d.prov; p.agent != "" {
-		ring = "年轮印记：" + p.description() + "\n"
+		ring = tr("年轮印记：") + p.description() + "\n"
 	}
-	return ring + fmt.Sprintf("提交：%s\n父提交：%s\n作者：%s <%s>\n创作时间：%s\n提交者：%s <%s>\n提交时间：%s\n\n%s", d.hash, parents, d.author, d.authorEmail, d.authored, d.committer, d.commitEmail, d.at, d.message)
+	return ring + fmt.Sprintf(tr("提交：%s\n父提交：%s\n作者：%s <%s>\n创作时间：%s\n提交者：%s <%s>\n提交时间：%s\n\n%s"), d.hash, parents, d.author, d.authorEmail, d.authored, d.committer, d.commitEmail, d.at, d.message)
+}
+
+func (d *commitDetails) updateViewLanguage() {
+	english := englishUI.Load()
+	if d.view.Buffer != nil && d.viewEnglish == english {
+		return
+	}
+	d.view = editor.State{Buffer: editor.NewBuffer(d.text()), ReadOnly: true, Label: tr("完整提交信息")}
+	d.viewEnglish = english
 }
 
 func (d *commitDetails) body() string {
@@ -126,20 +134,21 @@ func (a *app) commitDetailsInline(c *ui.Context, t *repoTab) {
 	ui.Column(c.Key(fmt.Sprintf("commit-details-inline-%d", t.id))).FillWidth().Padding(6, 8).Gap(6).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Children(func() {
 		switch {
 		case t.detailsLoading:
-			busyRow(c, "details-loading", "正在读取提交信息…", "")
+			busyRow(c, "details-loading", tr("正在读取提交信息…"), "")
 		case t.detailsErr != "":
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, t.detailsErr).TextColor(theme.Danger)
-				if ui.Button(c.Key("details-retry"), "重试").Clicked() {
+				ui.Text(c, trMessage(t.detailsErr)).TextColor(theme.Danger)
+				if ui.Button(c.Key("details-retry"), tr("重试")).Clicked() {
 					t.detailsOpen = false
 					a.toggleDetails(t)
 				}
 			})
 		case t.details != nil:
+			t.details.updateViewLanguage()
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "完整提交信息").Bold().FontSize(12).SingleLine().Grow(1).MinWidth(0)
-				copyTextButton(c, "copy-commit-info", "复制完整信息", t.details.text())
-				closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("close-commit-details-%d", t.id))).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Tooltip("收起信息").Transition(colorMotion())
+				ui.Text(c, tr("完整提交信息")).Bold().FontSize(12).SingleLine().Grow(1).MinWidth(0)
+				copyIconButton(c, "copy-commit-info", "复制完整信息", t.details.text())
+				closeBtn := ui.ButtonBase(c.Key(fmt.Sprintf("close-commit-details-%d", t.id))).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Tooltip(tr("收起信息")).Transition(colorMotion())
 				closeBtn.Children(func() {
 					ui.Icon(c, iconClose).Size(12, 12).TextColor(theme.TextMuted)
 				})

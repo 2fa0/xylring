@@ -240,7 +240,7 @@ func TestSidebarWorktreeShowsActiveRepoFiles(t *testing.T) {
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
 
-	if !tt.HasText("相对 HEAD") {
+	if !tt.HasText("全部暂存") {
 		t.Fatalf("未提交场景应显示文件列表：%q", tt.Texts())
 	}
 	if !tt.HasText(".DS_Store") || !tt.HasText("main.go") {
@@ -331,7 +331,7 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 	tt := ui.NewTester(a.view, 1100, 900)
 	tt.Frame()
 
-	if !tt.HasText("相对 HEAD") || !tt.HasText("列表") || !tt.HasText("树") {
+	if !tt.HasText("全部暂存") || !tt.HasText("列表") || !tt.HasText("树") {
 		t.Fatalf("未提交场景缺少文件视图切换：%q", tt.Texts())
 	}
 	// Initially in list mode, dir is shown under file

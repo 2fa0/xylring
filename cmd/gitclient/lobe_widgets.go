@@ -48,7 +48,7 @@ func copyIconButton(c *ui.Context, key, name, content string) ui.Element {
 	if copied {
 		icon, name = iconCheck, "已复制"
 	}
-	b.Label(name).Tooltip(name)
+	b.Label(tr(name)).Tooltip(tr(name))
 	return styleActionIcon(c, b, icon, 24, 14, c.Theme().TextMuted, copied)
 }
 
@@ -65,12 +65,12 @@ func appModal(c *ui.Context, open *bool, title string, width float32, busy bool,
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.4))
 		panel.Width(min(width, max(0, w-32))).MaxHeight(max(0, h-32)).
 			Padding(0).Gap(0).Radius(12).Background(t.Background).
-			Border(1, t.Border).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.3)).Label(title)
+			Border(1, t.Border).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.3)).Label(tr(title))
 		panel.Children(func() {
 			ui.Row(c.Key("header")).Padding(12, 16).Gap(12).AlignItems(ui.Center).Shrink(0).
 				BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-				ui.Text(c, title).FontSize(14).Bold().Grow(1).MinWidth(0)
-				if closeIconButton(c, "dialog-close", "关闭对话框").Disabled(busy).Clicked() {
+				ui.Text(c, tr(title)).FontSize(14).Bold().Grow(1).MinWidth(0)
+				if closeIconButton(c, "dialog-close", tr("关闭对话框")).Disabled(busy).Clicked() {
 					*open = false
 				}
 			})
@@ -101,16 +101,16 @@ func omniSearchField(c *ui.Context, tab *repoTab) (input ui.Element, submit bool
 		AlignItems(ui.Center).Radius(t.Radius).Background(t.Background).Transition(colorMotion())
 	root.Children(func() {
 		if busy {
-			ui.Spinner(c.Key("search-loading")).Size(16, 16).Margin(4).Shrink(0).Label("正在搜索")
+			ui.Spinner(c.Key("search-loading")).Size(16, 16).Margin(4).Shrink(0).Label(tr("正在搜索"))
 		} else {
-			submit = paneIconButton(c, "search-history", "搜索", iconSearch).Tooltip("搜索或跳转 (Enter)").Clicked()
+			submit = paneIconButton(c, "search-history", tr("搜索"), iconSearch).Tooltip(tr("搜索或跳转 (Enter)")).Clicked()
 		}
 		input = ui.TextInputBase(c.Key(fmt.Sprintf("search-%d", tab.id)), &tab.searchText).
-			Label("搜索提交、代码、分支、作者或路径").Placeholder("搜索提交、代码、分支、作者或路径…").
+			Label(tr("搜索提交、代码、分支、作者或路径")).Placeholder(tr("搜索提交、代码、分支、作者或路径…")).
 			Bind(&tab.searchInput).Grow(1).MinWidth(0).FocusRing(false).
 			KeyShortcuts(commandModifier(), ui.KeyP)
 		if tab.searchText != "" {
-			if closeIconButton(c, "search-reset", "清空搜索输入").Clicked() {
+			if closeIconButton(c, "search-reset", tr("清空搜索输入")).Clicked() {
 				tab.searchText, tab.locate, tab.locateErr = "", "", ""
 				tab.locateGen++
 				tab.searchSuggestOpen = false
@@ -134,8 +134,8 @@ func omniSearchField(c *ui.Context, tab *repoTab) (input ui.Element, submit bool
 	}
 	if tab.locateErr != "" {
 		border = t.Danger
-		root.Tooltip(tab.locateErr)
-		input.Error(tab.locateErr)
+		root.Tooltip(trMessage(tab.locateErr))
+		input.Error(trMessage(tab.locateErr))
 	}
 	root.Border(1, border)
 	return input, !busy && (submit || input.Submitted())
@@ -148,9 +148,9 @@ func busyRow(c *ui.Context, key, label, hint string) ui.Element {
 	row := ui.Row(c.Key(key)).Gap(8).AlignItems(ui.Center).Shrink(0)
 	row.Children(func() {
 		ui.Spinner(c).Shrink(0)
-		ui.Text(c, label).FontSize(12).TextColor(t.TextMuted).SingleLine()
+		ui.Text(c, trMessage(label)).FontSize(12).TextColor(t.TextMuted).SingleLine()
 		if hint != "" {
-			ui.Text(c, hint).FontSize(12).TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, trMessage(hint)).FontSize(12).TextColor(t.TextMuted).SingleLine()
 		}
 	})
 	return row
@@ -184,10 +184,10 @@ func emptyHint(c *ui.Context, key string, p emptyHintProps) ui.Element {
 			ui.Icon(c, p.Icon).Size(28, 28).TextColor(t.TextMuted.Alpha(0.5))
 		}
 		if p.Title != "" {
-			ui.Text(c, p.Title).FontSize(13).FontWeight(500).TextColor(t.Text).TextAlign(ui.Center).Margin(6, 0, 0, 0)
+			ui.Text(c, trMessage(p.Title)).FontSize(13).FontWeight(500).TextColor(t.Text).TextAlign(ui.Center).Margin(6, 0, 0, 0)
 		}
 		if p.Description != "" {
-			ui.Text(c, p.Description).FontSize(12).TextColor(t.TextMuted).TextAlign(ui.Center).MaxWidth(300)
+			ui.Text(c, trMessage(p.Description)).FontSize(12).TextColor(t.TextMuted).TextAlign(ui.Center).MaxWidth(300)
 		}
 		if p.Action != nil {
 			ui.Row(c).Gap(8).Justify(ui.Center).Margin(10, 0, 0, 0).Children(p.Action)
@@ -246,9 +246,9 @@ func copyTextButton(c *ui.Context, key, name, content string) ui.Element {
 	if copied {
 		label = "已复制"
 	}
-	b.Label(label)
+	b.Label(tr(label))
 	b.Children(func() {
-		ui.Text(c, label)
+		ui.Text(c, tr(label))
 	})
 	return b
 }

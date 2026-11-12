@@ -11,6 +11,7 @@ import (
 )
 
 type appPreferences struct {
+	Language         string `json:"language,omitempty"`
 	RestoreDisabled  bool   `json:"restore_disabled,omitempty"`
 	FileView         int    `json:"file_view,omitempty"`
 	DiffLayout       int    `json:"diff_layout,omitempty"`
@@ -30,7 +31,7 @@ type settingsState struct {
 var autoFetchOptions = []configOption{{"off", "关闭"}, {"2", "每 2 分钟"}, {"5", "每 5 分钟"}, {"10", "每 10 分钟"}, {"15", "每 15 分钟"}}
 
 func (a *app) preferences() appPreferences {
-	return appPreferences{a.restoreDisabled, a.fileView, a.diffLayout, a.diffIgnoreWhitespace, a.autoFetch}
+	return appPreferences{RestoreDisabled: a.restoreDisabled, FileView: a.fileView, DiffLayout: a.diffLayout, IgnoreWhitespace: a.diffIgnoreWhitespace, AutoFetch: a.autoFetch, Language: a.language}
 }
 func (a *app) autoFetchDelay(path string) time.Duration {
 	value := a.autoFetch

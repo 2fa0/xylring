@@ -105,7 +105,7 @@ func formatResolution(info *imageInfo) string {
 func formatSizeDiff(oldSize, newSize int64) (string, bool) {
 	diff := newSize - oldSize
 	if diff == 0 {
-		return "大小相同", false
+		return tr("大小相同"), false
 	}
 	if diff > 0 {
 		return "+" + formatFileSize(diff), false
@@ -137,12 +137,12 @@ func (a *app) imageDiffControls(c *ui.Context, keyID int, imgDiff *imageDiff, vi
 	theme := c.Theme()
 	if imgDiff != nil && imgDiff.old != nil && imgDiff.new != nil {
 		seg := ui.SegmentedBase(c.Key(fmt.Sprintf("img-view-mode-%d", keyID)), viewMode, 3)
-		seg.Track.Height(24).Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label("显示方式")
+		seg.Track.Height(24).Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label(tr("显示方式"))
 		seg.Track.Children(func() {
 			names := [3]string{"并排", "新版", "旧版"}
 			tips := [3]string{"并排对比新旧版本", "仅显示新版本图片", "仅显示原版本图片"}
 			for i := 0; i < 3; i++ {
-				s := seg.Segment(i).Label(names[i]).Tooltip(tips[i]).Padding(0, 8).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
+				s := seg.Segment(i).Label(tr(names[i])).Tooltip(tr(tips[i])).Padding(0, 8).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
 				if i == *viewMode {
 					bg := theme.Background
 					if theme.Dark {
@@ -151,7 +151,7 @@ func (a *app) imageDiffControls(c *ui.Context, keyID int, imgDiff *imageDiff, vi
 					s.Background(bg)
 				}
 				s.Children(func() {
-					ui.Text(c, names[i]).FontSize(11).SingleLine()
+					ui.Text(c, tr(names[i])).FontSize(11).SingleLine()
 				})
 			}
 		})
@@ -163,14 +163,14 @@ func (a *app) imageDiffControls(c *ui.Context, keyID int, imgDiff *imageDiff, vi
 		fitLabel = "1:1 尺寸"
 		fitTip = "当前 1:1 实际尺寸，点击切换至自适应缩放"
 	}
-	fitBtn := ui.ButtonBase(c.Key(fmt.Sprintf("img-fit-%d", keyID))).Height(24).Label(fitLabel).Tooltip(fitTip).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+	fitBtn := ui.ButtonBase(c.Key(fmt.Sprintf("img-fit-%d", keyID))).Height(24).Label(tr(fitLabel)).Tooltip(tr(fitTip)).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
 	if *fitActual {
 		fitBtn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 	} else {
 		fitBtn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
 	}
 	fitBtn.Children(func() {
-		ui.Text(c, fitLabel).FontSize(11).SingleLine()
+		ui.Text(c, tr(fitLabel)).FontSize(11).SingleLine()
 	})
 	if fitBtn.Clicked() {
 		*fitActual = !*fitActual
@@ -192,7 +192,7 @@ func (a *app) renderImageCard(c *ui.Context, key string, title string, badge str
 		ui.Row(c).FillWidth().Padding(6, 10).Gap(8).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(theme.Border).Shrink(0).Children(func() {
 			ui.Text(c, title).Bold().FontSize(12).SingleLine()
 			if badge != "" {
-				chipSoft(c, key+"-badge", badge, badgeColor, false)
+				chipSoft(c, key+"-badge", tr(badge), badgeColor, false)
 			}
 			ui.Box(c).Grow(1)
 			if info != nil {
@@ -220,11 +220,11 @@ func (a *app) renderImageCard(c *ui.Context, key string, title string, badge str
 
 		// 图像展示区
 		if info == nil || info.img == nil {
-			emptyHint(c, key+"-empty", emptyHintProps{Icon: iconImage, Title: "无图片内容"}).Grow(1)
+			emptyHint(c, key+"-empty", emptyHintProps{Icon: iconImage, Title: tr("无图片内容")}).Grow(1)
 			return
 		}
-		ui.Scroll(c.Key(key+"-scroll")).Grow(1).FillWidth().Children(func() {
-			ui.Box(c.Key(key+"-canvas")).Grow(1).FillWidth().FillHeight().MinHeight(220).Center().Padding(16).Draw(func(p *ui.Painter, r ui.Rect) {
+		ui.Scroll(c.Key(key + "-scroll")).Grow(1).FillWidth().Children(func() {
+			ui.Box(c.Key(key + "-canvas")).Grow(1).FillWidth().FillHeight().MinHeight(220).Center().Padding(16).Draw(func(p *ui.Painter, r ui.Rect) {
 				paintCheckerboard(p, r, 12, checkerC1, checkerC2)
 			}).Children(func() {
 				w, h := ui.ImageSize(info.img)
@@ -244,23 +244,23 @@ func (a *app) imageDiffView(c *ui.Context, imgDiff *imageDiff, viewMode int, fit
 	ui.Column(c.Key("image-diff-view")).Grow(1).Padding(8).Children(func() {
 		switch {
 		case imgDiff.old == nil && imgDiff.new != nil:
-			a.renderImageCard(c, "img-added", "新增图片", "新增", theme.Success, imgDiff.new, fitActual, nil)
+			a.renderImageCard(c, "img-added", tr("新增图片"), "新增", theme.Success, imgDiff.new, fitActual, nil)
 		case imgDiff.old != nil && imgDiff.new == nil:
-			a.renderImageCard(c, "img-deleted", "已删除图片", "删除", theme.Danger, imgDiff.old, fitActual, nil)
+			a.renderImageCard(c, "img-deleted", tr("已删除图片"), "删除", theme.Danger, imgDiff.old, fitActual, nil)
 		case imgDiff.old != nil && imgDiff.new != nil:
 			switch viewMode {
 			case 1:
-				a.renderImageCard(c, "img-modified-new", "新版本", "新版", theme.Accent, imgDiff.new, fitActual, imgDiff.old)
+				a.renderImageCard(c, "img-modified-new", tr("新版本"), "新版", theme.Accent, imgDiff.new, fitActual, imgDiff.old)
 			case 2:
-				a.renderImageCard(c, "img-modified-old", "原版本", "原版", theme.TextMuted, imgDiff.old, fitActual, nil)
+				a.renderImageCard(c, "img-modified-old", tr("原版本"), "原版", theme.TextMuted, imgDiff.old, fitActual, nil)
 			default:
 				ui.Row(c).Grow(1).Gap(8).Children(func() {
-					a.renderImageCard(c, "img-split-old", "原版本", "", theme.TextMuted, imgDiff.old, fitActual, nil)
-					a.renderImageCard(c, "img-split-new", "新版本", "", theme.Accent, imgDiff.new, fitActual, imgDiff.old)
+					a.renderImageCard(c, "img-split-old", tr("原版本"), "", theme.TextMuted, imgDiff.old, fitActual, nil)
+					a.renderImageCard(c, "img-split-new", tr("新版本"), "", theme.Accent, imgDiff.new, fitActual, imgDiff.old)
 				})
 			}
 		default:
-			emptyHint(c, "image-diff-empty", emptyHintProps{Icon: iconImage, Title: "无图片内容"}).Grow(1)
+			emptyHint(c, "image-diff-empty", emptyHintProps{Icon: iconImage, Title: tr("无图片内容")}).Grow(1)
 		}
 	})
 }

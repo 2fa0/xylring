@@ -373,20 +373,17 @@ func waitText(t *testing.T, tt *ui.Tester, updates <-chan func(), want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-	loop:
-		for {
-			select {
-			case fn := <-updates:
-				fn()
-			default:
-				break loop
-			}
-		}
+		drainUpdates(updates)
 		tt.Frame()
 		if tt.HasText(want) {
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		// Wait for the next worker callback instead of sleeping blindly.
+		select {
+		case fn := <-updates:
+			fn()
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 	t.Fatalf("缺少 %q，当前文本：%q", want, tt.Texts())
 }

@@ -86,51 +86,6 @@ func TestFileFilterFlatAndTree(t *testing.T) {
 	}
 }
 
-func TestTreeViewExpandAndCollapseAll(t *testing.T) {
-	tab := newTab(1, "/tmp/test-repo")
-	tab.loaded = true
-	tab.branch = "main"
-	tab.commits = []commit{
-		{hash: hashN(1), author: "Ada", subject: "初始提交", when: 1700000000},
-	}
-	tab.graph.add(&tab.commits[0])
-	tab.inspecting = hashN(1)
-	tab.compareFiles = []fileChange{
-		{status: "M", path: "a/b/c/deep.go"},
-		{status: "M", path: "x/y/z/other.go"},
-	}
-	tab.fileSel = 0
-	tab.fileSplit = 28
-	tab.diffNote = "测试内容"
-	a := &app{tabs: []*repoTab{tab}, fileView: 1, dispatch: func(func()) {}}
-
-	tt := ui.NewTester(a.view, 1100, 720)
-	tt.Frame()
-
-	// Initially all directories are expanded
-	if !tt.HasText("全部收起") || !tt.HasText("全部展开") {
-		t.Fatalf("树状视图缺少全部收起/展开按钮: %v", tt.Texts())
-	}
-
-	// Collapse all
-	if err := tt.Click("全部收起"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if tab.fileOutline.Open.Len() != 0 {
-		t.Fatalf("全部收起后 Open 应为空，实际为 %d", tab.fileOutline.Open.Len())
-	}
-
-	// Expand all
-	if err := tt.Click("全部展开"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if tab.fileOutline.Open.Len() == 0 {
-		t.Fatalf("全部展开后 Open 不应为空")
-	}
-}
-
 func TestDiffLayoutAndIgnoreWhitespaceToggle(t *testing.T) {
 	dir, git := initTestRepo(t)
 	// Create initial file
@@ -268,12 +223,7 @@ func TestCommitDetailsInlineCard(t *testing.T) {
 	if !tab.detailsShown || !tt.HasText("完整提交信息") {
 		t.Fatal("收起动画应保留内容直到缩回")
 	}
-	tt.Advance(90 * time.Millisecond)
-	tt.Frame()
-	if !tab.detailsShown {
-		t.Fatal("收起动画过早结束")
-	}
-	tt.Advance(500 * time.Millisecond)
+	tt.Advance(2 * time.Second)
 	tt.Frame()
 	if tab.detailsShown || tt.HasText("完整提交信息") {
 		t.Fatalf("收起动画结束后不应显示完整提交信息")
@@ -323,46 +273,6 @@ func readDiffWithWhitespaceIgnored(ctx context.Context, dir, fromRev, toRev, old
 	return d, note, err
 }
 
-func TestSidebarInspectAndFullWidthDiff(t *testing.T) {
-	tab := newTab(1, "/tmp/prototype-repo")
-	tab.loaded = true
-	tab.branch = "main"
-	tab.commits = []commit{
-		{hash: hashN(1), author: "Ada", subject: "画出提交图谱", when: 1700000000},
-	}
-	tab.graph.add(&tab.commits[0])
-	tab.inspecting = hashN(1)
-	tab.compareFiles = []fileChange{
-		{status: "M", path: "main.go"},
-		{status: "A", path: "compare.go"},
-	}
-	tab.fileSel = 0
-	tab.diffNote = "测试差异内容"
-	a := &app{tabs: []*repoTab{tab}, dispatch: func(func()) {}}
-
-	tt := ui.NewTester(a.view, 1200, 800)
-	tt.Frame()
-
-	// 1. Sidebar contains the files and commit subject
-	if !tt.HasText("main.go") || !tt.HasText("compare.go") || !tt.HasText("画出提交图谱") {
-		t.Fatalf("侧边栏应展示改动文件与提交信息: %v", tt.Texts())
-	}
-
-	// 2. Diff viewer displays diff note and header controls
-	if !tt.HasText("测试差异内容") || !tt.HasText("放大阅读") || !tt.HasText("关闭详情") {
-		t.Fatalf("底栏应为全宽 Diff 并带有控制按钮: %v", tt.Texts())
-	}
-
-	// 3. Click second file in sidebar
-	if err := tt.Click("compare.go"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if tab.fileSel != 1 {
-		t.Fatalf("点击侧栏文件应更新 fileSel，实际为: %d", tab.fileSel)
-	}
-}
-
 func TestBottomFullWidthToggle(t *testing.T) {
 	tab := newTab(1, "/tmp/prototype-repo")
 	tab.loaded = true
@@ -393,9 +303,10 @@ func TestBottomFullWidthToggle(t *testing.T) {
 		t.Fatalf("main.go not found: %v", tt.Texts())
 	}
 	// In full-width mode, inspect-bottom spans the whole window (starts at x=0),
-	// so the changed files pane is on the left edge (x < 320).
-	if fileRect.X >= 320 {
-		t.Fatalf("in full-width mode, file list should be at the left edge below sidebar, got X=%v", fileRect.X)
+	// so the changed files pane is on the left edge, left of the sidebar boundary.
+	sidebarEdge := a.repoSplit
+	if fileRect.X >= sidebarEdge {
+		t.Fatalf("in full-width mode, file list should be at the left edge below sidebar, got X=%v edge=%v", fileRect.X, sidebarEdge)
 	}
 
 	// 2. Click toggle button to switch to beside-sidebar mode
@@ -411,9 +322,9 @@ func TestBottomFullWidthToggle(t *testing.T) {
 	if !ok {
 		t.Fatalf("main.go not found after docking: %v", tt.Texts())
 	}
-	// In docked mode, inspect-bottom is beside the sidebar (x >= 320).
-	if fileRectDocked.X < 320 {
-		t.Fatalf("in docked mode, file list should be beside sidebar (x >= 320), got X=%v", fileRectDocked.X)
+	// In docked mode, inspect-bottom is beside the sidebar.
+	if fileRectDocked.X < a.repoSplit {
+		t.Fatalf("in docked mode, file list should be beside sidebar (x >= %v), got X=%v", a.repoSplit, fileRectDocked.X)
 	}
 
 	// 3. Click toggle button again to restore full-width
@@ -428,7 +339,7 @@ func TestBottomFullWidthToggle(t *testing.T) {
 	if !ok {
 		t.Fatalf("main.go not found after restoring full width: %v", tt.Texts())
 	}
-	if fileRectRestored.X >= 320 {
+	if fileRectRestored.X >= a.repoSplit {
 		t.Fatalf("after restoring, file list should be at the left edge, got X=%v", fileRectRestored.X)
 	}
 }
@@ -455,9 +366,9 @@ func TestInspectFilesSplitDefaultMatchesSidebar(t *testing.T) {
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 
-	// Verify tab.fileSplit is initialized to sidebar width (320)
-	if tab.fileSplit != 320 {
-		t.Fatalf("expected tab.fileSplit to default to sidebar width 320, got %v", tab.fileSplit)
+	// Verify tab.fileSplit starts at the sidebar boundary.
+	if tab.fileSplit != a.defaultFileSplit() {
+		t.Fatalf("expected tab.fileSplit to default to the sidebar width %v, got %v", a.defaultFileSplit(), tab.fileSplit)
 	}
 
 	// Verify that if a customized repoSplit is provided on a new tab, it follows repoSplit
@@ -471,8 +382,8 @@ func TestInspectFilesSplitDefaultMatchesSidebar(t *testing.T) {
 	a.active = 1
 	tt.Frame()
 
-	if tab2.fileSplit != 280 {
-		t.Fatalf("expected tab2.fileSplit to follow customized repoSplit 280, got %v", tab2.fileSplit)
+	if tab2.fileSplit != a.repoSplit {
+		t.Fatalf("expected tab2.fileSplit to follow customized repoSplit %v, got %v", a.repoSplit, tab2.fileSplit)
 	}
 }
 

@@ -61,7 +61,7 @@ func sidebarBranchDisplay(branch string, dirty bool) string {
 	if strings.HasPrefix(b, "分离头指针 ") {
 		b = "(" + strings.TrimPrefix(b, "分离头指针 ") + ")"
 	} else if b == "尚无提交" {
-		b = "(尚无提交)"
+		b = "(" + tr("尚无提交") + ")"
 	}
 	if dirty {
 		b += "*"
@@ -185,4 +185,14 @@ func (a *app) refreshSummaryBatch(paths []string) {
 			}
 		})
 	}()
+}
+
+func displayBranch(branch string) string {
+	if strings.HasPrefix(branch, "分离头指针 ") {
+		return tr("分离头指针 ") + strings.TrimPrefix(branch, "分离头指针 ")
+	}
+	if branch == "尚无提交" || branch == "仓库不可用" {
+		return tr(branch)
+	}
+	return branch
 }

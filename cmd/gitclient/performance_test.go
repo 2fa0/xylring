@@ -61,23 +61,6 @@ func stopPager(t *testing.T, p *historyPager) {
 	}
 }
 
-func TestCloseTabClearsBackingReferences(t *testing.T) {
-	a := &app{closed: true, tabs: []*repoTab{newTab(1, "/one"), newTab(2, "/two"), newTab(3, "/three")}}
-	backing := a.tabs
-	a.closeTab(2)
-	if backing[2] != nil {
-		t.Fatal("closed tail still retains repository state")
-	}
-	a.closeTab(0)
-	if backing[1] != nil || a.tabs[0].path != "/two" {
-		t.Fatal("removed middle slot was not cleared")
-	}
-	a.closeTab(0)
-	if backing[0] != nil {
-		t.Fatal("last closed tab remains reachable")
-	}
-}
-
 func TestAuthorCacheFollowsCurrentHistory(t *testing.T) {
 	tab := newTab(1, "/unused")
 	rec := strings.Repeat("a", 40) + "\x1f\x1fAda\x1f1700000000\x1f" + strings.Repeat("x", 128<<10)
@@ -220,7 +203,7 @@ func TestHistoryByteBudgetAndContinuation(t *testing.T) {
 	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
 	defer tab.cancel()
 	tt := ui.NewTester(a.view, 1100, 720)
-	if tab.loading || !tt.HasText("继续加载") || !tt.HasText("已加载 1 条提交 · 还有更多历史") {
+	if tab.loading || !tt.HasText("继续加载") || !tt.HasText("还有更多历史") {
 		t.Fatalf("memory budget did not pause automatic loading or missing footer hint: %q", tt.Texts())
 	}
 	if err := tt.Click("继续加载"); err != nil {

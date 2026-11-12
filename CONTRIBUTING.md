@@ -80,8 +80,11 @@ produced, and they are appreciated.
 2. Keep the change focused. Separate unrelated refactors from behavior changes.
 3. Add or update tests when you change behavior, and make sure `go test ./...`
    passes on your machine.
-4. Describe what changed and why. Screenshots help a lot for UI changes.
-5. Make sure your commits follow the trailer conventions above.
+4. For UI or copy changes, follow [`docs/界面文案规范.md`](docs/界面文案规范.md):
+   one thing per row, no subtitle restating a title, and no text explaining what
+   the layout already shows.
+5. Describe what changed and why. Screenshots help a lot for UI changes.
+6. Make sure your commits follow the trailer conventions above.
 
 ## License
 

@@ -48,14 +48,15 @@ type app struct {
 	recentProvenance []provenance
 	ringSkipNotice   bool
 
-	settings         settingsState
-	restoreDisabled  bool
-	autoFetch        string
-	repoAutoFetch    map[string]string
-	themeMode        string
-	win              *mygo.Window
-	menu             *mygo.Menu
-	dispatch         func(func())
+	settings        settingsState
+	restoreDisabled bool
+	autoFetch       string
+	repoAutoFetch   map[string]string
+	themeMode       string
+	language        string
+	win             *mygo.Window
+	menu            *mygo.Menu
+	dispatch        func(func())
 
 	tabs              []*repoTab
 	active            int
@@ -136,6 +137,9 @@ func newApp() *app {
 		bottomFullWidth: true,
 	}
 	if p := session.Preferences; p != nil {
+		if validLanguage(p.Language) {
+			a.language = p.Language
+		}
 		a.restoreDisabled, a.fileView, a.diffLayout = p.RestoreDisabled, p.FileView, p.DiffLayout
 		a.diffIgnoreWhitespace = p.IgnoreWhitespace
 		if validAutoFetch(p.AutoFetch) {
@@ -173,7 +177,7 @@ func (a *app) view(c *ui.Context) {
 	}
 	a.syncMenu()
 	if a.pendingToast != "" {
-		c.Toast(a.pendingToast)
+		c.Toast(trMessage(a.pendingToast))
 		a.pendingToast = ""
 	}
 	t := c.Theme()
@@ -217,8 +221,8 @@ func (a *app) view(c *ui.Context) {
 						ui.Box(c).Size(56, 56).Radius(28).Background(t.Accent.Alpha(0.15)).Center().Children(func() {
 							ui.Icon(c, iconFolderPlus).Size(28, 28).TextColor(t.Accent)
 						})
-						ui.Text(c, "释放以打开仓库").FontSize(18).Bold().TextColor(t.Text)
-						ui.Text(c, "拖拽 Git 仓库文件夹直接在此窗口打开").FontSize(13).TextColor(t.TextMuted)
+						ui.Text(c, tr("释放以打开仓库")).FontSize(18).Bold().TextColor(t.Text)
+						ui.Text(c, tr("拖拽 Git 仓库文件夹直接在此窗口打开")).FontSize(13).TextColor(t.TextMuted)
 					})
 				})
 		}
@@ -380,37 +384,36 @@ func (a *app) chrome(c *ui.Context) {
 				ui.Row(c.Key("sidebar-chrome-header")).
 					Absolute().Left(padL).Top(btnY).Width(sidebarW).Height(26).
 					Gap(4).AlignItems(ui.Center).Children(func() {
-						if chromeIconButton(c, "toggle-sidebar", "切换侧边栏", iconPanelLeft).
-							Tooltip(sidebarToggleTip(a.showRepoSidebar())).
-							Clicked() {
-							a.toggleSidebar()
-						}
-						if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Clicked() {
-							a.openSettings()
-						}
-						ui.Text(c, "仓库").FontSize(12).Bold().TextColor(c.Theme().TextMuted).SingleLine().MinWidth(0)
-						ui.Box(c).Grow(1)
-						if chromeIconButton(c, "sidebar-import-btn", "导入仓库", iconFolderPlus).
-							Tooltip("导入本地仓库 (⌘O)").
-							Clicked() {
-							a.pickRepo()
-						}
-						homeBtn := chromeIconButton(c, "sidebar-home-btn", "返回首页", iconHome).
-							Tooltip("返回首页（右键查看最近仓库）")
-						if len(a.recent) > 0 {
-							homeBtn.ContextMenu(func(m *ui.Menu) {
-								for _, rp := range a.recent {
-									repoPath := rp
-									if m.Item(repoTitle(repoPath) + " (" + homePath(repoPath) + ")").Chosen() {
-										a.openRepo(repoPath)
-									}
+					if chromeIconButton(c, "toggle-sidebar", "切换侧边栏", iconPanelLeft).
+						Tooltip(sidebarToggleTip(a.showRepoSidebar())).
+						Clicked() {
+						a.toggleSidebar()
+					}
+					if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Clicked() {
+						a.openSettings()
+					}
+					ui.Box(c).Grow(1)
+					if chromeIconButton(c, "sidebar-import-btn", "导入仓库", iconFolderPlus).
+						Tooltip(tr("导入本地仓库 (⌘O)")).
+						Clicked() {
+						a.pickRepo()
+					}
+					homeBtn := chromeIconButton(c, "sidebar-home-btn", "返回首页", iconHome).
+						Tooltip(tr("返回首页（右键查看最近仓库）"))
+					if len(a.recent) > 0 {
+						homeBtn.ContextMenu(func(m *ui.Menu) {
+							for _, rp := range a.recent {
+								repoPath := rp
+								if m.Item(repoTitle(repoPath) + " (" + homePath(repoPath) + ")").Chosen() {
+									a.openRepo(repoPath)
 								}
-							})
-						}
-						if homeBtn.Clicked() {
-							a.goHome()
-						}
-					})
+							}
+						})
+					}
+					if homeBtn.Clicked() {
+						a.goHome()
+					}
+				})
 			}
 		} else if !empty {
 			btn := chromeIconButton(c, "toggle-sidebar", "切换侧边栏", iconPanelLeft).
@@ -440,29 +443,29 @@ func (a *app) chrome(c *ui.Context) {
 			}
 			if tab != nil {
 				disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
-				ui.MenuButton(c.Key("topbar-sync"), "同步", func(m *ui.Menu) {
-					if m.Item("获取远程更新").Disabled(disabled).
-						Tooltip("git fetch --all：更新远程分支信息，不修改本地代码").Chosen() {
+				ui.MenuButton(c.Key("topbar-sync"), tr("同步"), func(m *ui.Menu) {
+					if m.Item(tr("获取远程更新")).Disabled(disabled).
+						Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
 						a.quickFetch(tab)
 					}
-					pullLabel := "拉取到当前分支"
+					pullLabel := tr("拉取到当前分支")
 					if tab.behind > 0 {
-						pullLabel += fmt.Sprintf("（落后 %d 个提交）", tab.behind)
+						pullLabel += fmt.Sprintf(tr("（落后 %d 个提交）"), tab.behind)
 					}
 					if m.Item(pullLabel).Disabled(disabled).
-						Tooltip("git pull：获取并整合远程更新，会修改本地代码").Chosen() {
+						Tooltip(tr("git pull：获取并整合远程更新，会修改本地代码")).Chosen() {
 						a.quickPull(tab)
 					}
-					pushLabel := "推送当前分支"
+					pushLabel := tr("推送当前分支")
 					if tab.ahead > 0 {
-						pushLabel += fmt.Sprintf("（领先 %d 个提交）", tab.ahead)
+						pushLabel += fmt.Sprintf(tr("（领先 %d 个提交）"), tab.ahead)
 					}
 					if m.Item(pushLabel).Disabled(disabled).
-						Tooltip("git push：将当前分支的本地提交推送到远程").Chosen() {
+						Tooltip(tr("git push：将当前分支的本地提交推送到远程")).Chosen() {
 						a.quickPush(tab)
 					}
 					m.Separator()
-					if m.Item("获取选项…").Disabled(disabled).Chosen() {
+					if m.Item(tr("获取选项…")).Disabled(disabled).Chosen() {
 						a.openFetch(tab)
 					}
 				}).Height(26).Padding(0, 8).FontSize(12).Shrink(0).Disabled(disabled)
@@ -476,7 +479,7 @@ func (a *app) chrome(c *ui.Context) {
 		}
 		label := tab.title
 		if tab.branch != "" {
-			label += "  ·  " + tab.branch
+			label += "  ·  " + displayBranch(tab.branch)
 			if sync := syncBadge(tab.ahead, tab.behind); sync != "" {
 				label += " " + sync
 			}
@@ -493,9 +496,9 @@ func sidebarToggleTip(visible bool) string {
 		mod = "⌘"
 	}
 	if visible {
-		return "隐藏侧边栏 (" + mod + "+B)"
+		return tr("隐藏侧边栏 (") + mod + "+B)"
 	}
-	return "显示侧边栏 (" + mod + "+B)"
+	return tr("显示侧边栏 (") + mod + "+B)"
 }
 
 func (a *app) emptyState(c *ui.Context) {
@@ -503,23 +506,19 @@ func (a *app) emptyState(c *ui.Context) {
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).FillWidth().Padding(36, 40, 28, 40).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Width(460).MaxWidthPercent(100).Gap(18).Children(func() {
-				ui.Column(c).Gap(6).Children(func() {
-					ui.Text(c, "Xylring").FontSize(26).Bold().LetterSpacing(-0.4)
-					ui.Text(c, "打开本地仓库，浏览提交图谱").TextColor(t.TextMuted)
-				})
+				ui.Text(c, "Xylring").FontSize(26).Bold().LetterSpacing(-0.4)
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					if ui.PrimaryButton(c.Key("import-empty"), "").Label("导入仓库").Children(func() {
+					if ui.PrimaryButton(c.Key("import-empty"), "").Label(tr("导入仓库")).Children(func() {
 						ui.Icon(c, iconFolderPlus).Size(16, 16)
-						ui.Text(c, "导入仓库")
+						ui.Text(c, tr("导入仓库"))
 					}).Clicked() {
 						a.pickRepo()
 					}
 					if a.activeTab() != nil || len(a.found) > 1 {
-						if ui.Button(c.Key("return-open-repo"), "返回当前仓库").Clicked() {
+						if ui.Button(c.Key("return-open-repo"), tr("返回当前仓库")).Clicked() {
 							a.showHome = false
 						}
 					}
-					ui.Text(c, "支持直接拖拽文件夹至窗口").FontSize(12).TextColor(t.TextMuted)
 				})
 				if a.banner != "" && !a.bannerOnRecentVisible() {
 					a.globalAlertBanner(c, nil)
@@ -528,11 +527,11 @@ func (a *app) emptyState(c *ui.Context) {
 					return
 				}
 				ui.Column(c).Gap(4).FillWidth().Children(func() {
-					ui.Text(c, "最近的仓库").FontSize(12).TextColor(t.TextMuted).Padding(4, 2, 8, 2)
+					ui.Text(c, tr("最近的仓库")).FontSize(12).TextColor(t.TextMuted).Padding(4, 2, 8, 2)
 					if len(a.recent) > 8 {
 						search := ui.SearchField(c.Key("search-recent"), &a.recentSearch).
-							Placeholder("查找最近仓库").
-							Label("查找最近仓库").
+							Placeholder(tr("查找最近仓库")).
+							Label(tr("查找最近仓库")).
 							Bind(&a.recentSearchInput).
 							FillWidth().
 							Margin(0, 0, 4, 0)
@@ -560,11 +559,10 @@ func (a *app) emptyState(c *ui.Context) {
 					}
 					if a.recentSearch != "" && matches == 0 {
 						emptyHint(c, "recent-empty", emptyHintProps{
-							Icon:        iconSearch,
-							Title:       "未找到匹配的仓库",
-							Description: "换个关键词，或清空搜索查看全部",
+							Icon:  iconSearch,
+							Title: tr("未找到匹配的仓库"),
 							Action: func() {
-								if ui.Button(c.Key("recent-clear-search"), "清空搜索").Clicked() {
+								if ui.Button(c.Key("recent-clear-search"), tr("清空搜索")).Clicked() {
 									a.recentSearch = ""
 								}
 							},
@@ -597,22 +595,22 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 		} else if runtime.GOOS != "darwin" {
 			revealName = "在文件管理器中显示"
 		}
-		if m.Item(revealName).Chosen() {
+		if m.Item(tr(revealName)).Chosen() {
 			if err := revealInFileManager(path); err != nil {
 				a.setBanner("定位失败: "+err.Error(), path)
 			}
 		}
-		if m.Item("在终端中打开").Chosen() {
+		if m.Item(tr("在终端中打开")).Chosen() {
 			if err := openInTerminal(path); err != nil {
 				a.setBanner("打开终端失败: "+err.Error(), path)
 			}
 		}
-		if m.Item("复制路径").Chosen() {
+		if m.Item(tr("复制路径")).Chosen() {
 			c.Services().WriteClipboard(path)
-			c.Toast("已复制路径")
+			c.Toast(tr("已复制路径"))
 		}
 		m.Separator()
-		if m.Item("从最近列表中移除").Chosen() {
+		if m.Item(tr("从最近列表中移除")).Chosen() {
 			remove = true
 		}
 	})
@@ -622,10 +620,10 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 			ui.Text(c, title).SingleLine().MinWidth(0)
 			ui.Text(c, homePath(path)).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 			if a.banner != "" && a.bannerPath == path {
-				ui.Text(c, a.banner).FontSize(12).TextColor(t.Danger)
+				ui.Text(c, trMessage(a.banner)).FontSize(12).TextColor(t.Danger)
 			}
 		})
-		if closeIconButton(c, fmt.Sprintf("close-recent-%d", i), "关闭 "+title).Clicked() {
+		if closeIconButton(c, fmt.Sprintf("close-recent-%d", i), tr("关闭 ")+title).Clicked() {
 			remove = true
 		}
 	})
@@ -757,9 +755,9 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			if sync := syncBadge(ahead, behind); sync != "" {
 				branchDisplay += " " + sync
 			}
-			tip := "当前分支：" + branch
+			tip := tr("当前分支：") + displayBranch(branch)
 			if dirty {
-				tip += "（工作区有未提交或未跟踪的代码）"
+				tip += tr("（工作区有未提交或未跟踪的代码）")
 			}
 			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
 			row.ContextMenu(func(m *ui.Menu) {
@@ -769,22 +767,22 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				} else if runtime.GOOS != "darwin" {
 					revealName = "在文件管理器中显示"
 				}
-				if m.Item(revealName).Chosen() {
+				if m.Item(tr(revealName)).Chosen() {
 					if err := revealInFileManager(p); err != nil {
 						a.setBanner("定位失败: "+err.Error(), p)
 					}
 				}
-				if m.Item("在终端中打开").Chosen() {
+				if m.Item(tr("在终端中打开")).Chosen() {
 					if err := openInTerminal(p); err != nil {
 						a.setBanner("打开终端失败: "+err.Error(), p)
 					}
 				}
-				if m.Item("复制路径").Chosen() {
+				if m.Item(tr("复制路径")).Chosen() {
 					c.Services().WriteClipboard(p)
-					c.Toast("已复制路径")
+					c.Toast(tr("已复制路径"))
 				}
 				m.Separator()
-				if m.Item("关闭仓库").Chosen() {
+				if m.Item(tr("关闭仓库")).Chosen() {
 					if tabIdx >= 0 {
 						closeIdx = tabIdx
 					} else {
@@ -800,7 +798,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 						ui.Text(c, branchDisplay).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
 					})
 				}
-				if closeIconButton(c, "close-repo:"+p, "关闭 "+label).Clicked() {
+				if closeIconButton(c, "close-repo:"+p, tr("关闭 ")+label).Clicked() {
 					if tabIdx >= 0 {
 						closeIdx = tabIdx
 					} else {
@@ -837,19 +835,22 @@ func (a *app) globalAlertBanner(c *ui.Context, tab *repoTab) {
 	ui.Row(c.Key("global-alert-banner")).FillWidth().Padding(8, 14).Gap(10).AlignItems(ui.Center).
 		Background(t.Danger.Alpha(0.1)).Border(1, t.Danger.Alpha(0.28)).Radius(t.Radius).Shrink(0).Transition(fadeEnter()).Children(func() {
 		ui.Icon(c, iconAlertCircle).Size(16, 16).TextColor(t.Danger).Shrink(0)
-		ui.Text(c, a.banner).FontSize(13).TextColor(t.Danger).Grow(1).MinWidth(0)
-		copyIconButton(c, "banner-copy-err", "复制错误信息", a.banner)
-		if closeBtn := closeIconButton(c, "banner-close", "关闭提示"); closeBtn.Clicked() {
+		ui.Text(c, trMessage(a.banner)).FontSize(13).TextColor(t.Danger).Grow(1).MinWidth(0)
+		copyIconButton(c, "banner-copy-err", tr("复制错误信息"), a.banner)
+		if closeBtn := closeIconButton(c, "banner-close", tr("关闭提示")); closeBtn.Clicked() {
 			a.setBanner("", "")
 		}
 	})
 }
 
+// defaultSidebarWidth 是仓库侧栏的初始宽度，也是底栏文件列表的默认分栏位置。
+const defaultSidebarWidth float32 = 320
+
 func (a *app) defaultFileSplit() float32 {
 	if a.repoSplit > 0 {
 		return a.repoSplit
 	}
-	return 320
+	return defaultSidebarWidth
 }
 
 func (a *app) inspectBottomPane(c *ui.Context, tab *repoTab) {
@@ -900,7 +901,7 @@ func (a *app) graphScreen(c *ui.Context) {
 				return
 			}
 			if a.repoSplit <= 0 {
-				a.repoSplit = 320
+				a.repoSplit = defaultSidebarWidth
 			}
 			ui.Split(c.Key("repo-split"), &a.repoSplit, func() {
 				a.repoList(c)
@@ -949,7 +950,7 @@ func (a *app) graphScreen(c *ui.Context) {
 		return
 	}
 	if a.repoSplit <= 0 {
-		a.repoSplit = 320
+		a.repoSplit = defaultSidebarWidth
 	}
 	ui.Split(c.Key("repo-split"), &a.repoSplit, func() {
 		a.repoList(c)
@@ -965,9 +966,9 @@ func (a *app) graphMain(c *ui.Context, includeBottom bool) {
 	}
 	if tab.unavailable {
 		ui.Column(c.Key("repo-unavailable")).Grow(1).Center().Padding(24).Gap(12).Children(func() {
-			ui.Text(c, "仓库不可用").Bold().TextColor(t.Danger)
-			ui.Text(c, tab.err).FontSize(13).FillWidth().MaxWidth(560)
-			if ui.Button(c.Key("repo-retry"), "重新检查").Disabled(tab.loading).Clicked() {
+			ui.Text(c, tr("仓库不可用")).Bold().TextColor(t.Danger)
+			ui.Text(c, trMessage(tab.err)).FontSize(13).FillWidth().MaxWidth(560)
+			if ui.Button(c.Key("repo-retry"), tr("重新检查")).Disabled(tab.loading).Clicked() {
 				a.reload(tab)
 			}
 		})
@@ -981,12 +982,12 @@ func (a *app) graphMain(c *ui.Context, includeBottom bool) {
 	a.commitPane(c, tab, includeBottom)
 	ui.Row(c).Padding(4, 12).Gap(12).AlignItems(ui.Center).Shrink(0).Children(func() {
 		if tab.loaded && !tab.loading && tab.inspecting == zeroHash && tab.comparison == nil && !tab.worktree {
-			ui.Textf(c, "%d 条提交", len(tab.commits)).FontSize(12).TextColor(t.TextMuted)
+			ui.Textf(c, tr("%d 条提交"), len(tab.commits)).FontSize(12).TextColor(t.TextMuted)
 		}
 		if tab.err != "" {
-			ui.Text(c, tab.err).FontSize(12).TextColor(t.Danger).Grow(1).MinWidth(0).SingleLine()
+			ui.Text(c, trMessage(tab.err)).FontSize(12).TextColor(t.Danger).Grow(1).MinWidth(0).SingleLine()
 		} else if tab.notice != "" {
-			ui.Text(c, tab.notice).FontSize(12).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine()
+			ui.Text(c, trMessage(tab.notice)).FontSize(12).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine()
 		}
 	})
 }
@@ -994,12 +995,12 @@ func (a *app) graphMain(c *ui.Context, includeBottom bool) {
 func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	t := c.Theme()
 	if tab.loading && len(tab.commits) == 0 && tab.err == "" {
-		busyBlock(c, "history-loading", "正在读取提交图谱…", "").Grow(1)
+		busyBlock(c, "history-loading", tr("正在读取提交图谱…"), "").Grow(1)
 		return
 	}
 	if tab.err != "" && len(tab.commits) == 0 {
-		ui.Column(c).Grow(1).Center().Padding(24).Children(func() {
-			ui.Text(c, tab.err).TextColor(t.Danger)
+		ui.Column(c).Grow(1).Center().Padding(24).Gap(12).Children(func() {
+			ui.Text(c, trMessage(tab.err)).TextColor(t.Danger).TextAlign(ui.Center)
 		})
 		return
 	}
@@ -1081,33 +1082,29 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 // that hid them, instead of leaving one sentence in the middle of the pane.
 func (a *app) commitListEmpty(c *ui.Context, tab *repoTab) ui.Element {
 	p := emptyHintProps{
-		Icon:        iconGitCommit,
-		Title:       "这个仓库还没有提交",
-		Description: "做出第一次提交后，历史会出现在这里",
+		Icon:  iconGitCommit,
+		Title: tr("这个仓库还没有提交"),
 	}
 	switch {
 	case tab.query.term != "":
 		p = emptyHintProps{
-			Icon:        iconSearch,
-			Title:       "没有匹配的提交",
-			Description: "换个关键词，或退出筛选查看全部历史",
+			Icon:  iconSearch,
+			Title: tr("没有匹配的提交"),
 			Action: func() {
-				if ui.Button(c.Key("empty-leave-search"), "退出筛选").Clicked() {
+				if ui.Button(c.Key("empty-leave-search"), tr("退出筛选")).Clicked() {
 					a.leaveSearch(tab)
 				}
 			},
 		}
 	case tab.query.filePath != "":
 		p = emptyHintProps{
-			Icon:        iconHistory,
-			Title:       "这个文件在所选版本之前没有历史",
-			Description: "选择更新的版本，或退出文件历史",
+			Icon:  iconHistory,
+			Title: tr("这个文件在所选版本之前没有历史"),
 		}
 	case tab.query.ref != "" || tab.query.hideRemote:
 		p = emptyHintProps{
-			Icon:        iconGitBranch,
-			Title:       "当前范围没有提交",
-			Description: "扩大分支范围可以看到更多历史",
+			Icon:  iconGitBranch,
+			Title: tr("当前范围没有提交"),
 		}
 	}
 	return emptyHint(c, "commits-empty", p)
@@ -1127,16 +1124,8 @@ func (a *app) searchFilterBanner(c *ui.Context, tab *repoTab) {
 		Shrink(0).
 		Children(func() {
 			ui.Icon(c, iconSearch).Size(14, 14).TextColor(th.Accent).Shrink(0)
-			msg := fmt.Sprintf("正在按%s筛选：“%s” · 匹配 %d 个提交", tab.query.kind, tab.query.term, len(tab.commits))
+			msg := fmt.Sprintf(tr("正在按%s筛选：“%s”"), tr(tab.query.kind), tab.query.term)
 			ui.Text(c, msg).FontSize(12).TextColor(th.Text).Grow(1).SingleLine()
-			btn := ui.Button(c.Key("search-banner-clear"), "退出筛选").
-				Tooltip("返回完整提交历史 (Esc)").
-				Padding(2, 8).
-				FontSize(12).
-				Shrink(0)
-			if btn.Clicked() {
-				a.leaveSearch(tab)
-			}
 		})
 }
 
@@ -1147,14 +1136,14 @@ func (a *app) commitTableFooter(c *ui.Context, tab *repoTab) {
 	theme := c.Theme()
 	if tab.loading {
 		ui.Row(c.Key("commit-footer-loading")).FillWidth().Padding(6, 12).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Background(theme.Surface.Alpha(0.6)).Transition(fadeEnter()).Children(func() {
-			busyRow(c, "history-footer-busy", "正在加载更多历史提交…", "")
+			busyRow(c, "history-footer-busy", tr("正在加载更多历史提交…"), "")
 		})
 		return
 	}
 	if tab.hasMore && !tab.canLoadHistory() {
 		ui.Row(c.Key("commit-footer-budget")).FillWidth().Padding(6, 12).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Background(theme.Surface.Alpha(0.6)).Children(func() {
-			ui.Textf(c, "已加载 %d 条提交 · 还有更多历史", len(tab.commits)).FontSize(12).TextColor(theme.TextMuted)
-			if ui.Button(c.Key("history-continue"), "继续加载").Shrink(0).Clicked() {
+			ui.Text(c, tr("还有更多历史")).FontSize(12).TextColor(theme.TextMuted)
+			if ui.Button(c.Key("history-continue"), tr("继续加载")).Shrink(0).Clicked() {
 				tab.historyBudget += historyMemoryStep
 				tab.notice = ""
 				a.loadMore(tab)
@@ -1164,8 +1153,8 @@ func (a *app) commitTableFooter(c *ui.Context, tab *repoTab) {
 	}
 	if tab.err != "" && len(tab.commits) > 0 {
 		ui.Row(c.Key("commit-footer-err")).FillWidth().Padding(6, 12).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Background(theme.Danger.Alpha(0.1)).Children(func() {
-			ui.Text(c, tab.err).FontSize(12).TextColor(theme.Danger)
-			if ui.Button(c.Key("history-retry"), "重试").Shrink(0).Clicked() {
+			ui.Text(c, trMessage(tab.err)).FontSize(12).TextColor(theme.Danger)
+			if ui.Button(c.Key("history-retry"), tr("重试")).Shrink(0).Clicked() {
 				tab.err = ""
 				a.loadMore(tab)
 			}
@@ -1234,7 +1223,7 @@ func groupCommitRefs(refs []refInfo, hideRemote bool) []commitRefBadge {
 func (b commitRefBadge) label() string {
 	switch b.kind {
 	case refTag:
-		return "标签 " + b.name
+		return tr("标签 ") + b.name
 	case refBranch:
 		if len(b.remotes) > 0 {
 			return b.name + " · " + strings.Join(b.remotes, ",")
@@ -1306,7 +1295,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 		switch column {
 		case "subject":
 			if worktree {
-				ui.Text(c, item.subject).SingleLine().Shrink(0)
+				ui.Text(c, tr("未提交改动")).SingleLine().Shrink(0)
 				for _, label := range worktreeBadges(tab.worktreeFiles) {
 					chip(c, "worktree-badge-"+label, label, chipStyle{Text: color, Background: color.Alpha(0.12)})
 				}
@@ -1315,7 +1304,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 			}
 			if item.hash == tab.head && tab.head != zeroHash {
 				chip(c, "chip-head", "HEAD", chipStyle{Text: ui.RGBA(255, 255, 255, 1), Background: color, Bold: true}).
-					Tooltip("当前检出位置 (HEAD)")
+					Tooltip(tr("当前检出位置 (HEAD)"))
 			}
 			badges := groupCommitRefs(tab.refs[item.hash], tab.query.hideRemote)
 			for idx, badge := range badges {
@@ -1331,9 +1320,9 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				commitCopy := *item
 				switch b.kind {
 				case refBranch:
-					tip := "本地分支 " + b.name + "（右键更多操作）"
+					tip := tr("本地分支 ") + b.name + tr("（右键更多操作）")
 					if len(b.remotes) > 0 {
-						tip = "本地分支 " + b.name + " · 同步远端 " + strings.Join(b.remotes, ", ") + "（右键更多操作）"
+						tip = tr("本地分支 ") + b.name + tr(" · 同步远端 ") + strings.Join(b.remotes, ", ") + tr("（右键更多操作）")
 					}
 					pill := chipSoft(c, fmt.Sprintf("ref-branch-%s-%s", hashHex(item.hash), b.name), b.name, color, true).
 						Cursor(ui.CursorPointer).Tooltip(tip)
@@ -1348,7 +1337,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				case refRemote:
 					pill := chip(c, fmt.Sprintf("ref-remote-%s-%s", hashHex(item.hash), b.name), b.name,
 						chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
-						Cursor(ui.CursorPointer).Tooltip("远程分支 " + b.name + "（双击检出跟踪分支，右键更多操作）")
+						Cursor(ui.CursorPointer).Tooltip(tr("远程分支 ") + b.name + tr("（双击检出跟踪分支，右键更多操作）"))
 					if pill.RowDoubleClicked() {
 						a.openCommitWrite(tab, writeBranch, commitCopy)
 						a.write.track = true
@@ -1362,8 +1351,8 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 						a.remoteBadgeMenu(c, m, tab, commitCopy, b.name)
 					})
 				case refTag:
-					pill := chipSoft(c, fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name), "标签 "+b.name, t.Warning, false).
-						Cursor(ui.CursorPointer).Tooltip("标签 " + b.name + "（右键更多操作）")
+					pill := chipSoft(c, fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name), tr("标签 ")+b.name, t.Warning, false).
+						Cursor(ui.CursorPointer).Tooltip(tr("标签 ") + b.name + tr("（右键更多操作）"))
 					pill.ContextMenu(func(m *ui.Menu) {
 						a.tagBadgeMenu(c, m, tab, commitCopy, b.name)
 					})
@@ -1373,14 +1362,17 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				label := prov.badge
 				if cW, _ := c.Size(); cW < 900 {
 					label = "◎ " + prov.agent
+					if item.prov == 1 {
+						label = prov.badge
+					}
 				}
 				ui.Text(c, label).SingleLine().MaxWidth(220).Shrink(0).FontSize(11).TextColor(muted).Tooltip(prov.description()).ContextMenu(func(m *ui.Menu) {
-					if m.Item("按此 Agent 筛选").Chosen() {
+					if m.Item(tr("按此 Agent 筛选")).Chosen() {
 						tab.searchKind = "Agent"
 						tab.searchText = prov.agent
 						a.searchHistory(tab)
 					}
-					if prov.model != "" && m.Item("按此模型筛选").Chosen() {
+					if prov.model != "" && m.Item(tr("按此模型筛选")).Chosen() {
 						tab.searchKind = "模型"
 						tab.searchText = normalizeModel(prov.model)
 						a.searchHistory(tab)
@@ -1389,7 +1381,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 			}
 			text := item.subject
 			if text == "" {
-				text = "（无说明）"
+				text = tr("（无说明）")
 			}
 			e := ui.Text(c, text).SingleLine().Grow(1).MinWidth(0)
 			if len(item.parents) > 1 {
@@ -1398,24 +1390,24 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 		case "date":
 			text := item.whenText()
 			if worktree {
-				text = "现在"
+				text = tr("现在")
 			}
 			ui.Text(c, text).SingleLine().TextColor(muted)
 		case "author":
 			ui.Text(c, item.author).SingleLine().TextColor(muted)
 		case "hash":
 			if worktree {
-				ui.Text(c, "工作区").SingleLine().TextColor(muted)
+				ui.Text(c, tr("工作区")).SingleLine().TextColor(muted)
 				return
 			}
 			full := hashHex(item.hash)
-			btn := ui.ButtonBase(c.Key("copy-hash-" + full)).Label("复制哈希").Tooltip(full).Cursor(ui.CursorPointer).Transition(colorMotion())
+			btn := ui.ButtonBase(c.Key("copy-hash-" + full)).Label(tr("复制哈希")).Tooltip(full).Cursor(ui.CursorPointer).Transition(colorMotion())
 			btn.Children(func() {
 				ui.Text(c, shortHash(item.hash)).Font("monospace").SingleLine().TextColor(muted)
 			})
 			if btn.Clicked() {
 				c.Services().WriteClipboard(full)
-				c.Toast("已复制哈希")
+				c.Toast(tr("已复制哈希"))
 			}
 		}
 	})
@@ -1449,19 +1441,19 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 	}
 	if mainW > 0 && mainW < 700 {
 		return []ui.TableColumn{
-			{ID: "graph", Title: "图谱", Width: graphWidth(tab.graph.lanes()), MinWidth: 40},
-			{ID: "subject", Title: "描述 / 引用", MinWidth: 160},
-			{ID: "date", Title: "日期", Width: 128, MinWidth: 100},
-			{ID: "author", Title: "作者", Width: 96, MinWidth: 60},
-			{ID: "hash", Title: "哈希", Width: 84, MinWidth: 70},
+			{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 40},
+			{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 160},
+			{ID: "date", Title: tr("日期"), Width: 128, MinWidth: 100},
+			{ID: "author", Title: tr("作者"), Width: 96, MinWidth: 60},
+			{ID: "hash", Title: tr("哈希"), Width: 84, MinWidth: 70},
 		}
 	}
 	return []ui.TableColumn{
-		{ID: "graph", Title: "图谱", Width: graphWidth(tab.graph.lanes()), MinWidth: 40},
-		{ID: "subject", Title: "描述 / 引用", MinWidth: 200},
-		{ID: "date", Title: "日期", Width: 172, MinWidth: 128},
-		{ID: "author", Title: "作者", Width: 156, MinWidth: 96},
-		{ID: "hash", Title: "哈希", Width: 120, MinWidth: 96},
+		{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 40},
+		{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 200},
+		{ID: "date", Title: tr("日期"), Width: 172, MinWidth: 128},
+		{ID: "author", Title: tr("作者"), Width: 156, MinWidth: 96},
+		{ID: "hash", Title: tr("哈希"), Width: 120, MinWidth: 96},
 	}
 }
 
@@ -1634,6 +1626,7 @@ func main() {
 	})
 
 	mygo.App.WhenReady(func() {
+		a.configureLanguages()
 		a.installMenu()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:          "Xylring",
