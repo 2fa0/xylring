@@ -125,6 +125,7 @@ func TestSettingsPreferencesAndProjectFetchPersist(t *testing.T) {
 	a.fileView, a.diffLayout = 1, 1
 	a.diffIgnoreWhitespace = true
 	a.autoFetch = "5"
+	a.language = "en"
 	a.repoAutoFetch = map[string]string{"/repo": "off"}
 	a.queueSession()
 	a.repoAutoFetch["/repo"] = "10"
@@ -150,6 +151,22 @@ func TestSettingsPreferencesAndProjectFetchPersist(t *testing.T) {
 		t.Fatal("restore fetch inheritance failed")
 	}
 }
+
+// clickControl clicks a control by its name instead of by text, so a setting
+// whose name is drawn beside its control still reaches the control.
+func clickControl(t *testing.T, tt *ui.Tester, name string) {
+	t.Helper()
+	node, ok := tt.AccessByRole(ui.RoleButton, name)
+	if !ok {
+		node, ok = tt.AccessByRole(ui.RoleMenuButton, name)
+	}
+	if !ok {
+		t.Fatalf("missing control %q", name)
+	}
+	tt.ClickAt(node.Bounds.X+node.Bounds.W/2, node.Bounds.Y+node.Bounds.H/2)
+	tt.Frame()
+}
+
 func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
 	for _, width := range []int{420, 1100} {
 		a := &app{settings: settingsState{open: true, repo: "/work/repo", global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}}
@@ -194,6 +211,109 @@ func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
 		if a.settings.open {
 			t.Fatal("explicit discard did not close settings")
 		}
+	}
+}
+
+func TestSettingsRowsToggleFromTheirLabels(t *testing.T) {
+	a := &app{settings: settingsState{open: true}}
+	tt := ui.NewTester(a.view, 900, 720)
+	defer retireTester(tt)
+	tt.Frame()
+	if err := tt.Click("差异默认忽略空白"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.diffIgnoreWhitespace {
+		t.Fatal("clicking the row did not turn the preference on")
+	}
+	if err := tt.Click("差异默认忽略空白"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.diffIgnoreWhitespace {
+		t.Fatal("clicking the row did not turn the preference off")
+	}
+	if err := tt.Click("底部详情面板全宽"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.bottomFullWidth {
+		t.Fatal("bottom panel preference not updated")
+	}
+}
+
+func TestSettingsGitRowSwitchWritesAndRemovesOverride(t *testing.T) {
+	a := &app{settings: settingsState{open: true, page: 1, global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}}
+	tt := ui.NewTester(a.view, 900, 760)
+	defer retireTester(tt)
+	tt.Frame()
+	if err := tt.Click("提交邮箱"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.settings.global.fields[1].enabled {
+		t.Fatal("row did not enable the override")
+	}
+	if !gitSettingsDirty(&a.settings.global) {
+		t.Fatal("an empty override is not a pending change")
+	}
+	if apply, ok := tt.Access("应用"); !ok || !apply.Disabled {
+		t.Fatalf("an empty override must not be appliable: %q", tt.Texts())
+	}
+	if err := tt.Click("提交邮箱"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.settings.global.fields[1].enabled || gitSettingsDirty(&a.settings.global) {
+		t.Fatal("row did not remove the override")
+	}
+}
+
+func TestGitSettingsChoicesStayDisabledDuringSave(t *testing.T) {
+	s := gitSettingsScope{busy: true, loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}
+	s.fields[2] = gitSetting{enabled: true, value: "false"}
+	a := &app{}
+	tt := ui.NewTester(func(c *ui.Context) { a.gitSettingRow(c, &s, 2, false) }, 720, 300)
+	defer retireTester(tt)
+	tt.Frame()
+	choice, ok := tt.AccessByRole(ui.RoleMenuButton, "拉取方式")
+	if !ok || !choice.Disabled {
+		t.Fatal("pull strategy is editable during save")
+	}
+	tt.ClickAt(choice.Bounds.X+choice.Bounds.W/2, choice.Bounds.Y+choice.Bounds.H/2)
+	tt.Frame()
+	if len(tt.Menu()) != 0 || s.fields[2].value != "false" {
+		t.Fatal("disabled choice opened its menu or changed the pending save")
+	}
+	s.busy = false
+	tt.Frame()
+	clickControl(t, tt, "拉取方式")
+	if err := tt.ChooseMenuItem("变基"); err != nil {
+		t.Fatal(err)
+	}
+	if s.fields[2].value != "true" {
+		t.Fatal("choice stayed disabled after save completed")
+	}
+}
+
+func TestSettingsProjectPageOwnsItsOverride(t *testing.T) {
+	a := &app{settings: settingsState{open: true, page: 2, repo: "/work/repo",
+		global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))},
+		local:  gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))},
+	}}
+	tt := ui.NewTester(a.view, 1000, 800)
+	defer retireTester(tt)
+	tt.Frame()
+	if !tt.HasText("/work/repo") {
+		t.Fatal("missing project path")
+	}
+	clickControl(t, tt, "检查频率")
+	if err := tt.ChooseMenuItem("每 5 分钟"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.repoAutoFetch["/work/repo"] != "5" {
+		t.Fatalf("project override = %q", a.repoAutoFetch["/work/repo"])
 	}
 }
 

@@ -32,9 +32,7 @@ func TestAppearanceSwitchesFromSettings(t *testing.T) {
 			{"浅色", "light", false},
 			{"跟随系统", "", false},
 		} {
-			if err := tt.Click("外观"); err != nil {
-				t.Fatal(err)
-			}
+			clickControl(t, tt, "外观")
 			if err := tt.ChooseMenuItem(step.label); err != nil {
 				t.Fatal(err)
 			}
@@ -49,9 +47,7 @@ func TestAppearanceSwitchesFromSettings(t *testing.T) {
 		if !dark {
 			t.Fatal("system appearance changes must apply in automatic mode")
 		}
-		if err := tt.Click("外观"); err != nil {
-			t.Fatal(err)
-		}
+		clickControl(t, tt, "外观")
 		if err := tt.ChooseMenuItem("浅色"); err != nil {
 			t.Fatal(err)
 		}
