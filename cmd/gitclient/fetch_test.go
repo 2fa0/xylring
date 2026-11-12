@@ -51,6 +51,7 @@ func TestFetchAllUpdatesRemoteBranch(t *testing.T) {
 }
 
 func TestFetchAllPrunesDeletedBranch(t *testing.T) {
+	isolateSettingsGit(t)
 	origin, gitOrigin := initTestRepo(t)
 	gitOrigin("commit", "--allow-empty", "-m", "base")
 	gitOrigin("checkout", "-b", "gone")

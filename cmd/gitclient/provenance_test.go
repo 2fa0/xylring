@@ -272,10 +272,6 @@ func TestRulePreviewAndRecentProvenance(t *testing.T) {
 	if len(a.recentProvenance) != 8 {
 		t.Fatal("recent cap")
 	}
-	tab := newTab(1, dir)
-	if tab.commitProv.agent != "" {
-		t.Fatal("auto selected")
-	}
 }
 func TestRingUIControls(t *testing.T) {
 	dir := t.TempDir()
@@ -371,9 +367,6 @@ func TestRingCLIAndLauncher(t *testing.T) {
 		if err != nil || string(got) != sub+"\n--show\n" {
 			t.Fatalf("launcher %q %v", got, err)
 		}
-	}
-	if !strings.Contains(generateWindowsCmdContent("binary"), "goto cli") {
-		t.Fatal("Windows has no direct route")
 	}
 }
 

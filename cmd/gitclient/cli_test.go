@@ -121,47 +121,61 @@ func TestGenerateWindowsCmdContent(t *testing.T) {
 	if !strings.Contains(content, "%*") {
 		t.Errorf("windows cmd should forward arguments")
 	}
+	if !strings.Contains(content, "goto cli") {
+		t.Errorf("windows cmd should route CLI subcommands straight to the binary")
+	}
 }
 
-func TestInstallAndUninstallCLIScriptInDir(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "xylring-cli-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	appBundle := "/Applications/Xylring.app"
-	appBin := "/Applications/Xylring.app/Contents/MacOS/Xylring"
-	script := generateCLIScriptContent(appBundle, appBin)
+// TestInstallAndUninstallCLITool 真正走一遍安装与卸载：HOME 与 PATH 都指向临时目录，
+// 既不读也不改用户已有的 ~/.local/bin、~/bin 或 /usr/local/bin。
+func TestInstallAndUninstallCLITool(t *testing.T) {
+	home := t.TempDir()
+	bin := filepath.Join(home, ".local", "bin")
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", bin)
 
 	cmdName := "xylring"
 	if runtime.GOOS == "windows" {
 		cmdName = "xylring.cmd"
-		script = generateWindowsCmdContent(appBin)
 	}
 
-	targetFile := filepath.Join(tmpDir, cmdName)
-	if err := os.WriteFile(targetFile, []byte(script), 0o755); err != nil {
-		t.Fatalf("failed to write script: %v", err)
-	}
-
-	info, err := os.Stat(targetFile)
+	installed, err := installCLITool()
 	if err != nil {
-		t.Fatalf("script file does not exist: %v", err)
+		t.Fatal(err)
 	}
-	if runtime.GOOS != "windows" && (info.Mode().Perm()&0o111) == 0 {
-		t.Errorf("script file is not executable: %v", info.Mode().Perm())
+	if filepath.Base(installed) != cmdName {
+		t.Fatalf("installed %q, want a launcher named %q", installed, cmdName)
+	}
+	if !strings.HasPrefix(filepath.Clean(installed), filepath.Clean(home)+string(filepath.Separator)) {
+		t.Fatalf("installed outside the test home: %q", installed)
+	}
+	info, err := os.Stat(installed)
+	if err != nil || info.IsDir() {
+		t.Fatalf("launcher missing: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("launcher is not executable: %v", info.Mode().Perm())
 	}
 
-	// 模拟卸载检查
-	data, err := os.ReadFile(targetFile)
+	// 卸载会清理所有候选目录里带 Xylring 标记的同名文件；若别的目录已有真实安装，
+	// 就只验证安装结果，避免删掉本机已有的命令行工具。
+	for _, dir := range getCandidateBinDirs() {
+		if other := filepath.Join(dir, cmdName); other != installed {
+			if _, err := os.Stat(other); err == nil {
+				t.Logf("skipping uninstall assertion: %s already exists", other)
+				return
+			}
+		}
+	}
+
+	removed, err := uninstallCLITool()
 	if err != nil {
-		t.Fatalf("failed to read written file: %v", err)
+		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Xylring") {
-		t.Errorf("content does not contain Xylring identifier")
+	if !strings.Contains(removed, installed) {
+		t.Fatalf("uninstalled %q, want %q", removed, installed)
 	}
-	if err := os.Remove(targetFile); err != nil {
-		t.Fatalf("failed to remove script file: %v", err)
+	if _, err := os.Stat(installed); !os.IsNotExist(err) {
+		t.Fatalf("launcher still present after uninstall: %v", err)
 	}
 }
