@@ -176,7 +176,7 @@ func TestGraphCrossingsAndNodeHalos(t *testing.T) {
 							{a: 1, b: 1, color: 1, top: true, bot: true},
 							{a: 0, b: 2, color: 2, bend: half},
 						}}
-						p.Clip(row, 0, func() { paintCommit(p, row, &item, false, nil, background, false) })
+						p.Clip(row, 0, func() { paintCommit(p, row, &item, false, nil, background) })
 					}
 					for i, radius := range []float32{4.5, 5.5, 4.5} {
 						x := float32(20 + i*30)

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -292,6 +293,11 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 		"--format=" + format,
 		"--skip=" + strconv.Itoa(gitSkip),
 	}
+	// Partial clones may need to fetch blobs just to calculate a diff. History
+	// must remain readable offline; unknown change sizes use the default node.
+	if _, err := configCommand(ctx, dir, "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`); configExit(err, 1) {
+		args = append(args, "--shortstat")
+	}
 	if gitN > 0 {
 		args = append(args, "--max-count="+strconv.Itoa(gitN))
 	}
@@ -306,6 +312,7 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 			if rec == "" {
 				continue
 			}
+			rec, lines := splitShortstat(rec)
 			var c commit
 			var err error
 			if supported {
@@ -316,6 +323,7 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 			if err != nil {
 				return err
 			}
+			c.lines = lines
 			if filtering {
 				if !query.matchesProvenance(pool.get(c.prov)) {
 					continue
@@ -374,7 +382,8 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	hideConsoleWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
-	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, nil))
+	// 流式解析依赖英文 shortstat 词汇；LANGUAGE 不在默认剔除列表里，这里显式锁死。
+	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, []string{"LC_ALL=C"}))
 	cmd.Stdin = strings.NewReader(input)
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stderr = &stderr
@@ -493,6 +502,44 @@ func splitByte(sep byte) bufio.SplitFunc {
 		}
 		return 0, nil, nil
 	}
+}
+
+var (
+	shortstatFiles = regexp.MustCompile(`(\d+) files? changed`)
+	shortstatAdds  = regexp.MustCompile(`(\d+) insertions?\(\+\)`)
+	shortstatDels  = regexp.MustCompile(`(\d+) deletions?\(-\)`)
+)
+
+// splitShortstat 去掉 --shortstat 跟在记录尾部的统计块，返回新增+删除的行数。
+// 记录里第一个换行之前才是格式字段，之后是 Git 自己打印的统计行。
+// 合并提交默认不产生 diff，因此不会带统计块，此时返回 -1。
+func splitShortstat(rec string) (body string, lines int32) {
+	i := strings.IndexByte(rec, '\n')
+	if i < 0 {
+		return rec, -1
+	}
+	body, block := rec[:i], rec[i+1:]
+	if shortstatFiles.FindStringSubmatch(block) == nil {
+		return body, -1
+	}
+	adds, dels := shortstatCount(shortstatAdds, block), shortstatCount(shortstatDels, block)
+	total := int64(adds) + int64(dels)
+	if total > 1<<31-1 {
+		total = 1<<31 - 1
+	}
+	return body, int32(total)
+}
+
+func shortstatCount(re *regexp.Regexp, block string) int32 {
+	m := re.FindStringSubmatch(block)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 1<<31 - 1
+	}
+	return int32(min(n, 1<<31-1))
 }
 
 func parseCommitRecord(rec string, pools ...*provenanceTable) (commit, error) {
