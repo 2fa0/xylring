@@ -13,6 +13,11 @@ func (a *app) openOperation(action, target, path string) {
 	if a.write.busy || a.fetch.busy || a.op.busy {
 		return
 	}
+	// 没有可用的 Git 时先说明原因，不必让每个操作各自报错。
+	if !a.gitReady() {
+		a.setBanner(a.git.err, "")
+		return
+	}
 	d := repoOperation{action: action, target: target, path: path, stash: -1, gen: a.op.gen + 1}
 	if action == "Stash" || action == "远程" {
 		d.hub = action

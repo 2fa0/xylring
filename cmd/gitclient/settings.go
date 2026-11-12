@@ -18,6 +18,7 @@ type appPreferences struct {
 	DiffLayout       int    `json:"diff_layout,omitempty"`
 	IgnoreWhitespace bool   `json:"ignore_whitespace,omitempty"`
 	AutoFetch        string `json:"auto_fetch,omitempty"`
+	GitExecutable    string `json:"git_executable,omitempty"`
 }
 
 type settingsState struct {
@@ -32,7 +33,7 @@ type settingsState struct {
 var autoFetchOptions = []configOption{{"off", "关闭"}, {"2", "每 2 分钟"}, {"5", "每 5 分钟"}, {"10", "每 10 分钟"}, {"15", "每 15 分钟"}}
 
 func (a *app) preferences() appPreferences {
-	return appPreferences{RestoreDisabled: a.restoreDisabled, FileView: a.fileView, DiffLayout: a.diffLayout, IgnoreWhitespace: a.diffIgnoreWhitespace, AutoFetch: a.autoFetch, Language: a.language}
+	return appPreferences{RestoreDisabled: a.restoreDisabled, FileView: a.fileView, DiffLayout: a.diffLayout, IgnoreWhitespace: a.diffIgnoreWhitespace, AutoFetch: a.autoFetch, Language: a.language, GitExecutable: a.gitExecutable}
 }
 func (a *app) autoFetchDelay(path string) time.Duration {
 	value := a.autoFetch
@@ -76,6 +77,7 @@ func (a *app) openSettings() {
 		return
 	}
 	a.settings = settingsState{open: true, gen: a.settings.gen + 1}
+	a.gitPathDraft = a.gitExecutable
 	if t := a.activeTab(); t != nil && !t.unavailable {
 		a.settings.repo = t.path
 	}
@@ -330,6 +332,7 @@ func (a *app) generalSettings(c *ui.Context) {
 			})
 		},
 	)
+	a.gitBinarySettings(c)
 }
 
 // demoActivePath names the repository the preferences page speaks about: the

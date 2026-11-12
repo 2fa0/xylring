@@ -38,6 +38,17 @@ type savedSession struct {
 	FoundFrom        string   `json:"found_from,omitempty"`
 }
 
+// restoredRepoUsable decides whether a saved repository stays in the session.
+// A repository that only failed because Git itself is missing or broken must
+// stay: its draft and tab belong to the user, and dropping it would also drop
+// them from the session file written on the next save.
+func restoredRepoUsable(root, want string, err error) bool {
+	if isGitUnavailable(err) {
+		return true
+	}
+	return err == nil && root == want
+}
+
 func loadSession() savedSession {
 	var s savedSession
 	p, e := configFile("session.json")
@@ -203,7 +214,8 @@ func (a *app) restoreSession() {
 			if !restoreRepos {
 				break
 			}
-			if root, e := repoRoot(ctx, r.Path); e == nil && root == r.Path {
+			root, e := repoRoot(ctx, r.Path)
+			if restoredRepoUsable(root, r.Path, e) {
 				valid = append(valid, r)
 			}
 		}

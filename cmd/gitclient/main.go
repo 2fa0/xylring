@@ -51,6 +51,10 @@ type app struct {
 	settings        settingsState
 	restoreDisabled bool
 	autoFetch       string
+	gitExecutable   string
+	gitPathDraft    string
+	git             gitState
+	gitCheckGen     uint64
 	repoAutoFetch   map[string]string
 	themeMode       string
 	language        string
@@ -145,6 +149,7 @@ func newApp() *app {
 		if validAutoFetch(p.AutoFetch) {
 			a.autoFetch = p.AutoFetch
 		}
+		a.gitExecutable = strings.TrimSpace(p.GitExecutable)
 		if a.fileView != 1 {
 			a.fileView = 0
 		}
@@ -153,6 +158,8 @@ func newApp() *app {
 		}
 	}
 	a.repoAutoFetch = session.RepoAutoFetch
+	a.gitExecutable = setGitExecutablePath(a.gitExecutable)
+	a.gitPathDraft = a.gitExecutable
 	for path, value := range a.repoAutoFetch {
 		if !validAutoFetch(value) {
 			delete(a.repoAutoFetch, path)
@@ -523,6 +530,7 @@ func (a *app) emptyState(c *ui.Context) {
 				if a.banner != "" && !a.bannerOnRecentVisible() {
 					a.globalAlertBanner(c, nil)
 				}
+				a.gitNoticeCard(c)
 				if len(a.recent) == 0 {
 					return
 				}
@@ -1001,6 +1009,12 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	if tab.err != "" && len(tab.commits) == 0 {
 		ui.Column(c).Grow(1).Center().Padding(24).Gap(12).Children(func() {
 			ui.Text(c, trMessage(tab.err)).TextColor(t.Danger).TextAlign(ui.Center)
+			// 仓库读不出来是因为 Git 本身不可用时，这里直接给重试入口。
+			if !a.gitReady() {
+				if ui.PrimaryButton(c.Key("git-retry-pane"), tr("重新检测")).Disabled(a.git.checking).Clicked() {
+					a.checkGit(true)
+				}
+			}
 		})
 		return
 	}
@@ -1645,6 +1659,8 @@ func main() {
 		} else {
 			a.sessionReady = true
 		}
+		// 先把 Git 探明白，缺 Git 时首页直接说清楚原因。
+		a.checkGit(false)
 		for _, path := range paths {
 			a.openPath(path)
 		}

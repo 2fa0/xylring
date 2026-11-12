@@ -404,6 +404,7 @@ func (a *app) reload(t *repoTab) {
 				if p != nil {
 					p.close()
 				}
+				a.noteGitUnavailable(err)
 				if errors.Is(err, errRepoUnavailable) {
 					a.markRepoUnavailable(t)
 				} else {

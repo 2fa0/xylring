@@ -47,6 +47,7 @@ func (a *app) startAutoRefresh() {
 				tickCount++
 				refreshSummaries := tickCount%5 == 0
 				a.onMain(func() {
+					a.recheckGit()
 					if a.win == nil || a.win.IsFocused() && !a.win.IsMinimized() {
 						a.checkActiveRepo()
 						a.maybeAutoFetch()
@@ -63,6 +64,10 @@ func (a *app) startAutoRefresh() {
 func (a *app) checkActiveRepo() {
 	t := a.activeTab()
 	if a.closed || t == nil || t.closed || t.loading || t.checking || !t.loaded || a.showCompare || a.fetch.busy || a.write.busy || t.commitBusy || t.syncBusy {
+		return
+	}
+	// 缺 Git 时不再每两秒白跑一次 Git，也不必反复改写同一条错误。
+	if !a.gitReady() {
 		return
 	}
 	t.checking = true
@@ -107,6 +112,7 @@ func (a *app) checkActiveRepo() {
 				return
 			}
 			if err != nil {
+				a.noteGitUnavailable(err)
 				msg := "检查仓库更新失败：" + err.Error()
 				changed, t.err = t.err != msg, msg
 				return

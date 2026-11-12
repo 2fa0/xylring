@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/2fa0/xylring/internal/crashlog"
@@ -44,14 +45,6 @@ func acquireGit(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func gitPath() (string, error) {
-	bin, err := exec.LookPath("git")
-	if err != nil {
-		return "", fmt.Errorf("找不到 git，请先安装：%w", err)
-	}
-	return bin, nil
 }
 
 func gitEnv() []string {
@@ -152,12 +145,13 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	hideConsoleWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
-	cmd.Env = repoGitEnv(dir, extraEnv)
+	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, extraEnv))
 	stdout := limitedBuffer{limit: limit, cancel: cancel}
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
+	err = gitExecError(bin, err)
 	if stdout.overflow {
 		log.Printf("git output limit exceeded repo=%q limit=%d", dir, limit)
 		return nil, fmt.Errorf("Git 输出超过 %d 字节，请缩小读取范围", limit)
@@ -177,6 +171,10 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	}
 	if err != nil {
 		logGitFailure(dir, args, err)
+		// Git 缺席或不可执行时保住错误类型：上层据此区分“缺 Git”和“仓库有问题”。
+		if isGitUnavailable(err) {
+			return nil, err
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
@@ -217,7 +215,9 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 	// Opening a directory deliberately allows discovery of an enclosing repository.
 	out, err := runGitExtra(ctx, dir, 16<<20, []string{"GIT_CEILING_DIRECTORIES=" + os.Getenv("GIT_CEILING_DIRECTORIES")}, "rev-parse", "--show-toplevel")
 	if err != nil {
-		if strings.Contains(err.Error(), "找不到 git") {
+		// 只有 Git 明确表示这里不是仓库时才算“不是仓库”；
+		// Git 本身缺席或跑不起来必须原样上报，否则用户会被指去修仓库。
+		if isGitUnavailable(err) || !notARepository(err) {
 			return "", err
 		}
 		return "", errors.New("不是 Git 仓库")
@@ -227,6 +227,12 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 		return "", errors.New("不是 Git 仓库")
 	}
 	return root, nil
+}
+
+// notARepository reports whether Git ran fine and said this directory is not a
+// work tree. Everything else is a real failure with its own message.
+func notARepository(err error) bool {
+	return strings.Contains(err.Error(), "not a git repository")
 }
 
 func skipRepoDir(name string) bool {
@@ -368,7 +374,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	hideConsoleWindow(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
-	cmd.Env = repoGitEnv(dir, nil)
+	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, nil))
 	cmd.Stdin = strings.NewReader(input)
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stderr = &stderr
@@ -381,9 +387,11 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	stopRead := context.AfterFunc(ctx, func() { _ = stdout.Close() })
 	defer stopRead()
 	if err := cmd.Start(); err != nil {
+		err = gitExecError(bin, err)
 		logGitFailure(dir, args, err)
 		return err
 	}
+
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 64*1024), 2<<20)
 	sc.Split(split)
@@ -409,7 +417,11 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 		}
 		return fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
-	if waitErr != nil {
+	if waitErr = gitExecError(bin, waitErr); waitErr != nil {
+		if isGitUnavailable(waitErr) {
+			logGitFailure(dir, args, waitErr)
+			return waitErr
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = waitErr.Error()
@@ -423,6 +435,15 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	return nil
 }
 
+// gitFailureLog keeps one failing Git operation from filling the log: a broken
+// or missing Git fails every refresh, and the log must keep the real incident.
+var gitFailureLog struct {
+	sync.Mutex
+	last map[string]time.Time
+}
+
+const gitFailureLogInterval = time.Minute
+
 func logGitFailure(dir string, args []string, err error) {
 	operation := ""
 	if len(args) > 0 {
@@ -430,8 +451,28 @@ func logGitFailure(dir string, args []string, err error) {
 	}
 	// Arguments and stderr may contain credentials, commit messages or file contents.
 	msg := fmt.Sprintf("git failed repo=%q operation=%q error=%q", dir, operation, err)
+	if !gitFailureLogAllowed(msg) {
+		return
+	}
 	log.Print(msg)
 	crashlog.Breadcrumb(msg)
+}
+
+func gitFailureLogAllowed(key string) bool {
+	gitFailureLog.Lock()
+	defer gitFailureLog.Unlock()
+	now := time.Now()
+	if gitFailureLog.last == nil {
+		gitFailureLog.last = make(map[string]time.Time)
+	}
+	if at, ok := gitFailureLog.last[key]; ok && now.Sub(at) < gitFailureLogInterval {
+		return false
+	}
+	if len(gitFailureLog.last) > 256 {
+		clear(gitFailureLog.last)
+	}
+	gitFailureLog.last[key] = now
+	return true
 }
 
 func historyTips(ctx context.Context, dir string) ([]string, error) {
