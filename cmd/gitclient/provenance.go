@@ -170,17 +170,26 @@ func (q historyQuery) matchesProvenance(p provenance) bool {
 	return strings.Contains(strings.ToLower(value), strings.ToLower(q.term))
 }
 
-// Probe the actual pretty-format capability, once per executable lifetime.
+// Probe the actual pretty-format capability for the resolved Git executable.
 // Old Git prints the unsupported placeholder literally. Empty repositories
 // fall back until a subsequent stream can probe a real commit.
 var trailerCapability struct {
 	sync.Mutex
 	known, supported bool
+	git              gitProbe
 }
 
 func historyCommitFormat(ctx context.Context, dir string) (string, bool) {
+	probe, err := resolveGit()
+	if err != nil {
+		return commitFormat, false
+	}
 	trailerCapability.Lock()
 	defer trailerCapability.Unlock()
+	if trailerCapability.git != probe {
+		trailerCapability.git = probe
+		trailerCapability.known, trailerCapability.supported = false, false
+	}
 	if !trailerCapability.known {
 		out, err := runGit(ctx, dir, "log", "-1", "--format="+provenanceFormat, "HEAD", "--")
 		if err == nil {

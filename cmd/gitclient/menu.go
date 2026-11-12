@@ -86,11 +86,12 @@ func (a *app) syncMenu() {
 	has := tab != nil
 	busy := has && tab.loading
 	empty := tab == nil && len(a.found) <= 1
+	gitReady := a.gitReady()
 	a.setMenuEnabled("toggle-sidebar", !empty)
 	a.setMenuEnabled("toggle-bottom-full-width", has)
-	a.setMenuEnabled("fetch", has && !tab.unavailable && !a.fetch.busy && !a.write.busy)
-	a.setMenuEnabled("refresh", has && !busy)
-	a.setMenuEnabled("compare", has && !tab.unavailable && !busy)
+	a.setMenuEnabled("fetch", gitReady && has && !tab.unavailable && !a.fetch.busy && !a.write.busy)
+	a.setMenuEnabled("refresh", gitReady && has && !busy)
+	a.setMenuEnabled("compare", gitReady && has && !tab.unavailable && !busy)
 	a.setMenuEnabled("close-tab", has)
 }
 

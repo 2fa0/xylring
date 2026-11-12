@@ -88,6 +88,10 @@ func scanGitRepos(ctx context.Context, dir string, previous map[string]scannedDi
 	}
 	root, err := repoRoot(ctx, abs)
 	if err != nil {
+		// Git 缺席或跑不起来时不能说“没有找到仓库”，否则用户会一直去翻目录。
+		if isGitUnavailable(err) {
+			return nil, cache, err
+		}
 		return nil, cache, errors.New("没有找到 Git 仓库")
 	}
 	return []string{root}, cache, nil

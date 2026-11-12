@@ -54,13 +54,17 @@ func configCommand(ctx context.Context, dir string, args ...string) ([]byte, err
 		dir = os.TempDir()
 	}
 	cmd.Dir = dir
-	cmd.Env = repoGitEnv(dir, nil)
+	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, nil))
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
+		err = gitExecError(bin, err)
 		var e *exec.ExitError
 		if errors.As(err, &e) {
 			return out, fmt.Errorf("%s: %w", strings.TrimSpace(string(e.Stderr)), err)
+		}
+		if isGitUnavailable(err) {
+			return out, err
 		}
 	}
 	return out, err

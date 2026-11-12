@@ -335,10 +335,11 @@ func runGitInput(ctx context.Context, dir, input string, args ...string) ([]byte
 	cmd := exec.CommandContext(ctx, bin, gitArgs(args...)...)
 	hideConsoleWindow(cmd)
 	cmd.Dir = dir
-	cmd.Env = gitEnv()
+	cmd.Env = gitBinaryEnv(bin, gitEnv())
 	cmd.Stdin = strings.NewReader(input)
 	cmd.WaitDelay = 2 * time.Second
-	return cmd.Output()
+	out, err := cmd.Output()
+	return out, gitExecError(bin, err)
 }
 func messageProvenance(ctx context.Context, dir, msg string) (provenance, error) {
 	out, err := runGitInput(ctx, dir, msg, "interpret-trailers", "--parse")

@@ -46,6 +46,7 @@ installation to browse and change local repositories.
 - 💻 **Terminal-First Workflow**: Launch any repository right from your terminal with `xylring .`, `xylring /path/to/repo`, or switch between multiple repositories effortlessly.
 - 🖼️ **Full-File Source View & Image Diff**: Read full-file snapshots with syntax highlighting and inspect visual image diffs side-by-side.
 - 🛡️ **Local Repository Workflows**: Local operations use the system Git installation. Fetching, pulling, and pushing communicate with the configured Git remote.
+- 🧭 **Finds Your Git**: Uses the Git on `PATH` or a common install location such as Homebrew. When Git is missing or cannot run, the app says why, retries on demand, and accepts a custom Git executable path.
 
 ---
 
