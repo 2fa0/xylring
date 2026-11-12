@@ -26,6 +26,7 @@ type commit struct {
 	nodeColor int
 	segs      []seg
 	file      *fileChange // 文件历史中，这条提交当时的路径（含重命名前路径）。
+	lines     int32       // 新增+删除行数，来自 --shortstat；-1 表示没有统计（合并提交、文件历史）。
 }
 
 func (c commit) whenText() string {

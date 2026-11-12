@@ -27,6 +27,8 @@ const (
 	laneGap     = 18
 	lanePad     = 10
 	graphStroke = 2.5
+	// 年轮环不能越出泳道：左右各只有 laneGap/2 的位置。
+	maxRingRadius = 8.2
 	// 表格单元格会 Clip，并把内容垫进 Space(1.5)/Space(2.5)。
 	// 图谱要画进这块内边距，线才能接到下一行的格线上。
 	graphCellPadY   = 1.5
@@ -1266,13 +1268,6 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 		if selected {
 			background = t.Accent
 		}
-		hasRefs := item.hash == tab.head
-		for _, ref := range tab.refs[item.hash] {
-			if !tab.query.hideRemote || ref.kind != refRemote {
-				hasRefs = true
-				break
-			}
-		}
 		ui.Box(c).Grow(1).MinHeight(28).AlignSelf(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) {
 			full := ui.Rect{X: r.X - padX, Y: r.Y - padY, W: r.W + padX*2, H: r.H + padY*2}
 			bg := background
@@ -1283,7 +1278,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				paintWorktreeCommit(p, full, item, bg)
 				return
 			}
-			paintCommit(p, full, item, tab.worktreeConnectsFromTop(i), nil, bg, hasRefs, tab.provenance.get(item.prov).attribution == "inferred")
+			paintCommit(p, full, item, tab.worktreeConnectsFromTop(i), nil, bg, tab.provenance.get(item.prov).attribution == "inferred")
 			if tab.worktreeThrough(i) {
 				if h := tab.worktreeHead(); h != nil {
 					x := laneCenter(full, h.nodeCol)
@@ -1496,7 +1491,7 @@ func graphColor(chain int, palette []ui.Color) ui.Color {
 	return laneColor(chain)
 }
 
-func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette []ui.Color, background ui.Color, hasRefs bool, inferred ...bool) {
+func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette []ui.Color, background ui.Color, inferred ...bool) {
 	mid := r.Y + r.H/2
 	// 长泳道在下，短曲线带背景色衬底跨过泳道，最后再画节点。
 	for _, bends := range []bool{false, true} {
@@ -1515,13 +1510,10 @@ func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette 
 		x := laneCenter(r, c.nodeCol)
 		p.Line(x, r.Y-1, x, mid, graphStroke, graphColor(c.nodeColor, palette))
 	}
-	radius := float32(4.5)
-	if hasRefs {
-		radius = 5.5
-	}
+	radius := commitRadius(c)
 	if c.prov != 0 {
 		var ring ui.Path
-		x, y, rr := laneCenter(r, c.nodeCol), mid, radius+2.5
+		x, y, rr := laneCenter(r, c.nodeCol), mid, min(radius+2.5, maxRingRadius)
 		if len(inferred) > 0 && inferred[0] {
 			for i := 0; i < 12; i++ {
 				for j := 0; j <= 4; j++ {
@@ -1541,6 +1533,27 @@ func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette 
 	}
 
 	paintGraphNode(p, laneCenter(r, c.nodeCol), mid, radius, graphColor(c.nodeColor, palette), background, len(c.parents) > 1)
+}
+
+// commitRadius 用新增+删除的行数表示改动量。
+// 合并提交和文件历史拿不到 shortstat，用中间档的基准大小。
+func commitRadius(c *commit) float32 {
+	switch {
+	case c.lines < 0:
+		return 4
+	case c.lines == 0:
+		return 3
+	case c.lines <= 10:
+		return 3.5
+	case c.lines <= 50:
+		return 4
+	case c.lines <= 200:
+		return 4.5
+	case c.lines <= 1000:
+		return 5
+	default:
+		return 6
+	}
 }
 
 // 每次换道用一个行高的三次贝塞尔。两行分别画下半段和上半段，

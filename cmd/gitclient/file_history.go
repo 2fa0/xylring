@@ -73,6 +73,7 @@ func streamFileHistory(ctx context.Context, dir string, q historyQuery, skip, n 
 				change = files[0]
 			}
 			c.file = &change
+			c.lines = -1 // 文件历史没有 --shortstat，节点用基准大小。
 			path = change.path
 			if change.oldPath != "" {
 				path = change.oldPath
