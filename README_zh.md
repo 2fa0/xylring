@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/screenshot.jpg" alt="Xylring 仓库历史和差异界面" width="900" />
+  <img src="docs/images/screenshot.png" alt="Xylring 仓库历史和差异界面" width="900" />
 </p>
 
 ---

@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/screenshot.jpg" alt="Xylring repository history and diff" width="900" />
+  <img src="docs/images/screenshot.png" alt="Xylring repository history and diff" width="900" />
 </p>
 
 ---
