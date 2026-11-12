@@ -61,7 +61,17 @@ func (t *provenanceTable) get(id uint16) provenance {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	if int(id) < len(t.values) {
-		return t.values[id]
+		p := t.values[id]
+		if id == 1 {
+			p.agent = tr("其他")
+			p.badge = "◎ " + tr("其他")
+		} else if strings.EqualFold(p.agent, "human") {
+			p.badge = tr("人工")
+			if p.model != "" {
+				p.badge += " · " + normalizeModel(p.model)
+			}
+		}
+		return p
 	}
 	return provenance{}
 }
@@ -127,22 +137,25 @@ func (p provenance) description() string {
 	}
 	label := p.agent
 	if strings.EqualFold(p.agent, "human") {
-		label = "人工"
+		label = tr("人工")
 	}
 	if p.model != "" {
 		label += " · " + normalizeModel(p.model)
 	}
-	source := "显式"
+	source := tr("显式")
 	switch p.attribution {
 	case "native":
-		source = "原生签名"
+		source = tr("原生签名")
 	case "stamp":
-		source = "印章"
+		source = tr("印章")
 	case "inferred":
-		source = "推断"
+		source = tr("推断")
 	case "":
 	default:
 		source = p.attribution
+	}
+	if englishUI.Load() {
+		return label + " (" + source + ")"
 	}
 	return label + "（" + source + "）"
 }
@@ -185,7 +198,7 @@ func provenanceReadStatus() string {
 	trailerCapability.Lock()
 	defer trailerCapability.Unlock()
 	if trailerCapability.known && !trailerCapability.supported {
-		return "当前 Git 不支持白名单 Trailer 格式，历史年轮展示已降级。请升级 Git。"
+		return tr("当前 Git 不支持白名单 Trailer 格式，历史年轮展示已降级。请升级 Git。")
 	}
 	return ""
 }

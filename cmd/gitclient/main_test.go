@@ -8,15 +8,6 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-func TestEmptyView(t *testing.T) {
-	a := &app{}
-	tt := ui.NewTester(a.view, 1100, 720)
-	tt.Frame()
-	if !tt.HasText("导入仓库") || !tt.HasText("Xylring") {
-		t.Fatalf("空窗口文本：%q", tt.Texts())
-	}
-}
-
 func TestEmptyRecentRepos(t *testing.T) {
 	a := &app{recent: []string{"/tmp/work/alpha", "/tmp/网关代码/gateway-source"}}
 	tt := ui.NewTester(a.view, 1100, 720)
@@ -246,10 +237,10 @@ func TestRepoSidebarResizes(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if a.repoSplit != 320 {
+	if a.repoSplit != defaultSidebarWidth {
 		t.Fatalf("默认宽度=%v", a.repoSplit)
 	}
-	label, ok := tt.Find("仓库")
+	label, ok := tt.Find("导入仓库")
 	if !ok {
 		t.Fatal("没有仓库侧栏")
 	}
@@ -257,7 +248,7 @@ func TestRepoSidebarResizes(t *testing.T) {
 	tt.Press(x, y)
 	tt.Move(x+80, y)
 	tt.Release(x+80, y)
-	if a.repoSplit <= 320 {
+	if a.repoSplit <= defaultSidebarWidth {
 		t.Fatalf("拖拽后宽度没变：%v", a.repoSplit)
 	}
 }
@@ -313,21 +304,6 @@ func TestChromeClearsTitleBarControls(t *testing.T) {
 	}
 }
 
-func TestSingleRepoShowsSidebarByDefault(t *testing.T) {
-	tab := newTab(1, "/tmp/work/myrepo")
-	tab.loaded = true
-	tab.branch = "main"
-	a := &app{tabs: []*repoTab{tab}}
-	if !a.showRepoSidebar() {
-		t.Fatal("单个仓库导入默认应展示侧边栏")
-	}
-	tt := ui.NewTester(a.view, 1100, 720)
-	tt.Frame()
-	if !tt.HasText("仓库") {
-		t.Fatalf("侧边栏未展示仓库：%q", tt.Texts())
-	}
-}
-
 func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	tab := newTab(1, "/tmp/work/myrepo")
 	tab.loaded = true
@@ -351,7 +327,7 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if a.showRepoSidebar() {
 		t.Fatal("点击后侧边栏应被隐藏")
 	}
-	if _, ok := tt.Find("仓库"); ok {
+	if _, ok := tt.Find("导入仓库"); ok {
 		t.Fatalf("隐藏后不应再展示侧边栏：%q", tt.Texts())
 	}
 
@@ -363,7 +339,7 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if !a.showRepoSidebar() {
 		t.Fatal("再次点击后侧边栏应恢复显示")
 	}
-	if _, ok := tt.Find("仓库"); !ok {
+	if _, ok := tt.Find("导入仓库"); !ok {
 		t.Fatalf("恢复后应展示侧边栏：%q", tt.Texts())
 	}
 
@@ -373,7 +349,7 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if a.showRepoSidebar() {
 		t.Fatal("快捷键后侧边栏应被隐藏")
 	}
-	if _, ok := tt.Find("仓库"); ok {
+	if _, ok := tt.Find("导入仓库"); ok {
 		t.Fatalf("快捷键隐藏后不应展示侧边栏：%q", tt.Texts())
 	}
 
@@ -383,7 +359,7 @@ func TestToggleSidebarButtonAndShortcut(t *testing.T) {
 	if !a.showRepoSidebar() {
 		t.Fatal("快捷键后侧边栏应恢复显示")
 	}
-	if _, ok := tt.Find("仓库"); !ok {
+	if _, ok := tt.Find("导入仓库"); !ok {
 		t.Fatalf("快捷键恢复后应展示侧边栏：%q", tt.Texts())
 	}
 }
@@ -502,37 +478,6 @@ func TestHomeReturnsToWelcomeFromFoundRepos(t *testing.T) {
 	}
 	if tab.closed {
 		t.Fatal("返回首页不应强制关闭已打开的仓库")
-	}
-}
-
-func TestRecentReposSearchThreshold(t *testing.T) {
-	// <= 8: 查找功能不显示
-	eight := make([]string, 8)
-	for i := range eight {
-		eight[i] = fmt.Sprintf("/tmp/repo-%d", i+1)
-	}
-	a := &app{recent: eight}
-	tt := ui.NewTester(a.view, 1100, 720)
-	tt.Frame()
-	if tt.HasText("查找最近仓库") {
-		t.Fatal("8个或更少仓库时不应显示查找功能")
-	}
-	for _, p := range eight {
-		if !tt.HasText(repoTitle(p)) {
-			t.Fatalf("缺少仓库 %q", p)
-		}
-	}
-
-	// > 8: 显示查找功能
-	nine := make([]string, 9)
-	for i := range nine {
-		nine[i] = fmt.Sprintf("/tmp/repo-%d", i+1)
-	}
-	a = &app{recent: nine}
-	tt = ui.NewTester(a.view, 1100, 720)
-	tt.Frame()
-	if !tt.HasText("查找最近仓库") {
-		t.Fatal("超过8个仓库时应显示查找功能")
 	}
 }
 

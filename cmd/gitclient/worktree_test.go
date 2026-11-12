@@ -76,9 +76,6 @@ func TestWorktreeShowsUncommittedAndKeepsGraph(t *testing.T) {
 	waitUpdates(t, updates, func() bool { return !tab.loading && tab.worktreeCount > 0 })
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if tt.HasText("工作区 · 2 个文件") {
-		t.Fatalf("旧的工作区按钮还在：%q", tt.Texts())
-	}
 	for _, text := range []string{"未提交改动", "未暂存 1", "未跟踪 1", "图谱", "base"} {
 		if !tt.HasText(text) {
 			t.Fatalf("缺少 %q，当前文本：%q", text, tt.Texts())
@@ -92,13 +89,10 @@ func TestWorktreeShowsUncommittedAndKeepsGraph(t *testing.T) {
 	}
 	waitUpdates(t, updates, func() bool { return tab.worktree && !tab.compareLoading && !tab.diffLoading })
 	tt.Frame()
-	for _, text := range []string{"未提交改动", "相对 HEAD", "提交改动", "a.txt", "b.txt", "+1", "-1", "-0", "图谱", "base", "并排", "内联"} {
+	for _, text := range []string{"未提交改动", "提交改动", "a.txt", "b.txt", "+1", "-1", "-0", "图谱", "base", "并排", "内联"} {
 		if !tt.HasText(text) {
 			t.Fatalf("缺少 %q，当前文本：%q", text, tt.Texts())
 		}
-	}
-	if tt.HasText("工作区代码") {
-		t.Fatalf("未提交场景不应再占用侧栏工作区列表：%q", tt.Texts())
 	}
 	tt.Key(0, ui.KeyEscape)
 	tt.Frame()
@@ -266,14 +260,11 @@ func TestWorktreeDiffTakesFullBottomWidthWithoutInspectFilesPane(t *testing.T) {
 	tt := ui.NewTester(a.view, 1200, 800)
 	tt.Frame()
 
-	if !tt.HasText("相对 HEAD") || !tt.HasText("提交改动") {
+	if !tt.HasText("全部暂存") || !tt.HasText("提交改动") {
 		t.Fatalf("未提交场景应展示文件列表和提交框：%q", tt.Texts())
 	}
 	if !tt.HasText("并排") || !tt.HasText("内联") || !tt.HasText("测试差异") {
 		t.Fatalf("底栏应展示 diff 视图：%q", tt.Texts())
-	}
-	if tt.HasText("工作区代码") {
-		t.Fatalf("侧栏不应再钉着工作区文件列表：%q", tt.Texts())
 	}
 
 	// Now switch to normal commit inspection: Mark 1 MUST be present
@@ -322,7 +313,7 @@ func TestWorktreeCommitCardExpandOnHoverAndPin(t *testing.T) {
 	tt.Frame()
 
 	// 1. Inactive state by default: only single line (header) is shown
-	if !tt.HasText("提交改动") || !tt.HasText("未暂存任何文件") {
+	if !tt.HasText("提交改动") {
 		t.Fatalf("单行状态应展示标题和状态：%q", tt.Texts())
 	}
 	if tt.HasText("修改上次提交") {

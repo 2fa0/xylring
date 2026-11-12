@@ -25,8 +25,10 @@ func TestDragAndDropOpenRepo(t *testing.T) {
 	tt := ui.NewTester(a.view, 1000, 700)
 	tt.Frame()
 
-	if !tt.HasText("支持直接拖拽文件夹至窗口") {
-		t.Fatal("empty state missing drag & drop hint")
+	// Copy now lives in the drag overlay, which shows only while dragging;
+	// the empty state relies on the import button alone.
+	if !tt.HasText("导入仓库") {
+		t.Fatal("empty state missing import button")
 	}
 
 	// Simulate dropping the repository directory into the window

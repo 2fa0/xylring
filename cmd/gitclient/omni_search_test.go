@@ -138,13 +138,13 @@ func TestSearchFilterBannerAndPreserveGraphColumn(t *testing.T) {
 	if !tt.HasText("正在按说明筛选") || !tt.HasText("special") {
 		t.Fatalf("search banner missing or incomplete: %q", tt.Texts())
 	}
-	if !tt.HasText("退出筛选") {
-		t.Fatal("search banner missing exit button")
+	// The search field carries the only exit from the filter.
+	if !tt.HasText("返回") {
+		t.Fatal("search field missing exit button")
 	}
 
-	// Click "退出筛选" on the banner
-	if err := tt.Click("退出筛选"); err != nil {
-		t.Fatalf("failed to click 退出筛选: %v", err)
+	if err := tt.Click("返回"); err != nil {
+		t.Fatalf("failed to click 返回: %v", err)
 	}
 	waitUpdates(t, updates, func() bool { return !tab.loading })
 	tt.Frame()
@@ -202,7 +202,7 @@ func TestOmniSearchCodeChanges(t *testing.T) {
 	}
 
 	// 2. Return to full history
-	if err := tt.Click("退出筛选"); err != nil {
+	if err := tt.Click("返回"); err != nil {
 		t.Fatal(err)
 	}
 	waitUpdates(t, updates, func() bool { return !tab.loading })

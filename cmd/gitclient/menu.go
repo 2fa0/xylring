@@ -7,20 +7,20 @@ import (
 )
 
 func (a *app) installMenu() {
-	settingsItem := &mygo.MenuItem{ID: "settings", Label: "设置…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }}
+	settingsItem := &mygo.MenuItem{ID: "settings", Label: tr("设置…"), Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }}
 	file := []*mygo.MenuItem{
-		{ID: "import", Label: "导入仓库…", Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) {
+		{ID: "import", Label: tr("导入仓库…"), Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.pickRepo()
 		}},
 		mygo.Separator(),
-		{ID: "install-cli", Label: "在 PATH 中安装 'xylring' 命令行工具…", Click: func(*mygo.MenuItem, *mygo.Window) {
+		{ID: "install-cli", Label: tr("在 PATH 中安装 'xylring' 命令行工具…"), Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.installCLIMenu()
 		}},
-		{ID: "uninstall-cli", Label: "从 PATH 中卸载 'xylring' 命令行工具", Click: func(*mygo.MenuItem, *mygo.Window) {
+		{ID: "uninstall-cli", Label: tr("从 PATH 中卸载 'xylring' 命令行工具"), Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.uninstallCLIMenu()
 		}},
 		mygo.Separator(),
-		{ID: "close-tab", Label: "关闭当前标签页或仓库", Accelerator: "CmdOrCtrl+W", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+		{ID: "close-tab", Label: tr("关闭当前标签页或仓库"), Accelerator: "CmdOrCtrl+W", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.closeCurrentTab()
 		}},
 	}
@@ -28,37 +28,37 @@ func (a *app) installMenu() {
 		file = append(file, settingsItem, mygo.Separator(), &mygo.MenuItem{Role: mygo.RoleQuit})
 	}
 	operations := []*mygo.MenuItem{
-		{Label: "新建仓库", Submenu: []*mygo.MenuItem{
-			{Label: "克隆仓库…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("克隆仓库", "", "") }},
-			{Label: "初始化仓库…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("初始化仓库", "", "") }},
+		{Label: tr("新建仓库"), Submenu: []*mygo.MenuItem{
+			{Label: tr("克隆仓库…"), Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("克隆仓库", "", "") }},
+			{Label: tr("初始化仓库…"), Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("初始化仓库", "", "") }},
 		}},
 		{Label: "Stash…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("Stash", "", "") }},
-		{Label: "远程…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("远程", "", "") }},
-		{Label: "设置身份…", Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("设置身份", "", "") }},
+		{Label: tr("远程…"), Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("远程", "", "") }},
+		{Label: tr("设置身份…"), Click: func(*mygo.MenuItem, *mygo.Window) { a.openOperation("设置身份", "", "") }},
 	}
 	items := []*mygo.MenuItem{
-		{Label: "仓库", Submenu: operations},
-		{Label: "文件", Submenu: file},
+		{Label: tr("仓库"), Submenu: operations},
+		{Label: tr("文件"), Submenu: file},
 		{Role: mygo.RoleEditMenu},
-		{Label: "显示", Submenu: []*mygo.MenuItem{
-			{ID: "toggle-sidebar", Label: "切换侧边栏", Accelerator: "CmdOrCtrl+B", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+		{Label: tr("显示"), Submenu: []*mygo.MenuItem{
+			{ID: "toggle-sidebar", Label: tr("切换侧边栏"), Accelerator: "CmdOrCtrl+B", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.toggleSidebar()
 			}},
-			{ID: "toggle-bottom-full-width", Label: "切换底栏全宽展示", Click: func(*mygo.MenuItem, *mygo.Window) {
+			{ID: "toggle-bottom-full-width", Label: tr("切换底栏全宽展示"), Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.toggleBottomFullWidth()
 			}},
 			mygo.Separator(),
-			{ID: "fetch", Label: "获取远程…", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+			{ID: "fetch", Label: tr("获取远程…"), Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 				if tab := a.activeTab(); tab != nil {
 					a.openFetch(tab)
 				}
 			}},
-			{ID: "refresh", Label: "刷新", Accelerator: "CmdOrCtrl+R", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+			{ID: "refresh", Label: tr("刷新"), Accelerator: "CmdOrCtrl+R", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 				if tab := a.activeTab(); tab != nil {
 					a.refresh(tab)
 				}
 			}},
-			{ID: "compare", Label: "比较…", Accelerator: "CmdOrCtrl+D", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+			{ID: "compare", Label: tr("比较…"), Accelerator: "CmdOrCtrl+D", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 				if tab := a.activeTab(); tab != nil {
 					a.openCompareModal(tab)
 				}

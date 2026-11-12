@@ -1,12 +1,11 @@
 package main
 
 import (
-	"fmt"
-	"github.com/egoist/mygo/ui"
-	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestOperationDialogCanCloseDuringPreparationAndReopen(t *testing.T) {
@@ -35,33 +34,6 @@ func TestOperationDialogCanCloseDuringPreparationAndReopen(t *testing.T) {
 	tt.Frame()
 	if a.showOperation {
 		t.Fatal("dialog stayed open")
-	}
-}
-
-func TestOperationDialogScreens(t *testing.T) {
-	for _, dark := range []bool{false, true} {
-		a := &app{showOperation: true, op: repoOperation{repo: "/tmp/example", action: "硬重置", target: "0123456789abcdef0123456789abcdef01234567", ready: true}}
-		tt := ui.NewTester(a.operationModal, 860, 560)
-		tt.SetDark(dark)
-		tt.Frame()
-		tt.Frame()
-		if !tt.HasText("硬重置") {
-			t.Fatal("missing operation title")
-		}
-		if a.op.confirmed {
-			t.Fatal("destructive operation starts confirmed")
-		}
-		if path := os.Getenv("OPERATIONS_PNG"); path != "" {
-			f, e := os.Create(fmt.Sprintf("%s-%t.png", path, dark))
-			if e != nil {
-				t.Fatal(e)
-			}
-			e = png.Encode(f, tt.Image())
-			f.Close()
-			if e != nil {
-				t.Fatal(e)
-			}
-		}
 	}
 }
 

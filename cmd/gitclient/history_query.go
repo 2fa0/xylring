@@ -326,7 +326,7 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 				continue
 			}
 			seen[e.kind+e.value] = true
-			items = append(items, omniSuggestItem{kind: e.kind, icon: iconSearch, title: "按" + e.kind + "筛选：" + e.value, action: func() { t.searchKind = e.kind; t.searchText = e.value; a.searchHistory(t) }})
+			items = append(items, omniSuggestItem{kind: e.kind, icon: iconSearch, title: fmt.Sprintf("按%s筛选：%s", e.kind, e.value), action: func() { t.searchKind = e.kind; t.searchText = e.value; a.searchHistory(t) }})
 			if len(items) >= 8 {
 				break
 			}
@@ -338,10 +338,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 
 	if term, ok := cutSearchPrefix(clean, "code:", "diff:", "content:", "代码:", "内容:", "代码改动:"); ok {
 		items = append(items, omniSuggestItem{
-			kind:     "搜索",
-			icon:     iconFileText,
-			title:    fmt.Sprintf("在代码改动中搜索 “%s”", term),
-			subtitle: "按代码改动 (Pickaxe -S) 检索提交历史",
+			kind:  "搜索",
+			icon:  iconFileText,
+			title: fmt.Sprintf("在代码改动中搜索 “%s”", term),
 			action: func() {
 				t.searchSuggestOpen = false
 				t.searchKind = "代码改动"
@@ -353,10 +352,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 	}
 	if term, ok := cutSearchPrefix(clean, "author:", "作者:"); ok {
 		items = append(items, omniSuggestItem{
-			kind:     "搜索",
-			icon:     iconSearch,
-			title:    fmt.Sprintf("按作者筛选 “%s”", term),
-			subtitle: "按作者筛选提交历史",
+			kind:  "搜索",
+			icon:  iconSearch,
+			title: fmt.Sprintf("按作者筛选 “%s”", term),
 			action: func() {
 				t.searchSuggestOpen = false
 				t.searchKind = "作者"
@@ -368,10 +366,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 	}
 	if term, ok := cutSearchPrefix(clean, "path:", "file:", "文件:", "路径:"); ok {
 		items = append(items, omniSuggestItem{
-			kind:     "搜索",
-			icon:     iconFolder,
-			title:    fmt.Sprintf("在修改文件路径中搜索 “%s”", term),
-			subtitle: "按文件路径检索提交历史",
+			kind:  "搜索",
+			icon:  iconFolder,
+			title: fmt.Sprintf("在修改文件路径中搜索 “%s”", term),
 			action: func() {
 				t.searchSuggestOpen = false
 				t.searchKind = "文件路径"
@@ -394,10 +391,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 					if matchedBranches < 5 {
 						matchedBranches++
 						items = append(items, omniSuggestItem{
-							kind:     "分支",
-							icon:     iconGitBranch,
-							title:    refName,
-							subtitle: "本地分支 · 跳转定位",
+							kind:  "分支",
+							icon:  iconGitBranch,
+							title: refName,
 							action: func() {
 								t.searchSuggestOpen = false
 								t.searchText = refName
@@ -410,10 +406,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 					if !t.query.hideRemote && matchedBranches < 5 {
 						matchedBranches++
 						items = append(items, omniSuggestItem{
-							kind:     "远程分支",
-							icon:     iconGitBranch,
-							title:    refName,
-							subtitle: "远程分支 · 跳转定位",
+							kind:  "远程分支",
+							icon:  iconGitBranch,
+							title: refName,
 							action: func() {
 								t.searchSuggestOpen = false
 								t.searchText = refName
@@ -426,10 +421,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 					if matchedTags < 3 {
 						matchedTags++
 						items = append(items, omniSuggestItem{
-							kind:     "标签",
-							icon:     iconLocate,
-							title:    refName,
-							subtitle: "标签 · 跳转定位",
+							kind:  "标签",
+							icon:  iconLocate,
+							title: refName,
 							action: func() {
 								t.searchSuggestOpen = false
 								t.searchText = refName
@@ -479,10 +473,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 				matchedAuthors++
 				aut := author
 				items = append(items, omniSuggestItem{
-					kind:     "作者",
-					icon:     iconSearch,
-					title:    aut,
-					subtitle: "按作者筛选提交历史",
+					kind:  "作者",
+					icon:  iconSearch,
+					title: aut,
 					action: func() {
 						t.searchSuggestOpen = false
 						t.searchKind = "作者"
@@ -499,10 +492,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 
 	if clean != "" {
 		items = append(items, omniSuggestItem{
-			kind:     "搜索",
-			icon:     iconSearch,
-			title:    fmt.Sprintf("在提交说明中搜索 “%s”", clean),
-			subtitle: "按提交说明检索提交历史",
+			kind:  "搜索",
+			icon:  iconSearch,
+			title: fmt.Sprintf("在提交说明中搜索 “%s”", clean),
 			action: func() {
 				t.searchSuggestOpen = false
 				t.searchKind = "说明"
@@ -511,10 +503,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 			},
 		})
 		items = append(items, omniSuggestItem{
-			kind:     "搜索",
-			icon:     iconFileText,
-			title:    fmt.Sprintf("在代码改动中搜索 “%s”", clean),
-			subtitle: "按代码改动 (Pickaxe -S) 检索提交历史",
+			kind:  "搜索",
+			icon:  iconFileText,
+			title: fmt.Sprintf("在代码改动中搜索 “%s”", clean),
 			action: func() {
 				t.searchSuggestOpen = false
 				t.searchKind = "代码改动"
@@ -523,10 +514,9 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 			},
 		})
 		items = append(items, omniSuggestItem{
-			kind:     "搜索",
-			icon:     iconFolder,
-			title:    fmt.Sprintf("在修改文件路径中搜索 “%s”", clean),
-			subtitle: "按文件路径检索提交历史",
+			kind:  "搜索",
+			icon:  iconFolder,
+			title: fmt.Sprintf("在修改文件路径中搜索 “%s”", clean),
 			action: func() {
 				t.searchSuggestOpen = false
 				t.searchKind = "文件路径"
@@ -545,7 +535,7 @@ func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Elemen
 		items := a.omniSuggestions(t, t.searchText)
 		if len(items) == 0 {
 			ui.Row(c).Padding(8, 12).Children(func() {
-				ui.Text(c, "未找到匹配项，直接回车可搜索提交").FontSize(12).TextColor(th.TextMuted)
+				ui.Text(c, tr("未找到匹配项，直接回车可搜索提交")).FontSize(12).TextColor(th.TextMuted)
 			})
 			return
 		}
@@ -570,12 +560,17 @@ func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Elemen
 							ui.Icon(c, itemCopy.icon).Size(14, 14).TextColor(th.TextMuted).Shrink(0)
 						}
 						ui.Column(c).Grow(1).Children(func() {
-							ui.Text(c, itemCopy.title).FontSize(13).FontWeight(500).SingleLine().TextColor(th.Text)
+							ui.Text(c, func() string {
+								if itemCopy.kind == "搜索" || itemCopy.kind == "Agent" || itemCopy.kind == "模型" {
+									return trMessage(itemCopy.title)
+								}
+								return itemCopy.title
+							}()).FontSize(13).FontWeight(500).SingleLine().TextColor(th.Text)
 							if itemCopy.subtitle != "" {
-								ui.Text(c, itemCopy.subtitle).FontSize(11).SingleLine().TextColor(th.TextMuted)
+								ui.Text(c, tr(itemCopy.subtitle)).FontSize(11).SingleLine().TextColor(th.TextMuted)
 							}
 						})
-						ui.Text(c, itemCopy.kind).FontSize(10).
+						ui.Text(c, tr(itemCopy.kind)).FontSize(10).
 							Background(th.Border.Alpha(0.4)).
 							Padding(1, 6).
 							Radius(3).
@@ -602,7 +597,7 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 		if !t.query.hideRemote {
 			scope = 1
 		}
-		if ui.Segmented(c.Key("branch-visibility"), &scope, "本地分支", "全部分支").Label("分支显示范围").Shrink(0).Changed() {
+		if ui.Segmented(c.Key("branch-visibility"), &scope, tr("本地分支"), tr("全部分支")).Label(tr("分支显示范围")).Shrink(0).Changed() {
 			q := t.query
 			q.ref, q.hideRemote = "", scope == 0
 			a.changeScope(t, q)
@@ -632,12 +627,12 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 			}
 
 			if t.query.term != "" {
-				if ui.Button(c.Key("search-locate"), "定位到此提交").Shrink(0).Disabled(t.inspecting == zeroHash).Clicked() {
+				if ui.Button(c.Key("search-locate"), tr("定位到此提交")).Shrink(0).Disabled(t.inspecting == zeroHash).Clicked() {
 					a.locateCommitInGraph(t, t.inspecting)
 				}
 				backBtn := ui.ButtonBase(c.Key("search-clear")).
-					Label("返回").
-					Tooltip("返回完整提交历史 (Esc)").
+					Label(tr("返回")).
+					Tooltip(tr("返回完整提交历史 (Esc)")).
 					Padding(2, 8).
 					Radius(c.Theme().Radius).
 					Background(c.Theme().SurfaceHover).
@@ -646,7 +641,7 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 				backBtn.Children(func() {
 					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 						ui.Icon(c, iconBack).Size(13, 13)
-						ui.Text(c, "返回").FontSize(12)
+						ui.Text(c, tr("返回")).FontSize(12)
 					})
 				})
 				if backBtn.Clicked() {
@@ -661,7 +656,7 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 	}
 
 	actionButtons := func() {
-		if iconButton(c, "compare", "比较", iconGitCompare).Shrink(0).Disabled(t.loading).Clicked() {
+		if iconButton(c, "compare", tr("比较"), iconGitCompare).Shrink(0).Disabled(t.loading).Clicked() {
 			a.openCompareModal(t)
 		}
 	}
@@ -694,15 +689,15 @@ func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 	if t.locateErr != "" {
 		ui.Row(c).Padding(0, 12, 6, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 			ui.Icon(c, iconAlertCircle).Size(14, 14).TextColor(c.Theme().Danger)
-			ui.Text(c, t.locateErr).FontSize(12).TextColor(c.Theme().Danger).Grow(1).MinWidth(0).SingleLine()
+			ui.Text(c, trMessage(t.locateErr)).FontSize(12).TextColor(c.Theme().Danger).Grow(1).MinWidth(0).SingleLine()
 		})
 	}
 }
 
 func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
-	label := "筛选分支"
+	label := tr("筛选分支")
 	if t.query.ref == "HEAD" {
-		label = "当前分支"
+		label = tr("当前分支")
 	} else if t.query.ref != "" {
 		label = strings.TrimPrefix(strings.TrimPrefix(t.query.ref, "refs/heads/"), "refs/remotes/")
 	}
@@ -715,7 +710,7 @@ func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
 		bg = th.SurfaceHover
 	}
 	sel.Trigger.Padding(th.Space(1.5), th.Space(3)).Gap(th.Space(1.5)).Radius(th.Radius).
-		Background(bg).Border(1, th.Border).Justify(ui.SpaceBetween).MinWidth(88).MaxWidth(148).Shrink(0).Label("筛选分支")
+		Background(bg).Border(1, th.Border).Justify(ui.SpaceBetween).MinWidth(88).MaxWidth(148).Shrink(0).Label(tr("筛选分支"))
 	sel.Trigger.Children(func() {
 		ui.Text(c, label).SingleLine().MinWidth(0)
 		ui.Box(c).Size(th.Space(2.5), th.Space(2.5)).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
@@ -728,7 +723,7 @@ func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
 	sel.Popup(func(panel ui.Element) {
 		panel.Margin(th.Space(1), 0, 0, 0).Padding(th.Space(1.5)).Radius(th.Radius+2).Background(th.Background).Border(1, th.Border).MinWidth(220)
 		panel.Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18))
-		ui.SearchField(c.Key(fmt.Sprintf("branch-filter-%d", t.id)), &t.branchFilter).Placeholder("搜索分支…").Margin(0, 0, th.Space(1), 0)
+		ui.SearchField(c.Key(fmt.Sprintf("branch-filter-%d", t.id)), &t.branchFilter).Placeholder(tr("搜索分支…")).Margin(0, 0, th.Space(1), 0)
 		filter := strings.ToLower(strings.TrimSpace(t.branchFilter))
 		ui.Scroll(c).MaxHeight(maxH).Children(func() {
 			add := func(name, ref string) {
@@ -742,8 +737,8 @@ func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
 				item.Children(func() { ui.Text(c, name).SingleLine() })
 			}
 			if filter == "" {
-				add("范围内全部分支", "")
-				add("当前分支", "HEAD")
+				add(tr("范围内全部分支"), "")
+				add(tr("当前分支"), "HEAD")
 				ui.Box(c).Height(1).Margin(th.Space(1), th.Space(2)).Background(th.Border).Shrink(0)
 			}
 			var branches []string
@@ -765,15 +760,15 @@ func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
 				}
 				name := rawName
 				if strings.HasPrefix(ref, "refs/remotes/") {
-					name = "远程 · " + name
+					name = tr("远程 · ") + name
 				} else {
-					name = "本地 · " + name
+					name = tr("本地 · ") + name
 				}
 				add(name, ref)
 				matched++
 			}
 			if filter != "" && matched == 0 {
-				ui.Text(c, "无匹配分支").FontSize(12).TextColor(th.TextMuted).Padding(th.Space(1.5), th.Space(2.5))
+				ui.Text(c, tr("无匹配分支")).FontSize(12).TextColor(th.TextMuted).Padding(th.Space(1.5), th.Space(2.5))
 			}
 		})
 	})

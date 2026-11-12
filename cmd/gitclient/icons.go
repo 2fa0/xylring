@@ -155,23 +155,23 @@ var (
 )
 
 func iconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
-	return ui.Button(c.Key(key), "").Label(name).Tooltip(name).Children(func() {
+	return ui.Button(c.Key(key), "").Label(tr(name)).Tooltip(tr(name)).Children(func() {
 		ui.Icon(c, icon)
 	})
 }
 
 func chromeIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name)
+	b := ui.ButtonBase(c.Key(key)).Label(tr(name)).Tooltip(tr(name))
 	return styleActionIcon(c, b, icon, 26, 16, c.Theme().Text, false)
 }
 
 func paneIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(name)
+	b := ui.ButtonBase(c.Key(key)).Label(tr(name)).Tooltip(tr(name))
 	return styleActionIcon(c, b, icon, 24, 14, c.Theme().TextMuted, false)
 }
 
 func paneToggleIconButton(c *ui.Context, key, name, tip string, icon *ui.SVG, active bool) ui.Element {
-	b := ui.ButtonBase(c.Key(key)).Label(name).Tooltip(tip)
+	b := ui.ButtonBase(c.Key(key)).Label(tr(name)).Tooltip(tr(tip))
 	return styleActionIcon(c, b, icon, 24, 14, c.Theme().TextMuted, active)
 }
 

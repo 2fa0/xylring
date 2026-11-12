@@ -110,7 +110,7 @@ func TestNoMatchingFilesClearsFilter(t *testing.T) {
 	}, 360, 220)
 	defer retireTester(tt)
 	tt.Frame()
-	if !tt.HasText("无匹配文件") || !tt.HasText("换个关键词，或清除筛选查看全部改动") {
+	if !tt.HasText("无匹配文件") {
 		t.Fatalf("missing copy: %q", tt.Texts())
 	}
 	if err := tt.Click("清除筛选"); err != nil {
@@ -141,13 +141,13 @@ func TestFilesEmptyHintReasons(t *testing.T) {
 
 func TestCommitListEmptyCopy(t *testing.T) {
 	cases := []struct {
-		name, text, description string
-		prepare                 func(*repoTab)
+		name, text string
+		prepare    func(*repoTab)
 	}{
-		{"fresh", "这个仓库还没有提交", "做出第一次提交后，历史会出现在这里", func(*repoTab) {}},
-		{"search", "没有匹配的提交", "换个关键词，或退出筛选查看全部历史", func(tab *repoTab) { tab.query.term = "needle" }},
-		{"file", "这个文件在所选版本之前没有历史", "选择更新的版本，或退出文件历史", func(tab *repoTab) { tab.query.filePath = "src/a.go" }},
-		{"range", "当前范围没有提交", "扩大分支范围可以看到更多历史", func(tab *repoTab) { tab.query.ref = "main" }},
+		{"fresh", "这个仓库还没有提交", func(*repoTab) {}},
+		{"search", "没有匹配的提交", func(tab *repoTab) { tab.query.term = "needle" }},
+		{"file", "这个文件在所选版本之前没有历史", func(tab *repoTab) { tab.query.filePath = "src/a.go" }},
+		{"range", "当前范围没有提交", func(tab *repoTab) { tab.query.ref = "main" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,8 +158,8 @@ func TestCommitListEmptyCopy(t *testing.T) {
 			tt := ui.NewTester(a.view, 1100, 720)
 			defer retireTester(tt)
 			tt.Frame()
-			if !tt.HasText(tc.text) || !tt.HasText(tc.description) {
-				t.Fatalf("missing empty copy %q / %q: %q", tc.text, tc.description, tt.Texts())
+			if !tt.HasText(tc.text) {
+				t.Fatalf("missing empty copy %q: %q", tc.text, tt.Texts())
 			}
 			if tc.name == "search" && !tt.HasText("退出筛选") {
 				t.Fatalf("search empty state offers no way out: %q", tt.Texts())

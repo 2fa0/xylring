@@ -303,14 +303,14 @@ func (a *app) closeCurrentTab() {
 
 func (tab *fileDiffTab) labels() (string, string) {
 	if tab.fullFile {
-		return "", tab.fullRev
+		return "", tr(tab.fullRev)
 	}
 	from, to := shortHash(tab.from), shortHash(tab.to)
 	if tab.from == zeroHash {
-		from = "空树"
+		from = tr("空树")
 	}
 	if tab.worktree {
-		to = "工作区快照 · " + tab.openedAt.Format("15:04:05")
+		to = tr("工作区快照 · ") + tab.openedAt.Format("15:04:05")
 	}
 	return from, to
 }
@@ -319,11 +319,11 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 	if len(t.fileTabs) == 0 {
 		return
 	}
-	labels := []string{"提交历史"}
+	labels := []string{tr("提交历史")}
 	for _, tab := range t.fileTabs {
 		name := filepath.Base(tab.file.path)
 		if tab.fullFile {
-			name += " (" + tab.fullRev + ")"
+			name += " (" + tr(tab.fullRev) + ")"
 		}
 		labels = append(labels, name)
 	}
@@ -371,62 +371,62 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 								item.Label(label + " · " + to).Tooltip(tab.file.path + " · " + to)
 								item.ContextMenu(func(m *ui.Menu) {
 									fullPath := repoFilePath(t.path, tab.file.path, true)
-									if m.Item("关闭").Shortcut(commandModifier(), ui.KeyW).Chosen() {
+									if m.Item(tr("关闭")).Shortcut(commandModifier(), ui.KeyW).Chosen() {
 										action = func() { a.closeFileTab(t, fileIdx) }
 									}
 									if len(t.fileTabs) > 1 {
-										if m.Item("关闭其他").Chosen() {
+										if m.Item(tr("关闭其他")).Chosen() {
 											action = func() { a.closeOtherFileTabs(t, fileIdx) }
 										}
 									}
 									if fileIdx < len(t.fileTabs)-1 {
-										if m.Item("关闭右侧标签页").Chosen() {
+										if m.Item(tr("关闭右侧标签页")).Chosen() {
 											action = func() { a.closeRightFileTabs(t, fileIdx) }
 										}
 									}
-									if m.Item("全部关闭").Chosen() {
+									if m.Item(tr("全部关闭")).Chosen() {
 										action = func() { a.closeAllFileTabs(t) }
 									}
 
 									m.Separator()
 
-									if m.Item("复制相对路径").Chosen() {
+									if m.Item(tr("复制相对路径")).Chosen() {
 										copyFilePath(c, t.path, tab.file.path, 0)
 									}
-									if m.Item("复制绝对路径").Chosen() {
+									if m.Item(tr("复制绝对路径")).Chosen() {
 										copyFilePath(c, t.path, tab.file.path, ui.Alt)
 									}
 
 									m.Separator()
 
 									if t.query.filePath == "" {
-										if m.Item("查看文件历史").Chosen() {
+										if m.Item(tr("查看文件历史")).Chosen() {
 											action = func() { a.openFileHistoryForTab(t, tab) }
 										}
 									}
-									if m.Item("使用默认编辑器打开").Chosen() {
+									if m.Item(tr("使用默认编辑器打开")).Chosen() {
 										if _, err := os.Stat(fullPath); err != nil {
-											c.Toast("工作区中不存在此文件")
+											c.Toast(tr("工作区中不存在此文件"))
 										} else if err := openWithDefaultEditor(fullPath); err != nil {
-											c.Toast("打开失败: " + err.Error())
+											c.Toast(trMessage("打开失败: " + err.Error()))
 										}
 									}
 									revealName := "在访达中显示"
 									if runtime.GOOS != "darwin" {
 										revealName = "在文件管理器中显示"
 									}
-									if m.Item(revealName).Chosen() {
+									if m.Item(tr(revealName)).Chosen() {
 										if _, err := os.Stat(fullPath); err != nil {
-											c.Toast("工作区中不存在此文件")
+											c.Toast(tr("工作区中不存在此文件"))
 										} else if err := revealInFileManager(fullPath); err != nil {
-											c.Toast("定位失败: " + err.Error())
+											c.Toast(trMessage("定位失败: " + err.Error()))
 										}
 									}
 								})
 							} else if i == 0 {
 								if len(t.fileTabs) > 0 {
 									item.ContextMenu(func(m *ui.Menu) {
-										if m.Item("关闭全部文件标签页").Chosen() {
+										if m.Item(tr("关闭全部文件标签页")).Chosen() {
 											action = func() { a.closeAllFileTabs(t) }
 										}
 									})
@@ -448,7 +448,7 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 								if i > 0 && i-1 < len(t.fileTabs) {
 									fileIdx := i - 1
 									id := t.fileTabs[fileIdx].id
-									if closeIconButton(c, fmt.Sprintf("close-file-tab-%d", id), "关闭标签页").Clicked() {
+									if closeIconButton(c, fmt.Sprintf("close-file-tab-%d", id), tr("关闭标签页")).Clicked() {
 										action = func() { a.closeFileTab(t, fileIdx) }
 									}
 								}
@@ -483,21 +483,21 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 	}
 	ui.Column(c.Key(fmt.Sprintf("file-tab-%d-%d", t.id, tab.id))).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		ui.Row(c).Padding(8, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
-			if iconButton(c, "back-to-history", "返回提交历史", iconBack).Shrink(0).Clicked() {
+			if iconButton(c, "back-to-history", tr("返回提交历史"), iconBack).Shrink(0).Clicked() {
 				t.contentTab = 0
 				t.revealFileTab = true
 			}
 			pathBreadcrumb(c, "file-tab-path", tab.file.fullPath())
 			if fileIdx >= 0 && len(t.compareFiles) > 1 {
 				ui.Text(c, fmt.Sprintf("%d / %d", fileIdx+1, len(t.compareFiles))).FontSize(12).TextColor(c.Theme().TextMuted).Shrink(0)
-				if ui.Button(c.Key("prev-file"), "上一文件").Disabled(fileIdx <= 0).Shrink(0).Clicked() {
+				if ui.Button(c.Key("prev-file"), tr("上一文件")).Disabled(fileIdx <= 0).Shrink(0).Clicked() {
 					a.openFileTabAt(t, fileIdx-1)
 				}
-				if ui.Button(c.Key("next-file"), "下一文件").Disabled(fileIdx >= len(t.compareFiles)-1).Shrink(0).Clicked() {
+				if ui.Button(c.Key("next-file"), tr("下一文件")).Disabled(fileIdx >= len(t.compareFiles)-1).Shrink(0).Clicked() {
 					a.openFileTabAt(t, fileIdx+1)
 				}
 			}
-			copy := iconButton(c, "copy-tab-path", "复制路径", iconCopy).Tooltip(copyPathTip(c))
+			copy := iconButton(c, "copy-tab-path", tr("复制路径"), iconCopy).Tooltip(copyPathTip(c))
 			if copy.Clicked() {
 				copyFilePath(c, t.path, tab.file.path, copy.ClickModifiers())
 			}
@@ -506,14 +506,14 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 				a.imageDiffControls(c, tab.id, tab.imageDiff, &tab.imageViewMode, &tab.imageFitActual)
 			} else {
 				a.diffLayoutToggle(c)
-				tabIgnoreBtn := ui.ButtonBase(c.Key(fmt.Sprintf("tab-diff-ignore-whitespace-%d", tab.id))).Height(24).Label("忽略空白").Disabled(tab.source == nil).Tooltip("忽略空白字符改动").Padding(0, 8).Radius(c.Theme().Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+				tabIgnoreBtn := ui.ButtonBase(c.Key(fmt.Sprintf("tab-diff-ignore-whitespace-%d", tab.id))).Height(24).Label(tr("忽略空白")).Disabled(tab.source == nil).Tooltip(tr("忽略空白字符改动")).Padding(0, 8).Radius(c.Theme().Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
 				if tab.ignoreWhitespace {
 					tabIgnoreBtn.Background(c.Theme().Accent.Alpha(0.16)).TextColor(c.Theme().Accent).Border(1, c.Theme().Accent.Alpha(0.4))
 				} else {
 					tabIgnoreBtn.Background(c.Theme().Surface).TextColor(c.Theme().TextMuted).Border(1, c.Theme().Border)
 				}
 				tabIgnoreBtn.Children(func() {
-					ui.Text(c, "忽略空白").FontSize(11).SingleLine()
+					ui.Text(c, tr("忽略空白")).FontSize(11).SingleLine()
 				})
 				if tabIgnoreBtn.Clicked() {
 					tab.ignoreWhitespace = !tab.ignoreWhitespace
@@ -524,7 +524,7 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 					if runtime.GOOS != "darwin" {
 						findTip = "在 Diff 中查找 (Ctrl+F)"
 					}
-					if paneIconButton(c, fmt.Sprintf("tab-find-in-diff-%d", tab.id), "在 Diff 中查找", iconSearch).Tooltip(findTip).Clicked() {
+					if paneIconButton(c, fmt.Sprintf("tab-find-in-diff-%d", tab.id), tr("在 Diff 中查找"), iconSearch).Tooltip(tr(findTip)).Clicked() {
 						a.openFileTabFind(tab)
 					}
 				}
@@ -533,8 +533,8 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 		from, to := tab.labels()
 		if tab.imageDiff == nil {
 			ui.Row(c).Padding(0, 12, 8, 12).Gap(12).Shrink(0).Children(func() {
-				ui.Text(c, "原版本 · "+from).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.from))
-				ui.Text(c, "新版本 · "+to).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.to))
+				ui.Text(c, tr("原版本 · ")+from).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.from))
+				ui.Text(c, tr("新版本 · ")+to).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(hashHex(tab.to))
 			})
 		}
 		a.fileDiffContent(c, tab.diff, tab.simple, tab.imageDiff, tab.note, false, tab.imageViewMode, tab.imageFitActual)
@@ -638,14 +638,14 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 	theme := c.Theme()
 	ui.Column(c.Key(fmt.Sprintf("full-file-tab-%d-%d", t.id, tab.id))).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		ui.Row(c).Padding(8, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
-			if iconButton(c, "back-to-history-full", "返回提交历史", iconBack).Shrink(0).Clicked() {
+			if iconButton(c, "back-to-history-full", tr("返回提交历史"), iconBack).Shrink(0).Clicked() {
 				t.contentTab = 0
 				t.revealFileTab = true
 			}
 			ui.Icon(c, iconFileText).Size(16, 16).TextColor(theme.TextMuted)
 			pathBreadcrumb(c, "file-tab-path", tab.file.fullPath())
-			ui.Text(c, "· "+tab.fullRev).FontSize(12).TextColor(theme.TextMuted).Shrink(0)
-			copy := iconButton(c, "copy-tab-path-full", "复制路径", iconCopy).Tooltip(copyPathTip(c))
+			ui.Text(c, "· "+tr(tab.fullRev)).FontSize(12).TextColor(theme.TextMuted).Shrink(0)
+			copy := iconButton(c, "copy-tab-path-full", tr("复制路径"), iconCopy).Tooltip(copyPathTip(c))
 			if copy.Clicked() {
 				copyFilePath(c, t.path, tab.file.path, copy.ClickModifiers())
 			}
@@ -657,14 +657,14 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 					fitLabel = "1:1 尺寸"
 					fitTip = "当前 1:1 实际尺寸，点击切换至自适应缩放"
 				}
-				fitBtn := ui.ButtonBase(c.Key(fmt.Sprintf("full-img-fit-%d", tab.id))).Height(24).Label(fitLabel).Tooltip(fitTip).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+				fitBtn := ui.ButtonBase(c.Key(fmt.Sprintf("full-img-fit-%d", tab.id))).Height(24).Label(tr(fitLabel)).Tooltip(tr(fitTip)).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
 				if tab.imageFitActual {
 					fitBtn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
 				} else {
 					fitBtn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
 				}
 				fitBtn.Children(func() {
-					ui.Text(c, fitLabel).FontSize(11).SingleLine()
+					ui.Text(c, tr(fitLabel)).FontSize(11).SingleLine()
 				})
 				if fitBtn.Clicked() {
 					tab.imageFitActual = !tab.imageFitActual
@@ -674,7 +674,7 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 				if runtime.GOOS != "darwin" {
 					findTip = "在文件中查找 (Ctrl+F)"
 				}
-				if paneIconButton(c, fmt.Sprintf("tab-find-in-file-%d", tab.id), "在文件中查找", iconSearch).Tooltip(findTip).Clicked() {
+				if paneIconButton(c, fmt.Sprintf("tab-find-in-file-%d", tab.id), tr("在文件中查找"), iconSearch).Tooltip(tr(findTip)).Clicked() {
 					a.openFileTabFind(tab)
 				}
 			}
@@ -685,10 +685,11 @@ func (a *app) fullFileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 		}
 		if tab.note != "" && tab.fullContent.Buffer == nil {
 			ui.Column(c).Grow(1).Center().Children(func() {
-				ui.Text(c, tab.note).TextColor(theme.TextMuted)
+				ui.Text(c, trMessage(tab.note)).TextColor(theme.TextMuted)
 			})
 			return
 		}
+		tab.fullContent.Label = tab.file.path + " (" + tr(tab.fullRev) + ")"
 		tab.fullContent.RenderFindBar = renderFindBar
 		editor.View(c.Key(fmt.Sprintf("full-editor-%d", tab.id)), &tab.fullContent).Grow(1).MinHeight(0)
 	})
