@@ -167,6 +167,29 @@ func clickControl(t *testing.T, tt *ui.Tester, name string) {
 	tt.Frame()
 }
 
+// clickSetting 点一个设置项。设置内容在滚动区里，能露出多少看平台字体，
+// 窄窗口里靠后的项可能要先滚一下才点得到。
+func clickSetting(t *testing.T, tt *ui.Tester, width, height int, label string) {
+	t.Helper()
+	try := func() bool {
+		tt.Frame()
+		return tt.Click(label) == nil
+	}
+	if try() {
+		return
+	}
+	x, y := float32(width)/2, float32(height)/2
+	for _, dy := range []float32{120, -120} {
+		for i := 0; i < 8; i++ {
+			tt.Scroll(x, y, 0, dy)
+			if try() {
+				return
+			}
+		}
+	}
+	t.Fatalf("滚遍设置正文也点不到 %q", label)
+}
+
 func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
 	for _, width := range []int{420, 1100} {
 		a := &app{settings: settingsState{open: true, repo: "/work/repo", global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}}
@@ -178,9 +201,7 @@ func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
 				t.Fatalf("missing %s", label)
 			}
 		}
-		if err := tt.Click("启动时恢复上次打开的仓库"); err != nil {
-			t.Fatal(err)
-		}
+		clickSetting(t, tt, width, 720, "启动时恢复上次打开的仓库")
 		if !a.restoreDisabled {
 			t.Fatal("restore preference not updated")
 		}

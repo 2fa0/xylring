@@ -138,14 +138,15 @@ func TestTrackingStatusSides(t *testing.T) {
 	}
 
 	// 另一个克隆往上游推一条，本地 fetch 之后它才算「远端独有」。
+	// 身份要配在克隆上：裸仓库的 config 不跟着 clone 走。
 	other := t.TempDir()
-	if _, err := runGit(ctx, remote, "config", "user.email", "test@example.com"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runGit(ctx, remote, "config", "user.name", "Test"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := runGit(ctx, other, "clone", "--quiet", remote, "."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, other, "config", "user.email", "test@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, other, "config", "user.name", "Test"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(other, "remote.txt"), []byte("remote\n"), 0o644); err != nil {

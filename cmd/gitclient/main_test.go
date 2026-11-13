@@ -56,7 +56,7 @@ func TestCutTip(t *testing.T) {
 
 // 首页的最近仓库：路径看得全时悬停不弹黑框，只有副行被裁掉才给整条路径。
 func TestRecentRepoPathTipOnlyWhenCut(t *testing.T) {
-	long := "/tmp/company/网关代码/gateway-source-with-a-rather-long-name"
+	long := "/tmp/work/services/analytics-dashboard-service/analytics-dashboard-service-with-a-rather-long-repository-name"
 	short := "/tmp/work/alpha"
 	a := &app{recent: []string{long, short}}
 	tt := ui.NewTester(a.view, 1100, 720)
