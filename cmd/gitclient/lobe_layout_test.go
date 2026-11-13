@@ -51,6 +51,10 @@ func TestLobeModalLayouts(t *testing.T) {
 		}, (*app).operationModal},
 		{"ring", "本仓库年轮记录", "关闭", func(a *app) { a.tabs[0].ring.open = true; a.tabs[0].ring.status = "未开启" }, (*app).ringModal},
 		{"discard", "确定丢弃文件修改？", "确定丢弃", func(a *app) { a.showDiscard = true; a.discard.file = fileChange{path: "src/example.go"} }, (*app).discardModal},
+		{"push", "推送当前分支？", "推送", func(a *app) {
+			a.showPush = true
+			a.push = pushDialog{path: a.tabs[0].path, branch: "main", upstream: "origin/main"}
+		}, (*app).pushModal},
 	}
 	for _, tc := range cases {
 		for _, size := range [][2]int{{420, 320}, {1100, 720}} {

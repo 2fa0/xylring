@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 type syncStatus struct {
@@ -160,4 +162,46 @@ func (a *app) quickPush(tab *repoTab) {
 			}
 		})
 	}()
+}
+
+// requestPush 是顶栏那颗推送按钮：推之前先问一句。没有上游分支时没有可核对的目标，
+// 交给「推送分支」对话框去选远程；落后远端就先挡回去，别让人确认完才被拒。
+func (a *app) requestPush(tab *repoTab) {
+	if tab == nil || tab.unavailable {
+		return
+	}
+	if !tab.hasUpstream {
+		a.openOperation("推送分支", "", "")
+		return
+	}
+	if tab.behind > 0 {
+		a.setBanner(fmt.Sprintf("远程有新提交 (落后 %d 个提交)，请先拉取", tab.behind), "")
+		a.pendingToast = "请先拉取远程更新"
+		return
+	}
+	a.push = pushDialog{path: tab.path, branch: tab.branch, upstream: tab.upstream}
+	a.showPush = true
+}
+
+func (a *app) pushModal(c *ui.Context) {
+	if !a.showPush {
+		return
+	}
+	tab := a.tabByPath(a.push.path)
+	if tab == nil {
+		a.showPush = false
+		return
+	}
+	appModal(c.Key("push-confirm-modal"), &a.showPush, tr("推送当前分支？"), 420, false, func() {
+		ui.Text(c, displayBranch(a.push.branch)+" → "+a.push.upstream).
+			FontSize(12).Font("monospace").TextColor(c.Theme().TextMuted)
+	}, func() {
+		if ui.Button(c.Key("push-cancel"), tr("取消")).Clicked() {
+			a.showPush = false
+		}
+		if ui.PrimaryButton(c.Key("push-confirm"), tr("推送")).Clicked() {
+			a.showPush = false
+			a.quickPush(tab)
+		}
+	})
 }

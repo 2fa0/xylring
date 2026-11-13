@@ -79,12 +79,18 @@ func (a *app) ringAction(t *repoTab, action string) {
 		})
 	}()
 }
+
+// woodColor 是年轮标记的木色：亮色模式深一点，暗色模式浅一点，两种背景上都读得出来。
+func woodColor(t *ui.Theme) ui.Color {
+	if t.Dark {
+		return ui.Hex("#cba47c")
+	}
+	return ui.Hex("#986b46")
+}
+
 func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
 	th := c.Theme()
-	wood := ui.Hex("#986b46")
-	if th.Dark {
-		wood = ui.Hex("#cba47c")
-	}
+	wood := woodColor(th)
 	status := t.ring.status
 	if status == "" {
 		status = "未开启"
