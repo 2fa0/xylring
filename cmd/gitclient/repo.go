@@ -480,7 +480,7 @@ func (a *app) loadMore(t *repoTab) {
 	}
 	p := t.pager
 	baseLen, authors, g := len(t.commits), t.authors, t.graph.clone()
-	meta := repoMeta{operation: t.operation, branch: t.branch, head: t.head, refs: t.refs, ahead: t.ahead, behind: t.behind, upstream: t.upstream, hasUpstream: t.hasUpstream}
+	meta := repoMeta{operation: t.operation, branch: t.branch, head: t.head, refs: t.refs, ahead: t.ahead, behind: t.behind, incoming: hashList(t.incoming), outgoing: hashList(t.outgoing), upstream: t.upstream, hasUpstream: t.hasUpstream}
 	n := min(4096, max(pageMore, baseLen/2))
 	remaining := t.historyBudget - t.historyBytes
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -556,6 +556,7 @@ func (a *app) installHistory(t *repoTab, meta repoMeta, p preparedHistory) {
 		t.ring.checked = time.Now()
 	}
 	t.ahead, t.behind, t.upstream, t.hasUpstream = meta.ahead, meta.behind, meta.upstream, meta.hasUpstream
+	t.incoming, t.outgoing = hashSet(meta.incoming), hashSet(meta.outgoing)
 	a.summaryMu.Lock()
 	if a.repoSummaries != nil {
 		a.repoSummaries[t.path] = repoSummary{

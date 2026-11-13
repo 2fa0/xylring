@@ -79,6 +79,8 @@ type repoTab struct {
 	refs         map[[20]byte][]refInfo
 	ahead        int
 	behind       int
+	incoming     map[[20]byte]bool // 远端独有；行渲染只做查表。
+	outgoing     map[[20]byte]bool // 本地独有；行渲染只做查表。
 	upstream     string
 	hasUpstream  bool
 	syncBusy     bool
