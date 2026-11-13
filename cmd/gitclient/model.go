@@ -155,7 +155,9 @@ type repoTab struct {
 	fileTreeData         fileTree
 	fileSplit            float32
 	reviewed             map[string]fileReview // 文件路径 -> 审阅状态，生命周期是 reviewCtx。
-	reviewCtx            string                // "worktree" 或 "from:to"，换对比时清空。
+	reviewCtx            string                // "worktree" 或 "from:to"，换对比时已读和笔记一起清空。
+	diffNotes            []diffNote
+	noteEdit             *diffNote // 正在写的笔记，Text 是草稿；nil 表示输入条没开。
 	diffSource           *fileDiffSource
 	diff                 *editor.DiffState
 	simpleDiff           *simpleDiff
@@ -187,6 +189,14 @@ type repoTab struct {
 type fileReview struct {
 	viewed bool
 	stamp  string
+}
+
+// diffNote 是一条行级笔记，锚在某个文件的某一行上。
+type diffNote struct {
+	Path string
+	Side string // "old" 或 "new"
+	Line int    // 行号，从 1 起
+	Text string
 }
 
 func newTab(id int, path string) *repoTab {

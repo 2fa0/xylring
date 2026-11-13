@@ -79,14 +79,15 @@ func TestFileReviewContextSwitchClears(t *testing.T) {
 	tab.worktree = true
 	tab.reviewCtx = "worktree"
 	tab.reviewed = map[string]fileReview{"a.go": {viewed: true, stamp: "s"}}
+	tab.diffNotes = []diffNote{{Path: "a.go", Side: "new", Line: 1, Text: "笔记"}}
 	dropped := func(func()) {}
 	a := &app{dispatch: dropped}
 	empty := func(context.Context, string) ([]fileChange, error) { return nil, nil }
 
 	a.startDiff(tab, tab.head, zeroHash, empty)
 	defer tab.cancel()
-	if !tab.fileViewed("a.go") {
-		t.Fatal("同一个对比里刷新，已读不该被清掉")
+	if !tab.fileViewed("a.go") || len(tab.diffNotes) != 1 {
+		t.Fatal("同一个对比里刷新，已读和笔记都不该被清掉")
 	}
 
 	from, to := hashN(1), hashN(2)
@@ -94,6 +95,9 @@ func TestFileReviewContextSwitchClears(t *testing.T) {
 	a.startDiff(tab, from, to, empty)
 	if tab.reviewed != nil {
 		t.Fatalf("换了对比，已读必须清空: %v", tab.reviewed)
+	}
+	if tab.diffNotes != nil || tab.noteEdit != nil {
+		t.Fatal("换了对比，笔记和输入条必须和已读一起清空")
 	}
 	if want := hashHex(from) + ":" + hashHex(to); tab.reviewCtx != want {
 		t.Fatalf("reviewCtx 应为 %q，实为 %q", want, tab.reviewCtx)
