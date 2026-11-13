@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -50,10 +51,15 @@ func TestPrepareDiffStateSharesOptionsAndHunkKeys(t *testing.T) {
 	if plain(ui.KeyJ) != editor.NextHunk || plain(ui.KeyK) != editor.PreviousHunk {
 		t.Fatalf("J / K 没绑到改动块导航: J=%v K=%v", plain(ui.KeyJ), plain(ui.KeyK))
 	}
+	// 默认的改动块快捷键随平台走：macOS 是 ⌘F8，其他平台是 Alt+F5。
+	wantMods, wantKey := ui.Cmd, ui.KeyF8
+	if runtime.GOOS != "darwin" {
+		wantMods, wantKey = ui.Alt, ui.KeyF5
+	}
 	if !slices.ContainsFunc(d.Bindings, func(b editor.Binding) bool {
-		return b.Key == ui.KeyF8 && b.Command == editor.NextHunk
+		return b.Mods == wantMods && b.Key == wantKey && b.Command == editor.NextHunk
 	}) {
-		t.Fatal("默认的 ⌘F8 绑定被顶掉了")
+		t.Fatalf("默认的改动块绑定 %v+%v 被顶掉了", wantMods, wantKey)
 	}
 }
 

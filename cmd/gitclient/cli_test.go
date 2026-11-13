@@ -126,13 +126,19 @@ func TestGenerateWindowsCmdContent(t *testing.T) {
 	}
 }
 
-// TestInstallAndUninstallCLITool 真正走一遍安装与卸载：HOME 与 PATH 都指向临时目录，
-// 既不读也不改用户已有的 ~/.local/bin、~/bin 或 /usr/local/bin。
+// TestInstallAndUninstallCLITool 真正走一遍安装与卸载：HOME、PATH 与 Windows 的
+// USERPROFILE、LOCALAPPDATA 都指向临时目录，既不读也不改用户已有的 ~/.local/bin、
+// ~/bin、/usr/local/bin 或 %LOCALAPPDATA%\Microsoft\WindowsApps。
 func TestInstallAndUninstallCLITool(t *testing.T) {
 	home := t.TempDir()
 	bin := filepath.Join(home, ".local", "bin")
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", bin)
+	if runtime.GOOS == "windows" {
+		// Windows 从 USERPROFILE 取家目录，候选目录里还有 %LOCALAPPDATA%\Microsoft\WindowsApps。
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	}
 
 	cmdName := "xylring"
 	if runtime.GOOS == "windows" {
