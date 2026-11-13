@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,15 @@ func worktreeDump(list []repoWorktree) string {
 
 func TestParseWorktreeList(t *testing.T) {
 	const sha = "0123456789abcdef0123456789abcdef01234567"
+	// 路径先过 canonicalRepoDir：Windows 会补盘符，分隔符也换成 \。
+	path := func(p string) string { return "path=" + canonicalRepoDir(p) }
+	line := func(p, branch, head, detached, locked, prunable, bare string) string {
+		return path(p) + " branch=" + branch + " head=" + head + " detached=" + detached +
+			" locked=" + locked + " prunable=" + prunable + " bare=" + bare + "\n"
+	}
+	plain := func(p, branch string) string {
+		return line(p, strconv.Quote(branch), "0123456", "false", `""`, `""`, "false")
+	}
 	cases := []struct {
 		name string
 		raw  string
@@ -28,34 +38,34 @@ func TestParseWorktreeList(t *testing.T) {
 		{
 			name: "普通",
 			raw:  "worktree /repo/main\x00HEAD " + sha + "\x00branch refs/heads/main\x00\x00",
-			want: "path=/repo/main branch=\"main\" head=0123456 detached=false locked=\"\" prunable=\"\" bare=false\n",
+			want: plain("/repo/main", "main"),
 		},
 		{
 			name: "分离头指针",
 			raw:  "worktree /repo/main\x00HEAD " + sha + "\x00detached\x00\x00",
-			want: "path=/repo/main branch=\"\" head=0123456 detached=true locked=\"\" prunable=\"\" bare=false\n",
+			want: line("/repo/main", `""`, "0123456", "true", `""`, `""`, "false"),
 		},
 		{
 			name: "锁定（带与不带原因）",
 			raw: "worktree /repo/main\x00HEAD " + sha + "\x00branch refs/heads/main\x00\x00" +
 				"worktree /repo/locked\x00HEAD " + sha + "\x00branch refs/heads/side\x00locked\x00\x00" +
 				"worktree /repo/reasoned\x00HEAD " + sha + "\x00branch refs/heads/other\x00locked user asked\x00\x00",
-			want: "path=/repo/main branch=\"main\" head=0123456 detached=false locked=\"\" prunable=\"\" bare=false\n" +
-				"path=/repo/locked branch=\"side\" head=0123456 detached=false locked=\"locked\" prunable=\"\" bare=false\n" +
-				"path=/repo/reasoned branch=\"other\" head=0123456 detached=false locked=\"user asked\" prunable=\"\" bare=false\n",
+			want: plain("/repo/main", "main") +
+				line("/repo/locked", `"side"`, "0123456", "false", `"locked"`, `""`, "false") +
+				line("/repo/reasoned", `"other"`, "0123456", "false", `"user asked"`, `""`, "false"),
 		},
 		{
 			name: "可清理",
 			raw:  "worktree /repo/main\x00HEAD " + sha + "\x00branch refs/heads/main\x00\x00worktree /repo/gone\x00HEAD " + sha + "\x00branch refs/heads/side\x00prunable gitdir file points to non-existent location\x00\x00",
-			want: "path=/repo/main branch=\"main\" head=0123456 detached=false locked=\"\" prunable=\"\" bare=false\n" +
-				"path=/repo/gone branch=\"side\" head=0123456 detached=false locked=\"\" prunable=\"gitdir file points to non-existent location\" bare=false\n",
+			want: plain("/repo/main", "main") +
+				line("/repo/gone", `"side"`, "0123456", "false", `""`, `"gitdir file points to non-existent location"`, "false"),
 		},
 		{name: "空输出", raw: "", want: ""},
 		{
 			name: "含空格路径",
 			raw:  "worktree /repo/my project\x00HEAD " + sha + "\x00branch refs/heads/feature branch\x00\x00worktree /repo/my project-wt\x00HEAD " + sha + "\x00detached\x00locked\x00\x00",
-			want: "path=/repo/my project branch=\"feature branch\" head=0123456 detached=false locked=\"\" prunable=\"\" bare=false\n" +
-				"path=/repo/my project-wt branch=\"\" head=0123456 detached=true locked=\"locked\" prunable=\"\" bare=false\n",
+			want: plain("/repo/my project", "feature branch") +
+				line("/repo/my project-wt", `""`, "0123456", "true", `"locked"`, `""`, "false"),
 		},
 	}
 	for _, tc := range cases {
