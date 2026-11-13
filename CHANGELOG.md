@@ -1,3 +1,22 @@
+## 0.8.4 - 2026-11-13
+
+### 更新内容
+
+- 源码开源，改为 Apache 2.0 许可：https://github.com/2fa0/xylring。
+- 安装包和更新文件改在源码仓库的 Release 发布，后续版本从 `2fa0/xylring` 获取。
+- 修好一批只在 Windows 上失败的测试，Windows 版现在有 CI 覆盖。
+
+### Changes
+
+- The source is public, under the Apache License 2.0: https://github.com/2fa0/xylring.
+- Installers and update files are published from the source repository from now on.
+- Fix the tests that failed only on Windows; the Windows build is now covered by CI.
+
+### 升级说明 / Upgrading
+
+- 0.8.3 的客户端仍在旧仓库检查更新，看不到这一版，需要手动下载安装一次；装好之后自动更新恢复正常。
+- The updater in 0.8.3 still points at the old release repository, so install this version by hand once. Automatic updates work again afterwards.
+
 ## 0.8.3 - 2026-11-13
 
 ### 更新内容

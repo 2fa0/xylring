@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.3-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.8.4-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
@@ -62,8 +62,8 @@ Versions up to 0.8.2 have no updater yet, so install a build with it once by han
 ### macOS (Apple Silicon & Intel)
 
 1. Download the `.dmg` matching your architecture:
-   - **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.8.3-arm64.dmg`
-   - **Intel x86_64**: `xylring-0.8.3-amd64.dmg`
+   - **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.8.4-arm64.dmg`
+   - **Intel x86_64**: `xylring-0.8.4-amd64.dmg`
 2. Open the disk image and drag **Xylring** into your `Applications` folder.
 
 > [!NOTE]
@@ -75,8 +75,8 @@ Versions up to 0.8.2 have no updater yet, so install a build with it once by han
 
 ### Windows (10 & 11 x64)
 
-- **Installer**: Download and run `xylring-setup-0.8.3-amd64.exe` (installs to user directory, no admin rights required).
-- **Portable**: Download and extract `xylring-0.8.3-windows-x64.zip`, then run `Xylring.exe`.
+- **Installer**: Download and run `xylring-setup-0.8.4-amd64.exe` (installs to user directory, no admin rights required).
+- **Portable**: Download and extract `xylring-0.8.4-windows-x64.zip`, then run `Xylring.exe`.
 
 ### Build from Source
 
