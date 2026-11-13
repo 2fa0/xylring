@@ -166,7 +166,7 @@ func (a *app) gitLogOutput(c *ui.Context, call gitCall, part, title string, out 
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, title).FontSize(11).TextColor(t.TextMuted).Grow(1).MinWidth(0)
 		if copyable {
-			copyTextButton(c, key+"-copy", tr("复制"), text)
+			copyTextButton(c, key+"-copy", "复制", text)
 		}
 	})
 	ui.Scroll(c.Key(key)).MaxHeight(160).FillWidth().Padding(6, 8).Radius(t.Radius).Background(t.Background).Children(func() {

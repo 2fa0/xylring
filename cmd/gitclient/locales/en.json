@@ -200,7 +200,6 @@
   "后续历史包含合并提交，不能修改这条提交的说明": "Later history contains merge commits, so this commit's message cannot be edited",
   "启动与同步": "Startup and syncing",
   "启动时恢复上次打开的仓库": "Restore previously opened repositories on startup",
-  "命令": "Command",
   "命令行": "Command line",
   "哈希": "Hash",
   "固定展开提交面板": "Pin commit panel open",
