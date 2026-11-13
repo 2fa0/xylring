@@ -1069,6 +1069,16 @@ func (a *app) currentDiffLayout() editor.DiffLayout {
 	return editor.DiffSplit
 }
 
+// prepareDiffState 给每个 diff 装上显示选项和按键，两条渲染路径共用。
+func (a *app) prepareDiffState(d *editor.DiffState) {
+	d.Wrap = a.diffWrap
+	d.Layout = a.currentDiffLayout()
+	d.Bindings = append(editor.DefaultBindings(),
+		editor.Binding{Key: ui.KeyJ, Command: editor.NextHunk},
+		editor.Binding{Key: ui.KeyK, Command: editor.PreviousHunk},
+	)
+}
+
 func (a *app) openDiffFind(t *repoTab) {
 	if t == nil {
 		return
@@ -1629,8 +1639,7 @@ func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *sim
 			editor.View(c.Key("large-diff-new"), &simple.new).Grow(1).Basis(0).FillHeight().MinWidth(0)
 		})
 	case diff != nil:
-		diff.Wrap = a.diffWrap
-		diff.Layout = a.currentDiffLayout()
+		a.prepareDiffState(diff)
 		diff.RenderFindBar = renderFindBar
 		editor.DiffView(c.Key("file-diff"), diff).Grow(1).MinHeight(0)
 	}
