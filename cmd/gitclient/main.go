@@ -1353,6 +1353,21 @@ func (b commitRefBadge) label() string {
 	}
 }
 
+// 徽章要的是真强调色：listTheme 把 Accent 换成了 SurfacePressed（行的按下色），
+// 拿那个画图标，亮色模式下和行底色几乎一样，等于没画。
+var (
+	lightAccent = ui.LightTheme().Accent
+	darkAccent  = ui.DarkTheme().Accent
+)
+
+// rowAccent 给列表行用真强调色，不受 listTheme 的覆盖影响。
+func rowAccent(t *ui.Theme) ui.Color {
+	if t.Dark {
+		return darkAccent
+	}
+	return lightAccent
+}
+
 // iconBadge 是只有图标的类型徽章，行里用来标同步状态。
 func iconBadge(c *ui.Context, key string, icon *ui.SVG, color ui.Color, tip string) ui.Element {
 	e := ui.Row(c.Key(key)).AlignItems(ui.Center).Shrink(0).Padding(1, 2).Radius(4).
@@ -1481,7 +1496,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				}
 			}
 			if tab.outgoing[item.hash] {
-				iconBadge(c, "sync-out-"+hashHex(item.hash), iconUpload, t.Accent, tr("待推送"))
+				iconBadge(c, "sync-out-"+hashHex(item.hash), iconUpload, rowAccent(t), tr("待推送"))
 			} else if tab.incoming[item.hash] {
 				iconBadge(c, "sync-in-"+hashHex(item.hash), iconDownload, t.TextMuted, tr("远端独有"))
 			}
