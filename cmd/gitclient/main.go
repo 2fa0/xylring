@@ -1254,6 +1254,16 @@ func (b commitRefBadge) label() string {
 	}
 }
 
+// iconBadge 是只有图标的类型徽章，行里用来标同步状态。
+func iconBadge(c *ui.Context, key string, icon *ui.SVG, color ui.Color, tip string) ui.Element {
+	e := ui.Row(c.Key(key)).AlignItems(ui.Center).Shrink(0).Padding(1, 2).Radius(4).
+		Background(color.Alpha(0.14)).Border(1, color.Alpha(0.45)).Tooltip(tip)
+	e.Children(func() {
+		ui.Icon(c, icon).Size(12, 12).TextColor(color)
+	})
+	return e
+}
+
 func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowHovered func(ui.Rect) bool) {
 	t := c.Theme()
 	item := tab.rowData(i)
@@ -1370,6 +1380,11 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 						a.tagBadgeMenu(c, m, tab, commitCopy, b.name)
 					})
 				}
+			}
+			if tab.outgoing[item.hash] {
+				iconBadge(c, "sync-out-"+hashHex(item.hash), iconUpload, t.Accent, tr("待推送"))
+			} else if tab.incoming[item.hash] {
+				iconBadge(c, "sync-in-"+hashHex(item.hash), iconDownload, t.TextMuted, tr("远端独有"))
 			}
 			if prov := tab.provenance.get(item.prov); prov.agent != "" {
 				label := prov.badge

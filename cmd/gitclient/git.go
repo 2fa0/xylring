@@ -645,6 +645,31 @@ func parseHash(s string) ([20]byte, error) {
 
 func hashHex(h [20]byte) string { return hex.EncodeToString(h[:]) }
 
+// hashSet is the render-side form of the sync sides: the row asks whether its
+// hash is in the set, never where in a slice it is.
+func hashSet(hashes [][20]byte) map[[20]byte]bool {
+	if len(hashes) == 0 {
+		return nil
+	}
+	set := make(map[[20]byte]bool, len(hashes))
+	for _, h := range hashes {
+		set[h] = true
+	}
+	return set
+}
+
+// hashList is hashSet's inverse, for the paging path that re-installs a meta.
+func hashList(set map[[20]byte]bool) [][20]byte {
+	if len(set) == 0 {
+		return nil
+	}
+	list := make([][20]byte, 0, len(set))
+	for h := range set {
+		list = append(list, h)
+	}
+	return list
+}
+
 func shortHash(h [20]byte) string { return hashHex(h)[:7] }
 
 type refKind uint8
@@ -669,6 +694,8 @@ type repoMeta struct {
 	refs        map[[20]byte][]refInfo
 	ahead       int
 	behind      int
+	incoming    [][20]byte
+	outgoing    [][20]byte
 	upstream    string
 	hasUpstream bool
 }
@@ -704,6 +731,8 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 	m.upstream = sync.upstream
 	m.ahead = sync.ahead
 	m.behind = sync.behind
+	m.incoming = sync.incoming
+	m.outgoing = sync.outgoing
 	rawRefs, err := runGit(ctx, dir, "for-each-ref", "--format=%(objectname) %(refname) %(*objectname)")
 	if err != nil {
 		if isRepoUnavailable(err) {

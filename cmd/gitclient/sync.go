@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -13,6 +12,8 @@ type syncStatus struct {
 	upstream    string
 	ahead       int
 	behind      int
+	incoming    [][20]byte // 远端独有：上游有、本地没有的提交。
+	outgoing    [][20]byte // 本地独有：本地有、尚未推送的提交。
 }
 
 func queryTrackingStatus(ctx context.Context, dir string) (syncStatus, error) {
@@ -29,16 +30,37 @@ func queryTrackingStatus(ctx context.Context, dir string) (syncStatus, error) {
 		return s, nil
 	}
 	s.hasUpstream = true
-	counts, err := runGit(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
+	// One process and one pass: the commit lists give the counts as their length,
+	// so the row badges need no second git call.
+	list, err := runGit(ctx, dir, "rev-list", "--left-right", "HEAD...@{upstream}")
 	if err != nil {
 		return s, err
 	}
-	fields := strings.Fields(string(counts))
-	if len(fields) >= 2 {
-		s.ahead, _ = strconv.Atoi(fields[0])
-		s.behind, _ = strconv.Atoi(fields[1])
-	}
+	s.incoming, s.outgoing = parseSyncSets(string(list))
+	s.ahead, s.behind = len(s.outgoing), len(s.incoming)
 	return s, nil
+}
+
+// parseSyncSets splits `rev-list --left-right HEAD...@{upstream}` output into the
+// two sides: '<' marks a commit only the upstream has, '>' one only HEAD has.
+func parseSyncSets(out string) (incoming, outgoing [][20]byte) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < 2 {
+			continue
+		}
+		hash, err := parseHash(line[1:])
+		if err != nil {
+			continue
+		}
+		switch line[0] {
+		case '<':
+			incoming = append(incoming, hash)
+		case '>':
+			outgoing = append(outgoing, hash)
+		}
+	}
+	return incoming, outgoing
 }
 
 func syncBadge(ahead, behind int) string {
