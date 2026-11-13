@@ -268,3 +268,33 @@ func TestGitCommandWrites(t *testing.T) {
 		t.Fatal("no subcommand must fall back to write")
 	}
 }
+
+// TestGitLaneStatusRunsAlongsideReaders 钉住文档 §三 第 2 步里的一处判断：
+// status 之所以能算读，靠的是 mergeGitEnv 里的 GIT_OPTIONAL_LOCKS=0（它只关
+// 「可选锁」，写操作的强制锁不受影响）。一旦有人把这个环境变量去掉，status
+// 就会改 index，那时候它必须改回写，否则会和读者的车道假设打架。
+//
+// 访问顺序固定为「先车道、后全局槽」：反例——先 acquireGit 再 acquireGitLane
+// ——会把这 4 个全局槽占死在等车道的路上，同一个仓库的写者永远等不到读者退出。
+// 这一条不写成断言（它落地就是死锁），写在这里是为了让改这条路径的人先看到。
+func TestGitLaneStatusRunsAlongsideReaders(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	first := acquireGitLane(ctx, canonicalRepoDir(dir), gitCommandWrites([]string{"status", "--porcelain"}))
+	second := make(chan func(), 1)
+	go func() {
+		second <- acquireGitLane(ctx, canonicalRepoDir(dir), gitCommandWrites([]string{"status", "--porcelain=v2"}))
+	}()
+	select {
+	case release := <-second:
+		release()
+	case <-time.After(2 * time.Second):
+		first()
+		t.Fatal("two status readers of one repository must not queue behind each other")
+	}
+	first()
+	if _, _, queued := gitLaneState(canonicalRepoDir(dir)); queued != 0 {
+		t.Fatalf("queue left at %d after both readers released", queued)
+	}
+}
