@@ -167,9 +167,9 @@ func clickControl(t *testing.T, tt *ui.Tester, name string) {
 	tt.Frame()
 }
 
-// clickSetting 点一个设置项。设置内容在滚动区里，能露出多少看平台字体，
-// 窄窗口里靠后的项可能要先滚一下才点得到。
-func clickSetting(t *testing.T, tt *ui.Tester, width, height int, label string) {
+// clickInDialogBody 点弹窗正文里的东西。正文是滚动区，能露出多少看平台字体：
+// 窄窗口里靠后的设置项可能要先往下滚，点完又得往回滚才能再点上面的分页标签。
+func clickInDialogBody(t *testing.T, tt *ui.Tester, width, height int, label string) {
 	t.Helper()
 	try := func() bool {
 		tt.Frame()
@@ -187,7 +187,7 @@ func clickSetting(t *testing.T, tt *ui.Tester, width, height int, label string) 
 			}
 		}
 	}
-	t.Fatalf("滚遍设置正文也点不到 %q", label)
+	t.Fatalf("滚遍弹窗正文也点不到 %q", label)
 }
 
 func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
@@ -201,14 +201,12 @@ func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
 				t.Fatalf("missing %s", label)
 			}
 		}
-		clickSetting(t, tt, width, 720, "启动时恢复上次打开的仓库")
+		clickInDialogBody(t, tt, width, 720, "启动时恢复上次打开的仓库")
 		if !a.restoreDisabled {
 			t.Fatal("restore preference not updated")
 		}
 		saveLobePreview(t, tt, "settings-general-"+strconv.Itoa(width))
-		if err := tt.Click("Git"); err != nil {
-			t.Fatal(err)
-		}
+		clickInDialogBody(t, tt, width, 720, "Git")
 		tt.Frame()
 		a.settings.global.fields[0].enabled = true
 		a.settings.global.fields[0].value = "Draft"
