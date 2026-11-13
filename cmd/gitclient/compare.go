@@ -448,10 +448,12 @@ func (a *app) startDiff(t *repoTab, from, to [20]byte, list func(context.Context
 	t.compareGen++
 	gen := t.compareGen
 	t.diffFrom, t.diffTo = from, to
-	// 已读只属于这一个对比：换了来源就清空。
+	// 已读和行级笔记只属于这一个对比：换了来源就一起清空，不写成两个 if。
 	if reviewCtx := diffReviewContext(t, from, to); reviewCtx != t.reviewCtx {
 		t.reviewCtx = reviewCtx
 		t.reviewed = nil
+		t.diffNotes = nil
+		t.noteEdit = nil
 	}
 	t.compareFiles = nil
 	t.compareErr = ""
@@ -655,6 +657,9 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 	t.compareGen++
 	gen := t.compareGen
 	f := t.compareFiles[i]
+	if t.noteEdit != nil && t.noteEdit.Path != f.path {
+		t.noteEdit = nil // 换了文件，输入条锚的那一行已经不在屏上。
+	}
 	if saved := t.restoreDiff; saved != nil {
 		t.restoreDiff = nil
 		if saved.from == t.diffFrom && saved.to == t.diffTo && saved.file == f.path && (saved.diff != nil || saved.imageDiff != nil || saved.note != "") {
@@ -873,6 +878,40 @@ func (a *app) fileDiffPane(c *ui.Context, t *repoTab) {
 	ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		a.fileDiffHeader(c, t)
 		a.fileDiffContent(c, t.diff, t.simpleDiff, t.imageDiff, t.diffNote, t.diffLoading, t.imageViewMode, t.imageFitActual)
+		a.noteInputBar(c, t)
+	})
+}
+
+// noteInputBar 是 diff 下方那条覆盖式输入条：不占布局，⌘↩ 保存，Esc 取消。
+func (a *app) noteInputBar(c *ui.Context, t *repoTab) {
+	n := t.noteEdit
+	if n == nil {
+		return
+	}
+	theme := c.Theme()
+	save := func() {
+		text := strings.TrimSpace(n.Text)
+		if text != "" && n.Path == t.currentFilePath() {
+			t.diffNotes = append(t.diffNotes, diffNote{Path: n.Path, Side: n.Side, Line: n.Line, Text: text})
+		}
+		t.noteEdit = nil
+	}
+	cancel := func() { t.noteEdit = nil }
+	var input ui.Element
+	bar := ui.Row(c.Key("diff-note-bar")).Attach(ui.AnchorBottomLeft, ui.AnchorBottomLeft).FillWidth().
+		Padding(6, 10).Gap(8).AlignItems(ui.Center).
+		Background(theme.Surface).BorderWidth(1, 0, 0, 0).BorderColor(theme.Border).Transition(fadeEnter()).
+		OnShortcut(commandModifier(), ui.KeyEnter, save).OnShortcut(0, ui.KeyEscape, cancel)
+	bar.Children(func() {
+		ui.Text(c, fmt.Sprintf("L%d", n.Line)).Font("monospace").FontSize(11).TextColor(theme.TextMuted).Shrink(0)
+		input = ui.TextInput(c.Key("diff-note-input"), &n.Text).Label(tr("笔记")).Placeholder(tr("写一条笔记")).Grow(1).MinWidth(80).AutoFocus()
+		if ui.PrimaryButton(c.Key("diff-note-save"), tr("保存")).Shrink(0).Disabled(strings.TrimSpace(n.Text) == "").Clicked() || input.Submitted() {
+			save()
+		}
+		kbdHint(c, "diff-note-save-key", "⌘↩")
+		if ui.Button(c.Key("diff-note-cancel"), tr("取消")).Shrink(0).Clicked() {
+			cancel()
+		}
 	})
 }
 
@@ -984,6 +1023,10 @@ func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
 				t.collapseAllTree()
 			}
 		}
+		// 导出管的是这批文件，所以放在文件列表行尾，不占 diff 头部。
+		if paneIconButton(c, "copy-diff-notes", tr("复制审阅笔记"), iconCopy).Disabled(len(t.diffNotes) == 0).Clicked() {
+			a.copyDiffNotes(c, t)
+		}
 	})
 }
 
@@ -1092,6 +1135,71 @@ func (a *app) prepareDiffState(d *editor.DiffState) {
 		editor.Binding{Key: ui.KeyJ, Command: editor.NextHunk},
 		editor.Binding{Key: ui.KeyK, Command: editor.PreviousHunk},
 	)
+	// 行级笔记只装在底栏详情面板的 diff 上：文件标签页共用这个渲染函数，
+	// 但输入条画在详情面板里，标签页没有它的位置。
+	if t := a.activeTab(); t != nil && t.diff == d {
+		a.prepareDiffNotes(t, d)
+	}
+}
+
+// noteAnnotationHeight 是每条笔记在行下占的高度。
+const noteAnnotationHeight float32 = 22
+
+// prepareDiffNotes 把笔记接到 mygo 的行选择、行号加号和行下注释上。
+func (a *app) prepareDiffNotes(t *repoTab, d *editor.DiffState) {
+	notes := t.notesFor(t.currentFilePath())
+	d.LineSelection = true
+	d.OnGutterButton = func(r editor.DiffLineRange) {
+		a.openNoteEditor(t, r)
+	}
+	d.Annotations = make([]editor.DiffAnnotation, 0, len(notes))
+	for i, n := range notes {
+		d.Annotations = append(d.Annotations, editor.DiffAnnotation{
+			Side:   noteSide(n.Side),
+			Line:   n.Line - 1, // 笔记里的行号从 1 起，diff 的从 0 起。
+			Height: noteAnnotationHeight,
+			Key:    i,
+		})
+	}
+	d.RenderAnnotation = func(c *ui.Context, ann editor.DiffAnnotation) {
+		i, ok := ann.Key.(int)
+		if !ok || i < 0 || i >= len(notes) {
+			return
+		}
+		renderDiffNote(c, notes[i])
+	}
+}
+
+// renderDiffNote 在行下画出笔记正文。
+func renderDiffNote(c *ui.Context, n diffNote) {
+	ui.Row(c).FillWidth().Padding(0, 8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, n.Text).FontSize(11).TextColor(c.Theme().Text).SingleLine().Grow(1).MinWidth(0).Tooltip(n.Text)
+	})
+}
+
+// openNoteEditor 在点中的那一行下打开输入条。
+func (a *app) openNoteEditor(t *repoTab, r editor.DiffLineRange) {
+	path := t.currentFilePath()
+	if path == "" {
+		return
+	}
+	t.noteEdit = &diffNote{Path: path, Side: noteSideText(r.Side), Line: r.Start + 1}
+}
+
+// noteSide 把笔记里的边翻回 mygo 的边。
+func noteSide(side string) editor.DiffSide {
+	if side == "old" {
+		return editor.DiffOld
+	}
+	return editor.DiffNew
+}
+
+// noteSideText 把 mygo 的边写成笔记里的 "old" / "new"。
+func noteSideText(s editor.DiffSide) string {
+	if s == editor.DiffOld {
+		return "old"
+	}
+	return "new"
 }
 
 func (a *app) openDiffFind(t *repoTab) {
@@ -1886,4 +1994,128 @@ func (t *repoTab) reviewedCount() (viewed, total int) {
 		}
 	}
 	return viewed, total
+}
+
+// currentFilePath 是详情面板正在看的文件。
+func (t *repoTab) currentFilePath() string {
+	if t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
+		return t.compareFiles[t.fileSel].path
+	}
+	return ""
+}
+
+// notesFor 是这个文件上的笔记。
+func (t *repoTab) notesFor(path string) []diffNote {
+	if path == "" {
+		return nil
+	}
+	var out []diffNote
+	for _, n := range t.diffNotes {
+		if n.Path == path {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// copyDiffNotes 把这次对比里的笔记写成 Markdown 复制到剪贴板。
+func (a *app) copyDiffNotes(c *ui.Context, t *repoTab) {
+	if len(t.diffNotes) == 0 {
+		return
+	}
+	seen := map[string]bool{}
+	paths := make([]string, 0, len(t.diffNotes))
+	for _, n := range t.diffNotes {
+		if !seen[n.Path] {
+			seen[n.Path] = true
+			paths = append(paths, n.Path)
+		}
+	}
+	sort.Strings(paths)
+	current := t.currentFilePath()
+	var b strings.Builder
+	for _, path := range paths {
+		var d *editor.DiffState
+		if path == current {
+			d = t.diff // 只有当前装载的文件拿得到代码上下文。
+		}
+		b.WriteString(renderNotesMarkdown(d, t.notesFor(path), path))
+	}
+	c.Services().WriteClipboard(b.String())
+	c.Toast(tr("已复制审阅笔记"))
+}
+
+// noteContextLines 是导出时每条笔记带的上下文行数。
+const noteContextLines = 3
+
+// renderNotesMarkdown 把笔记写成 Markdown：路径、行号、前后各 3 行代码和正文。
+// d 是这条路径当前装载的 diff，为 nil 时只有路径、行号和正文。
+func renderNotesMarkdown(d *editor.DiffState, notes []diffNote, path string) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %s\n", path)
+	for _, n := range notes {
+		// 导出的是文档，不是界面文案：这里不套 tr。
+		side := "新"
+		if n.Side == "old" {
+			side = "旧"
+		}
+		fmt.Fprintf(&b, "\n### L%d (%s)\n", n.Line, side)
+		if snippet := noteSnippet(d, n); snippet != "" {
+			fmt.Fprintf(&b, "\n```diff\n%s```\n", snippet)
+		}
+		b.WriteString("\n")
+		for _, line := range strings.Split(n.Text, "\n") {
+			fmt.Fprintf(&b, "> %s\n", line)
+		}
+	}
+	return b.String()
+}
+
+// noteSnippet 取笔记行前后各 3 行，改动的行照 diff 的样子打上 + 或 -。
+func noteSnippet(d *editor.DiffState, n diffNote) string {
+	if d == nil {
+		return ""
+	}
+	buf := d.New
+	if n.Side == "old" {
+		buf = d.Old
+	}
+	if buf == nil || buf.Len() == 0 {
+		return ""
+	}
+	start := max(n.Line-noteContextLines, 1)
+	end := min(n.Line+noteContextLines, buf.LineCount())
+	if start > end {
+		return ""
+	}
+	var b strings.Builder
+	for line := start; line <= end; line++ {
+		mark := " "
+		if noteLineChanged(d, n.Side, line) {
+			mark = "+"
+			if n.Side == "old" {
+				mark = "-"
+			}
+		}
+		b.WriteString(mark + buf.Line(line-1) + "\n")
+	}
+	return b.String()
+}
+
+// noteLineChanged 说这一行是否在改动块里：行号从 1 起，diff 的从 0 起。
+func noteLineChanged(d *editor.DiffState, side string, line int) bool {
+	i := line - 1
+	for _, h := range d.Hunks() {
+		if side == "old" {
+			if i >= h.OldStart && i < h.OldEnd {
+				return true
+			}
+		} else if i >= h.NewStart && i < h.NewEnd {
+			return true
+		}
+	}
+	return false
 }
