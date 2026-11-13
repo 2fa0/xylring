@@ -248,3 +248,102 @@ func TestGraphSidebarClosedSpacing(t *testing.T) {
 		t.Fatalf("关闭侧栏后提交行过于靠近边框: X = %v, want >= 12", row.X)
 	}
 }
+
+// 节点往右的引导点线要淡、要断；父提交缺席时的短桩必须是虚线。
+func TestGraphGuideLineAndBoundaryStub(t *testing.T) {
+	var background ui.Color
+	tt := ui.NewTester(func(c *ui.Context) {
+		background = c.Theme().Background
+		ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
+			p.Fill(r, background, 0)
+			item := commit{nodeCol: 0, segs: []seg{
+				{a: 0, b: 0, dash: true},
+				{a: 1, b: 1, top: true, bot: true, color: 1},
+			}}
+			p.Clip(r, 0, func() { paintCommit(p, r, &item, false, nil, background) })
+		})
+	}, 120, 40)
+	tt.Frame()
+	img := tt.Image()
+	chroma := func(x, y int) uint32 {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return max(r, g, b) - min(r, g, b)
+	}
+	// 引导点线：节点右侧到列尾之间断续出现，段数远多于一条实线。
+	mid, runs, prev := 20, 0, false
+	for x := 28; x < 118; x++ {
+		ink := chroma(x, mid) > 0x800
+		if ink && !prev {
+			runs++
+		}
+		prev = ink
+	}
+	if runs < 4 {
+		t.Fatalf("节点右侧只有 %d 段线，引导线不是点线", runs)
+	}
+	// 短桩：节点下方的同一条竖直线上有墨也有空隙。
+	ink, gap := 0, 0
+	for y := mid + 8; y < 36; y++ {
+		if chroma(int(laneCenter(ui.Rect{}, 0)), y) > 0x800 {
+			ink++
+		} else {
+			gap++
+		}
+	}
+	if ink == 0 || gap == 0 {
+		t.Fatalf("缺失父提交的短桩不是虚线：墨 %d 像素，空隙 %d 像素", ink, gap)
+	}
+}
+
+// 搜索只返回匹配的提交，父提交都在结果集外面：图谱要照画，缺失的父边画成虚线短桩。
+func TestFilteredHistoryKeepsGraphWithStubs(t *testing.T) {
+	tab := newTab(1, "/tmp/graph-filtered")
+	tab.loaded, tab.branch = true, "main"
+	tab.query.term = "fix"
+	cs := []commit{
+		{hash: hashN(1), parents: [][20]byte{hashN(9)}, subject: "fix-one", author: "A", when: 1700000000},
+		{hash: hashN(2), parents: [][20]byte{hashN(3), hashN(10)}, subject: "fix-two", author: "A", when: 1700000000},
+		{hash: hashN(3), parents: [][20]byte{hashN(11)}, subject: "fix-three", author: "A", when: 1700000000},
+	}
+	a := &app{tabs: []*repoTab{tab}}
+	a.applyHistory(tab, repoMeta{}, cs, 0, -1)
+	tab.head = tab.commits[0].hash
+	if tab.graph.lanes() != 1 {
+		t.Fatalf("过滤历史占了 %d 条泳道", tab.graph.lanes())
+	}
+
+	tt := ui.NewTester(a.view, 900, 500)
+	tt.Frame()
+	defer retireTester(tt)
+	img := tt.Image()
+	chroma := func(x, y int) uint32 {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return max(r, g, b) - min(r, g, b)
+	}
+	// fix-two 的第一父提交也在结果集里，它下面是实线；另外两行只有虚线短桩。
+	for subject, dashed := range map[string]bool{"fix-one": true, "fix-two": false, "fix-three": true} {
+		row, ok := tt.Find(subject)
+		if !ok {
+			t.Fatalf("未找到行 %q", subject)
+		}
+		x := int(row.X + lanePad + laneGap/2)
+		mid := int(row.Y + row.H/2)
+		ink, gap := 0, 0
+		for y := mid + 8; y < int(row.Y+row.H)-2; y++ {
+			if chroma(x, y) > 0x800 {
+				ink++
+			} else {
+				gap++
+			}
+		}
+		if ink == 0 {
+			t.Fatalf("行 %q 没有画出父边", subject)
+		}
+		if dashed && gap == 0 {
+			t.Fatalf("行 %q 的父边不是虚线短桩：墨 %d 像素，空隙 %d 像素", subject, ink, gap)
+		}
+		if !dashed && gap > 0 {
+			t.Fatalf("行 %q 与下一行的父链断了：墨 %d 像素，空隙 %d 像素", subject, ink, gap)
+		}
+	}
+}

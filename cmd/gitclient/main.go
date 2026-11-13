@@ -1583,7 +1583,7 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 	}
 	if mainW > 0 && mainW < 700 {
 		return []ui.TableColumn{
-			{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 40},
+			{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
 			{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 160},
 			{ID: "date", Title: tr("日期"), Width: 128, MinWidth: 100},
 			{ID: "author", Title: tr("作者"), Width: 96, MinWidth: 60},
@@ -1591,7 +1591,7 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 		}
 	}
 	return []ui.TableColumn{
-		{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 40},
+		{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
 		{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 200},
 		{ID: "date", Title: tr("日期"), Width: 172, MinWidth: 128},
 		{ID: "author", Title: tr("作者"), Width: 156, MinWidth: 96},
@@ -1603,7 +1603,8 @@ func graphWidth(lanes int) float32 {
 	if lanes < 1 {
 		lanes = 1
 	}
-	return lanePad*2 + float32(lanes)*laneGap
+	// 至少留够表头「图谱」两个字的宽度，否则单泳道仓库的表头只剩省略号。
+	return max(lanePad*2+float32(lanes)*laneGap, 56)
 }
 
 func laneCenter(r ui.Rect, col int) float32 {
@@ -1626,6 +1627,8 @@ func graphColor(chain int, palette []ui.Color) ui.Color {
 
 func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette []ui.Color, background ui.Color, inferred ...bool) {
 	mid := r.Y + r.H/2
+	// 引导点线先画，后面的泳道会压在它上面。
+	paintGuide(p, r, laneCenter(r, c.nodeCol), commitRadius(c)+3, palette, c.nodeColor)
 	// 长泳道在下，短曲线带背景色衬底跨过泳道，最后再画节点。
 	for _, bends := range []bool{false, true} {
 		for _, s := range c.segs {
@@ -1633,10 +1636,14 @@ func paintCommit(p *ui.Painter, r ui.Rect, c *commit, contFromTop bool, palette 
 				continue
 			}
 			path := lanePath(r, s)
+			color, width := graphColor(s.color, palette), float32(graphStroke)
+			if s.dash {
+				color, width = color.Alpha(0.5), 1.6
+			}
 			if bends {
 				p.StrokePath(&path, graphStroke+3, background)
 			}
-			p.StrokePath(&path, graphStroke, graphColor(s.color, palette))
+			p.StrokePath(&path, width, color)
 		}
 	}
 	if contFromTop {
@@ -1695,6 +1702,12 @@ func lanePath(r ui.Rect, s seg) ui.Path {
 	x0, x1 := laneCenter(r, s.a), laneCenter(r, s.b)
 	mid, bottom := r.Y+r.H/2, r.Y+r.H
 	var path ui.Path
+	if s.dash {
+		path.MoveTo(x0, mid)
+		path.LineTo(x0, bottom-5)
+		path.Dash(0, 2, 3)
+		return path
+	}
 	switch s.bend {
 	case 1:
 		path.MoveTo(x0, mid)
@@ -1719,10 +1732,25 @@ func paintWorktreeCommit(p *ui.Painter, r ui.Rect, c *commit, background ui.Colo
 	mid := r.Y + r.H/2
 	x := laneCenter(r, c.nodeCol)
 	color := graphColor(c.nodeColor, nil)
+	paintGuide(p, r, x, 6, nil, c.nodeColor)
 	if len(c.segs) > 0 && c.segs[0].bot {
 		p.Line(x, mid, x, r.Y+r.H+1, graphStroke, color)
 	}
 	paintWorktreeNode(p, x, mid, 5, color, background)
+}
+
+// paintGuide 从节点往右拉一条淡点线一直到图谱列末尾。
+// 泳道多的时候，一眼就能把这条提交和它的标题连起来。
+func paintGuide(p *ui.Painter, r ui.Rect, nodeX, gap float32, palette []ui.Color, color int) {
+	x0, x1, y := nodeX+gap, r.X+r.W-1, r.Y+r.H/2
+	if x1-x0 < 6 {
+		return
+	}
+	var path ui.Path
+	path.MoveTo(x0, y)
+	path.LineTo(x1, y)
+	path.Dash(0, 1.5, 3)
+	p.StrokePath(&path, 1, graphColor(color, palette).Alpha(0.35))
 }
 
 func paintWorktreeNode(p *ui.Painter, x, y, radius float32, color, background ui.Color) {

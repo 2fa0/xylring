@@ -77,9 +77,18 @@ type preparedHistory struct {
 	bytes   int64
 }
 
-func prepareHistory(ctx context.Context, commits []commit, g graph, authors map[string]string, drawGraph bool) (preparedHistory, error) {
+func prepareHistory(ctx context.Context, commits []commit, g graph, authors map[string]string, drawGraph, filtered bool) (preparedHistory, error) {
 	t := &repoTab{authors: maps.Clone(authors)}
 	p := preparedHistory{commits: commits, graph: g, index: make(map[[20]byte]int, len(commits))}
+	if filtered {
+		// 过滤历史里每条父链都在本页内收口，不带上一页的泳道过去，
+		// 只保留已经见过的最大列数，免得列宽随翻页跳动。
+		p.graph.cols, p.graph.colors, p.graph.bends = nil, nil, nil
+		p.graph.incoming, p.graph.incomingColors, p.graph.scratch = nil, nil, nil
+		p.graph.visible = visibleSet(commits)
+	} else {
+		p.graph.visible = nil
+	}
 	var previous []seg
 	for i := range commits {
 		if err := ctx.Err(); err != nil {
@@ -99,4 +108,14 @@ func prepareHistory(ctx context.Context, commits []commit, g graph, authors map[
 	}
 	p.authors = t.authors
 	return p, nil
+}
+
+// 过滤历史（搜索、单文件历史）里父提交大多不在结果集里。
+// 只有在这张集合里的父提交才值得开泳道，其余画成虚线短桩。
+func visibleSet(commits []commit) map[[20]byte]bool {
+	set := make(map[[20]byte]bool, len(commits))
+	for i := range commits {
+		set[commits[i].hash] = true
+	}
+	return set
 }
