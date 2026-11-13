@@ -85,5 +85,5 @@ produced.
 
 ## License
 
-Xylring is released under the [MIT License](LICENSE). By submitting a pull
+Xylring is released under the [Apache License 2.0](LICENSE). By submitting a pull
 request you agree that your contribution is licensed under the same terms.

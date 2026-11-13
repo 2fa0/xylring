@@ -174,13 +174,14 @@ report security vulnerabilities privately as described below.
 
 ## 📄 License
 
-Xylring is released under the [MIT License](LICENSE).
+Xylring is released under the [Apache License 2.0](LICENSE).
 
-In short: you may use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of this software, for commercial or non-commercial purposes,
-as long as the copyright notice and permission notice are included in all copies
-or substantial portions of the Software. The software is provided "as is",
-without warranty of any kind.
+In short: you may use, copy, modify and distribute this software, for commercial
+or non-commercial purposes, and you may distribute modified versions, as long as
+you keep the copyright and license notices, state which files you changed, and
+include a copy of the [LICENSE](LICENSE) and the [NOTICE](NOTICE) file. The
+license also grants an express patent license from contributors. The software is
+provided "as is", without warranty of any kind.
 
 Third-party components retain their own licenses; see the
 [third-party notices](cmd/gitclient/resources/THIRD_PARTY_NOTICES.txt).
