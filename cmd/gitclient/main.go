@@ -245,6 +245,7 @@ func (a *app) view(c *ui.Context) {
 	a.ringModal(c)
 	a.operationModal(c)
 	a.settingsModal(c)
+	a.gitLogModal(c)
 }
 
 func (a *app) handleShortcuts(c *ui.Context) {
@@ -848,6 +849,7 @@ func (a *app) globalAlertBanner(c *ui.Context, tab *repoTab) {
 		Background(t.Danger.Alpha(0.1)).Border(1, t.Danger.Alpha(0.28)).Radius(t.Radius).Shrink(0).Transition(fadeEnter()).Children(func() {
 		ui.Icon(c, iconAlertCircle).Size(16, 16).TextColor(t.Danger).Shrink(0)
 		ui.Text(c, trMessage(a.banner)).FontSize(13).TextColor(t.Danger).Grow(1).MinWidth(0)
+		a.gitLogBannerButton(c)
 		copyIconButton(c, "banner-copy-err", tr("复制错误信息"), a.banner)
 		if closeBtn := closeIconButton(c, "banner-close", tr("关闭提示")); closeBtn.Clicked() {
 			a.setBanner("", "")

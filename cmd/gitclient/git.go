@@ -54,12 +54,9 @@ func gitEnv() []string {
 
 // Commands on an opened repository must not fall back to a parent repository.
 func repoGitEnv(dir string, extra []string) []string {
-	abs, err := filepath.Abs(dir)
-	if err == nil {
-		if real, e := filepath.EvalSymlinks(abs); e == nil {
-			abs = real
-		}
-		extra = append([]string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(abs)}, extra...)
+	key := canonicalRepoDir(dir)
+	if filepath.IsAbs(key) {
+		extra = append([]string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(key)}, extra...)
 	}
 	return mergeGitEnv(extra)
 }
@@ -68,6 +65,9 @@ func mergeGitEnv(extra []string) []string {
 	drop := map[string]bool{
 		"LC_ALL": true, "LANG": true, "LC_MESSAGES": true,
 		"GIT_TERMINAL_PROMPT": true, "GIT_PAGER": true, "PAGER": true,
+		// status 和 diff 只碰可选锁；关掉它才敢把 status 算成读操作。
+		// 写操作的强制锁不受影响。
+		"GIT_OPTIONAL_LOCKS": true,
 	}
 	for _, e := range extra {
 		if i := strings.IndexByte(e, '='); i > 0 {
@@ -81,7 +81,7 @@ func mergeGitEnv(extra []string) []string {
 		}
 		out = append(out, e)
 	}
-	out = append(out, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat")
+	out = append(out, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat", "GIT_OPTIONAL_LOCKS=0")
 	return append(out, extra...)
 }
 
@@ -131,12 +131,16 @@ func runGitLimit(ctx context.Context, dir string, limit int, args ...string) ([]
 }
 
 func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, args ...string) ([]byte, error) {
+	// 车道先于全局槽，defer 逆序释放。
+	releaseLane := acquireGitLane(ctx, canonicalRepoDir(dir), gitCommandWrites(args))
+	defer releaseLane()
 	if err := acquireGit(ctx); err != nil {
 		return nil, err
 	}
 	defer func() { <-gitSlots }()
 	bin, err := gitPath()
 	if err != nil {
+		// Git 不可执行时没有命令可记，应用日志里已经有这一条。
 		logGitFailure(dir, args, err)
 		return nil, err
 	}
@@ -151,14 +155,23 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	callID := gitLog.begin(dir, args)
+	started := time.Now()
+	status, exit := gitCallFailed, -1
+	defer func() {
+		gitLog.finish(callID, status, time.Since(started), exit, stdout.Bytes(), stderr.Bytes())
+	}()
 	err = cmd.Run()
+	exit = gitExitCode(err)
 	err = gitExecError(bin, err)
 	if stdout.overflow {
 		log.Printf("git output limit exceeded repo=%q limit=%d", dir, limit)
 		return nil, fmt.Errorf("Git 输出超过 %d 字节，请缩小读取范围", limit)
 	}
 	if ctx.Err() != nil {
+		status = gitCallCancelled
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			status = gitCallFailed
 			logGitFailure(dir, args, ctx.Err())
 		}
 		return stdout.Bytes(), fmt.Errorf("git 超时或已取消：%w", ctx.Err())
@@ -167,6 +180,7 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 	if err != nil && len(args) > 1 && args[0] == "diff" && args[1] == "--no-index" {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && gitWarningsOnly(stderr.String()) {
+			status = gitCallOK
 			return stdout.Bytes(), nil
 		}
 	}
@@ -182,6 +196,7 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 		}
 		return stdout.Bytes(), errors.New(trimMsg(msg))
 	}
+	status = gitCallOK
 	return stdout.Bytes(), nil
 }
 
@@ -341,11 +356,23 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 	})
 }
 
-// A paused history reader must not reserve a Git slot while waiting for a page.
-type gitLease struct{ held bool }
+// A paused history reader must not reserve a Git slot while waiting for a page,
+// and it must not hold the repository's read lane either: a paused stream is idle,
+// and a lane held there would block every write on that repository until the
+// reader closed. So the lane is taken and returned with the slot, lane first.
+type gitLease struct {
+	held   bool
+	key    string
+	write  bool
+	unlane func()
+}
 
 func (s *gitLease) acquire(ctx context.Context) error {
+	s.unlane = acquireGitLane(ctx, s.key, s.write)
 	if err := acquireGit(ctx); err != nil {
+		// 逆序还回去：槽没拿到，车道也不留。
+		s.unlane()
+		s.unlane = nil
 		return err
 	}
 	s.held = true
@@ -356,6 +383,10 @@ func (s *gitLease) release() {
 	if s.held {
 		<-gitSlots
 		s.held = false
+	}
+	if s.unlane != nil {
+		s.unlane()
+		s.unlane = nil
 	}
 }
 
@@ -368,7 +399,7 @@ func (s *gitLease) yield(ctx context.Context, fn func() error) error {
 }
 
 func streamLog(ctx context.Context, dir string, args []string, input string, split bufio.SplitFunc, scan func(*bufio.Scanner, *gitLease) error) error {
-	slot := &gitLease{}
+	slot := &gitLease{key: canonicalRepoDir(dir), write: gitCommandWrites(args)}
 	if err := slot.acquire(ctx); err != nil {
 		return err
 	}
@@ -387,6 +418,13 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	cmd.Stdin = strings.NewReader(input)
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stderr = &stderr
+	// 流式输出可能是几百 MB，只记命令、耗时和退出码。
+	callID := gitLog.beginStream(dir, args)
+	started := time.Now()
+	status, exit := gitCallFailed, -1
+	defer func() {
+		gitLog.finish(callID, status, time.Since(started), exit, nil, stderr.Bytes())
+	}()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -412,16 +450,22 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
+	exit = gitExitCode(waitErr)
 	if parseErr != nil {
+		status = gitCallCancelled
 		if ctx.Err() == nil {
+			status = gitCallFailed
 			logGitFailure(dir, args, parseErr)
 		} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			status = gitCallFailed
 			logGitFailure(dir, args, ctx.Err())
 		}
 		return parseErr
 	}
 	if ctx.Err() != nil {
+		status = gitCallCancelled
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			status = gitCallFailed
 			logGitFailure(dir, args, ctx.Err())
 		}
 		return fmt.Errorf("git 超时或已取消：%w", ctx.Err())
@@ -436,11 +480,13 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 			msg = waitErr.Error()
 		}
 		if strings.Contains(msg, "does not have any commits") {
+			status = gitCallOK
 			return nil
 		}
 		logGitFailure(dir, args, waitErr)
 		return errors.New(trimMsg(msg))
 	}
+	status = gitCallOK
 	return nil
 }
 
