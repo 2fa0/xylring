@@ -42,7 +42,8 @@ func queryTrackingStatus(ctx context.Context, dir string) (syncStatus, error) {
 }
 
 // parseSyncSets splits `rev-list --left-right HEAD...@{upstream}` output into the
-// two sides: '<' marks a commit only the upstream has, '>' one only HEAD has.
+// two sides: with HEAD on the left, '<' marks a commit only HEAD has (还没推送的),
+// '>' one only the upstream has (远端独有)。左右是命令里的先后，反了就全反。
 func parseSyncSets(out string) (incoming, outgoing [][20]byte) {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
@@ -55,9 +56,9 @@ func parseSyncSets(out string) (incoming, outgoing [][20]byte) {
 		}
 		switch line[0] {
 		case '<':
-			incoming = append(incoming, hash)
-		case '>':
 			outgoing = append(outgoing, hash)
+		case '>':
+			incoming = append(incoming, hash)
 		}
 	}
 	return incoming, outgoing
