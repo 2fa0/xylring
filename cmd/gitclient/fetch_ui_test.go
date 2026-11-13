@@ -11,10 +11,10 @@ func TestFetchDialogOpensFromToolbar(t *testing.T) {
 	a := &app{tabs: []*repoTab{tab}, dispatch: func(func()) {}}
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
-	if err := tt.Click("同步"); err != nil {
+	if err := tt.Click("拉取或获取远程更新"); err != nil {
 		t.Fatal(err)
 	}
-	for _, label := range []string{"获取远程更新", "拉取到当前分支", "推送当前分支", "获取选项…"} {
+	for _, label := range []string{"获取远程更新", "拉取到当前分支", "获取选项…"} {
 		found := false
 		for _, item := range tt.Menu() {
 			found = found || item == label
@@ -39,7 +39,7 @@ func TestFetchDialogOpensFromToolbar(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if err := tt.Click("同步"); err != nil {
+	if err := tt.Click("拉取或获取远程更新"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.ChooseMenuItem("获取远程更新"); err != nil {
@@ -90,5 +90,34 @@ func TestFetchIgnoresPreviousDialogRemotes(t *testing.T) {
 				t.Fatalf("wrong remotes in current dialog: %+v", a.fetch)
 			}
 		})
+	}
+}
+
+// 推送是顶栏的独立图标按钮：一次点击进确认弹窗，确认后才真的推。
+func TestTopbarPushAsksBeforePushing(t *testing.T) {
+	tab := graphTabForWrite()
+	tab.hasUpstream = true
+	tab.upstream = "origin/main"
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(func()) {}}
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+	if err := tt.Click("推送当前分支"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.showPush || a.push.upstream != "origin/main" || tab.syncBusy {
+		t.Fatalf("push button should ask first: show=%v dialog=%+v busy=%v", a.showPush, a.push, tab.syncBusy)
+	}
+	for _, text := range []string{"推送当前分支？", "main → origin/main"} {
+		if !tt.HasText(text) {
+			t.Fatalf("missing %q in confirmation: %q", text, tt.Texts())
+		}
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.showPush || tab.syncBusy {
+		t.Fatalf("cancel should leave nothing running: show=%v busy=%v", a.showPush, tab.syncBusy)
 	}
 }

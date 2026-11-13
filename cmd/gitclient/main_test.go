@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -32,8 +33,60 @@ func TestEmptyRecentRepos(t *testing.T) {
 	if importBtn.Y < title.Y || alpha.Y < importBtn.Y {
 		t.Fatalf("导入页顺序不对：title=%+v import=%+v alpha=%+v", title, importBtn, alpha)
 	}
-	if alpha.X+8 < title.X {
-		t.Fatalf("最近仓库没有跟标题左对齐：title.x=%.0f alpha.x=%.0f", title.X, alpha.X)
+	// 标题前的年轮标记占住这一栏的左边缘，文字从标记后面开始；按钮与最近仓库仍从 320 起。
+	if title.X < alpha.X || title.X > alpha.X+40 {
+		t.Fatalf("最近仓库没有跟标题处在同一栏：title.x=%.0f alpha.x=%.0f", title.X, alpha.X)
+	}
+}
+
+func TestCutTip(t *testing.T) {
+	if cutTip("/a/b", 200, 300) != "" {
+		t.Fatal("放得下的内容不该有 tooltip")
+	}
+	if cutTip("/a/b", 300, 300) != "" {
+		t.Fatal("刚好放得下也不该有 tooltip")
+	}
+	if cutTip("/a/b", 320, 300) != "/a/b" {
+		t.Fatal("被裁掉的内容要用完整内容做 tooltip")
+	}
+	if cutTip("/a/b", 320, 0) != "" {
+		t.Fatal("还没布局的行不该有 tooltip")
+	}
+}
+
+// 首页的最近仓库：路径看得全时悬停不弹黑框，只有副行被裁掉才给整条路径。
+func TestRecentRepoPathTipOnlyWhenCut(t *testing.T) {
+	long := "/tmp/company/网关代码/gateway-source-with-a-rather-long-name"
+	short := "/tmp/work/alpha"
+	a := &app{recent: []string{long, short}}
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+	shown := func(text string) int {
+		n := 0
+		for _, s := range tt.Texts() {
+			if s == text {
+				n++
+			}
+		}
+		return n
+	}
+	hover := func(path string) {
+		r, ok := tt.Find(homePath(path))
+		if !ok {
+			t.Fatalf("没有 %q 这一行：%q", path, tt.Texts())
+		}
+		tt.Move(r.X+r.W/2, r.Y+r.H/2)
+		tt.Advance(time.Second)
+	}
+	hover(short)
+	if got := shown(short); got != 1 {
+		t.Fatalf("路径看得全时也弹了 tooltip：%d 处 %q", got, short)
+	}
+	tt.Move(8, 8)
+	tt.Advance(time.Second)
+	hover(long)
+	if got := shown(long); got != 2 {
+		t.Fatalf("被裁掉的路径没有 tooltip：%d 处 %q", got, long)
 	}
 }
 
@@ -438,6 +491,69 @@ func TestRepoListCloseButton(t *testing.T) {
 	}
 	if len(a.tabs) != 1 || a.tabs[0].path != "/tmp/work/alpha" {
 		t.Fatalf("关掉未打开的仓库影响了当前仓库：tabs=%d", len(a.tabs))
+	}
+}
+
+func TestRepoListCloseTakesScannedCopyOfOpenRepo(t *testing.T) {
+	tab := newTab(1, "/tmp/work/alpha")
+	tab.loaded = true
+	a := &app{
+		tabs:      []*repoTab{tab},
+		found:     []string{"/tmp/work/alpha", "/tmp/work/beta"},
+		foundFrom: "/tmp/work",
+		dispatch:  func(func()) {},
+	}
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+	// 已打开的仓库同时在扫描列表里，两个列表各有它一份：只删一边会留下孤行，
+	// 得点两次才消失。
+	if err := tt.Click("关闭 alpha"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if len(a.tabs) != 0 || len(a.found) != 1 || a.found[0] != "/tmp/work/beta" {
+		t.Fatalf("一次点击没清干净：tabs=%d found=%v", len(a.tabs), a.found)
+	}
+	if tt.HasText("关闭 alpha") {
+		t.Fatalf("仓库行还在：%q", tt.Texts())
+	}
+}
+
+func TestRepoListCloseParentTakesNestedRepos(t *testing.T) {
+	tabPaths := func(tabs []*repoTab) []string {
+		out := make([]string, len(tabs))
+		for i, tab := range tabs {
+			out[i] = tab.path
+		}
+		return out
+	}
+	parent := newTab(1, "/tmp/work/网关代码")
+	child := newTab(2, "/tmp/work/网关代码/flow_engine")
+	sibling := newTab(3, "/tmp/work/other")
+	parent.loaded, child.loaded, sibling.loaded = true, true, true
+	a := &app{
+		tabs:      []*repoTab{parent, child, sibling},
+		found:     []string{"/tmp/work/网关代码", "/tmp/work/网关代码/gateway-source", "/tmp/work/other"},
+		foundFrom: "/tmp/work",
+		dispatch:  func(func()) {},
+	}
+	tt := ui.NewTester(a.view, 1100, 720)
+	tt.Frame()
+	if !tt.HasText("关闭 flow_engine") {
+		t.Fatalf("子仓库没有列出来：%q", tt.Texts())
+	}
+	if err := tt.Click("关闭 网关代码"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.tabs) != 1 || a.tabs[0].path != "/tmp/work/other" {
+		t.Fatalf("嵌套仓库的标签没跟着关：tabs=%v", tabPaths(a.tabs))
+	}
+	if len(a.found) != 1 || a.found[0] != "/tmp/work/other" {
+		t.Fatalf("嵌套仓库没从侧栏清掉：%v", a.found)
+	}
+	tt.Frame()
+	if tt.HasText("关闭 flow_engine") || !tt.HasText("关闭 other") {
+		t.Fatalf("级联清理结果不对：%q", tt.Texts())
 	}
 }
 

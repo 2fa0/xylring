@@ -325,6 +325,23 @@ func (a *app) closeTab(i int) {
 	}
 }
 
+// closeRepoTree 关掉一个仓库和它下面嵌套的仓库。侧栏的父子只是按路径算出来的缩进，
+// 列表里它们仍是平级条目，所以清理父级要自己把子树捞干净，否则子行会原地退回顶层。
+func (a *app) closeRepoTree(path string) {
+	var closing []int
+	for i, t := range a.tabs {
+		if t.path == path || repoContains(path, t.path) {
+			closing = append(closing, i)
+		}
+	}
+	for i := len(closing) - 1; i >= 0; i-- {
+		a.closeTab(closing[i])
+	}
+	a.found = slices.DeleteFunc(a.found, func(p string) bool {
+		return p == path || repoContains(path, p)
+	})
+}
+
 func (a *app) goHome() {
 	if a.scanCancel != nil {
 		a.scanCancel()

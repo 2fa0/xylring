@@ -12,7 +12,6 @@ import (
 	"math"
 	"os"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 
@@ -122,11 +121,20 @@ type app struct {
 	opCancel       context.CancelFunc
 	showDiscard    bool
 	discard        discardDialog
+	showPush       bool
+	push           pushDialog
 }
 
 type discardDialog struct {
 	open bool
 	file fileChange
+}
+
+// pushDialog 记着确认推送时那颗按钮指向的仓库和分支：弹窗开着的时候用户可能换了标签页。
+type pushDialog struct {
+	path     string
+	branch   string
+	upstream string
 }
 
 func newApp() *app {
@@ -241,6 +249,7 @@ func (a *app) view(c *ui.Context) {
 	a.comparisonModal(c)
 	a.commitWriteModal(c)
 	a.fetchModal(c)
+	a.pushModal(c)
 	a.discardModal(c)
 	a.ringModal(c)
 	a.operationModal(c)
@@ -401,15 +410,6 @@ func (a *app) chrome(c *ui.Context) {
 						Clicked() {
 						a.toggleSidebar()
 					}
-					if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Clicked() {
-						a.openSettings()
-					}
-					ui.Box(c).Grow(1)
-					if chromeIconButton(c, "sidebar-import-btn", "导入仓库", iconFolderPlus).
-						Tooltip(tr("导入本地仓库 (⌘O)")).
-						Clicked() {
-						a.pickRepo()
-					}
 					homeBtn := chromeIconButton(c, "sidebar-home-btn", "返回首页", iconHome).
 						Tooltip(tr("返回首页（右键查看最近仓库）"))
 					if len(a.recent) > 0 {
@@ -424,6 +424,15 @@ func (a *app) chrome(c *ui.Context) {
 					}
 					if homeBtn.Clicked() {
 						a.goHome()
+					}
+					ui.Box(c).Grow(1)
+					if chromeIconButton(c, "sidebar-import-btn", "导入仓库", iconFolderPlus).
+						Tooltip(tr("导入本地仓库 (⌘O)")).
+						Clicked() {
+						a.pickRepo()
+					}
+					if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Clicked() {
+						a.openSettings()
 					}
 				})
 			}
@@ -455,32 +464,30 @@ func (a *app) chrome(c *ui.Context) {
 			}
 			if tab != nil {
 				disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
-				ui.MenuButton(c.Key("topbar-sync"), tr("同步"), func(m *ui.Menu) {
-					if m.Item(tr("获取远程更新")).Disabled(disabled).
-						Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
-						a.quickFetch(tab)
-					}
-					pullLabel := tr("拉取到当前分支")
-					if tab.behind > 0 {
-						pullLabel += fmt.Sprintf(tr("（落后 %d 个提交）"), tab.behind)
-					}
-					if m.Item(pullLabel).Disabled(disabled).
-						Tooltip(tr("git pull：获取并整合远程更新，会修改本地代码")).Chosen() {
-						a.quickPull(tab)
-					}
-					pushLabel := tr("推送当前分支")
-					if tab.ahead > 0 {
-						pushLabel += fmt.Sprintf(tr("（领先 %d 个提交）"), tab.ahead)
-					}
-					if m.Item(pushLabel).Disabled(disabled).
-						Tooltip(tr("git push：将当前分支的本地提交推送到远程")).Chosen() {
-						a.quickPush(tab)
-					}
-					m.Separator()
-					if m.Item(tr("获取选项…")).Disabled(disabled).Chosen() {
-						a.openFetch(tab)
-					}
-				}).Height(26).Padding(0, 8).FontSize(12).Shrink(0).Disabled(disabled)
+				// 拉取会改本地代码，藏在菜单里点两下不亏；推送最常用，一颗按钮一步到位（再一次确认）。
+				chromeIconButton(c, "topbar-pull", "拉取或获取远程更新", iconDownload).
+					Menu(func(m *ui.Menu) {
+						if m.Item(tr("获取远程更新")).Disabled(disabled).
+							Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
+							a.quickFetch(tab)
+						}
+						pullLabel := tr("拉取到当前分支")
+						if tab.behind > 0 {
+							pullLabel += fmt.Sprintf(tr("（落后 %d 个提交）"), tab.behind)
+						}
+						if m.Item(pullLabel).Disabled(disabled).
+							Tooltip(tr("git pull：获取并整合远程更新，会修改本地代码")).Chosen() {
+							a.quickPull(tab)
+						}
+						m.Separator()
+						if m.Item(tr("获取选项…")).Disabled(disabled).Chosen() {
+							a.openFetch(tab)
+						}
+					}).Disabled(disabled)
+				if chromeIconButton(c, "topbar-push", "推送当前分支", iconUpload).
+					Disabled(disabled).Clicked() {
+					a.requestPush(tab)
+				}
 			}
 			if tab == nil {
 				return
@@ -518,7 +525,10 @@ func (a *app) emptyState(c *ui.Context) {
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).FillWidth().Padding(36, 40, 28, 40).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Width(460).MaxWidthPercent(100).Gap(18).Children(func() {
-				ui.Text(c, "Xylring").FontSize(26).Bold().LetterSpacing(-0.4)
+				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, iconTreeRings).Size(28, 28).TextColor(woodColor(t)).Shrink(0)
+					ui.Text(c, "Xylring").FontSize(26).Bold().LetterSpacing(-0.4)
+				})
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					if ui.PrimaryButton(c.Key("import-empty"), "").Label(tr("导入仓库")).Children(func() {
 						ui.Icon(c, iconFolderPlus).Size(16, 16)
@@ -593,11 +603,12 @@ func (a *app) emptyState(c *ui.Context) {
 func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 	t := c.Theme()
 	title := repoTitle(path)
-	row := ui.ButtonBase(c.Key(fmt.Sprintf("recent-%d", i))).Label(title).Tooltip(path).FillWidth().Padding(8, 10).Gap(10).Radius(t.Radius).Justify(ui.Start).AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
+	row := ui.ButtonBase(c.Key(fmt.Sprintf("recent-%d", i))).Label(title).FillWidth().Padding(8, 10).Gap(10).Radius(t.Radius).Justify(ui.Start).AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
+	hovered := row.Hovered()
 	switch {
 	case row.Pressed():
 		row.Background(t.SurfacePressed)
-	case row.Hovered():
+	case hovered:
 		row.Background(t.SurfaceHover)
 	}
 	remove := false
@@ -631,7 +642,15 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 		ui.Icon(c, iconFolder).Size(16, 16).TextColor(t.TextMuted).Shrink(0)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, title).SingleLine().MinWidth(0)
-			ui.Text(c, homePath(path)).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+			shown := homePath(path)
+			sub := ui.Text(c, shown).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+			// 路径看得全就不弹黑框；只有副行被裁掉时才把整条路径放上去。
+			if hovered || row.Focused() {
+				w, _ := c.MeasureText(0, ui.Span{Text: shown, Size: 12})
+				if tip := cutTip(path, w, sub.Bounds().W); tip != "" {
+					sub.Tooltip(tip)
+				}
+			}
 			if a.banner != "" && a.bannerPath == path {
 				ui.Text(c, trMessage(a.banner)).FontSize(12).TextColor(t.Danger)
 			}
@@ -647,6 +666,14 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 		a.openRepo(path)
 	}
 	return false
+}
+
+// cutTip 返回 tip 只在内容放不下的时候：看得全的内容，悬停不该在它上面盖一个黑框。
+func cutTip(tip string, width, room float32) string {
+	if room <= 0 || width <= room+0.5 {
+		return ""
+	}
+	return tip
 }
 
 func (a *app) bannerOnRecentVisible() bool {
@@ -745,17 +772,12 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 		a.repoListState.Reorder = func(dragged []int, to int) {
 			a.reorderRepos(items, repoIndexes(rows, dragged), repoIndexAt(rows, to, len(items)))
 		}
-		closeIdx := -1
-		hideFound := ""
-		requestClose := func(p string, tabIdx int) {
-			if tabIdx >= 0 {
-				closeIdx = tabIdx
-			} else {
-				hideFound = p
-			}
+		closing := ""
+		requestClose := func(p string) {
+			closing = p
 		}
 		// 工作树子行沿用仓库行的菜单：都是同一个目录上的动作。
-		contextMenu := func(p string, tabIdx int) func(m *ui.Menu) {
+		contextMenu := func(p string) func(m *ui.Menu) {
 			return func(m *ui.Menu) {
 				revealName := "在访达中显示"
 				if runtime.GOOS == "windows" {
@@ -779,7 +801,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				}
 				m.Separator()
 				if m.Item(tr("关闭仓库")).Chosen() {
-					requestClose(p, tabIdx)
+					requestClose(p)
 				}
 			}
 		}
@@ -793,7 +815,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			}
 			padL := float32(10) + float32(level)*c.Theme().Space(4)
 			if record.worktree != nil {
-				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, tabIdx))
+				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p))
 				return
 			}
 			label := repoListLabel(a.foundFrom, items, p)
@@ -812,7 +834,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				tip += tr("（工作区有未提交或未跟踪的代码）")
 			}
 			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
-			row.ContextMenu(contextMenu(p, tabIdx))
+			row.ContextMenu(contextMenu(p))
 			row.Children(func() {
 				ui.Text(c, label).FontSize(13).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
 				if branchDisplay != "" {
@@ -822,14 +844,12 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 					})
 				}
 				if closeIconButton(c, "close-repo:"+p, tr("关闭 ")+label).Clicked() {
-					requestClose(p, tabIdx)
+					requestClose(p)
 				}
 			})
 		}).Grow(1).MinHeight(0).Gap(2)
-		if closeIdx >= 0 {
-			a.closeTab(closeIdx)
-		} else if hideFound != "" {
-			a.found = slices.DeleteFunc(a.found, func(p string) bool { return p == hideFound })
+		if closing != "" {
+			a.closeRepoTree(closing)
 		} else if list.Changed() && a.repoSel >= 0 && a.repoSel < len(rows) {
 			if wt := rows[a.repoSel].worktree; wt != nil {
 				a.openRepo(wt.path)
