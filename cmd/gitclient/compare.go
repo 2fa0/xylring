@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -446,6 +448,11 @@ func (a *app) startDiff(t *repoTab, from, to [20]byte, list func(context.Context
 	t.compareGen++
 	gen := t.compareGen
 	t.diffFrom, t.diffTo = from, to
+	// 已读只属于这一个对比：换了来源就清空。
+	if reviewCtx := diffReviewContext(t, from, to); reviewCtx != t.reviewCtx {
+		t.reviewCtx = reviewCtx
+		t.reviewed = nil
+	}
 	t.compareFiles = nil
 	t.compareErr = ""
 	t.compareLoading = true
@@ -674,7 +681,9 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 		var imgDiff *imageDiff
 		var note string
 		source, err := readFileDiffSource(ctx, path, fromRev, toRev, f, worktree)
+		stamp := ""
 		if err == nil {
+			stamp = fileContentStamp(source)
 			diff, simple, imgDiff, note, err = source.prepare(ctx, f.path, ignoreWhitespace && f.status != "A" && f.status != "D")
 		}
 		if err == nil {
@@ -686,6 +695,7 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 			}
 			t.diffLoading = false
 			t.diffSource = source
+			t.applyFileStamp(f.path, stamp)
 			if err != nil {
 				t.diffNote = err.Error()
 				t.openFileTabAfterLoad = false
@@ -945,8 +955,13 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 }
 
 func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
+	theme := c.Theme()
 	ui.Row(c).FillWidth().Padding(4, 8).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
 		a.fileListTitle(c, t)
+		// 已读计数只在真读过东西时出现，且整屏只有这一处。
+		if viewed, total := t.reviewedCount(); viewed > 0 {
+			ui.Text(c, fmt.Sprintf(tr("%d/%d 已读"), viewed, total)).FontSize(11).TextColor(theme.TextMuted).Shrink(0)
+		}
 		if t.worktree && len(t.compareFiles) > 0 {
 			paneIconButton(c, "inspect-stage-all", tr("全部暂存"), iconPlus).Tooltip(tr("全部暂存")).OnClick(func() {
 				a.stageAllWorktree(t)
@@ -1265,6 +1280,35 @@ func fileIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 	return btn
 }
 
+// fileReviewButton 是文件行上的已读勾选按钮，排在悬停操作的最左侧：
+// 已读是文件列表的事实，不归 diff 头部管。
+func fileReviewButton(c *ui.Context, t *repoTab, f fileChange) {
+	theme := c.Theme()
+	reviewed := t.fileViewed(f.path)
+	tip := "标记为已读"
+	if reviewed {
+		tip = "标记为未读"
+	}
+	btn := ui.ButtonBase(c.Key("file-review-" + f.path)).Label(tr(tip)).Tooltip(tr(tip)).
+		Padding(4).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
+	switch {
+	case btn.Pressed():
+		btn.Background(theme.SurfacePressed)
+	case btn.Hovered():
+		btn.Background(theme.Text.Alpha(0.08))
+	}
+	color := theme.TextMuted
+	if reviewed {
+		color = theme.Accent
+	}
+	btn.Children(func() {
+		ui.Icon(c, iconCheck).Size(14, 14).TextColor(color)
+	})
+	if btn.Clicked() {
+		t.toggleFileReviewed(f.path)
+	}
+}
+
 func copyPathTip(c *ui.Context) string {
 	alt := "Alt"
 	if runtime.GOOS == "darwin" {
@@ -1308,6 +1352,7 @@ func (a *app) fileHoverActions(c *ui.Context, t *repoTab, i int, hovered bool) {
 	}
 	f := t.compareFiles[i]
 	ui.Row(c).Gap(2).AlignItems(ui.Center).Padding(2, 6).Background(bg).Radius(0, theme.Radius, theme.Radius, 0).Label(tr("文件操作")).Absolute().Top(0).Right(0).Bottom(0).Children(func() {
+		fileReviewButton(c, t, f)
 		if t.worktree {
 			a.worktreeStageHoverButtons(c, t, f)
 		}
@@ -1468,7 +1513,10 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 				if t.worktree {
 					a.worktreeStageCheckbox(c, t, f, "wt-stage-list")
 				}
-				ui.Text(c, filepath.Base(f.path)).FontSize(13).SingleLine().Grow(1).MinWidth(0)
+				name := ui.Text(c, filepath.Base(f.path)).FontSize(13).SingleLine().Grow(1).MinWidth(0)
+				if t.fileViewed(f.path) {
+					name.TextColor(theme.TextMuted) // 已读用布局表达，不补“已读”两个字。
+				}
 				fileTrailingMeta(c, f, hovered)
 			})
 			ui.Text(c, dir).FontSize(11).TextColor(muted).SingleLine().Grow(1).MinWidth(0)
@@ -1529,7 +1577,10 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 			if t.worktree && !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
 				a.worktreeStageCheckbox(c, t, t.compareFiles[n.file], "wt-stage-tree")
 			}
-			ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).MinWidth(0)
+			name := ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).MinWidth(0)
+			if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) && t.fileViewed(t.compareFiles[n.file].path) {
+				name.TextColor(theme.TextMuted)
+			}
 			if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
 				f := t.compareFiles[n.file]
 				fileTrailingMeta(c, f, hovered)
@@ -1771,4 +1822,68 @@ func prepareDiff(oldb, newb []byte, path string) (*editor.DiffState, *simpleDiff
 		}
 	}
 	return d, nil
+}
+
+// diffReviewContext 说出这批 diff 的来源，作为已读和笔记的生命周期键。
+func diffReviewContext(t *repoTab, from, to [20]byte) string {
+	if t.worktree {
+		return "worktree"
+	}
+	return hashHex(from) + ":" + hashHex(to)
+}
+
+// fileContentStamp 是两侧内容的指纹。判定失效不能看 status：M 还是 M，
+// 内容可能已经变了。
+func fileContentStamp(s *fileDiffSource) string {
+	if s == nil || (len(s.old) == 0 && len(s.new) == 0) {
+		return ""
+	}
+	sum := sha256.New()
+	sum.Write(s.old)
+	sum.Write([]byte{'\n'})
+	sum.Write(s.new)
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// applyFileStamp 记下文件内容现在的指纹，内容变了就把已读作废。
+func (t *repoTab) applyFileStamp(path, stamp string) {
+	if stamp == "" {
+		return
+	}
+	if t.reviewed == nil {
+		t.reviewed = map[string]fileReview{}
+	}
+	rec := t.reviewed[path]
+	if rec.stamp == stamp {
+		return
+	}
+	if rec.stamp != "" {
+		rec.viewed = false
+	}
+	rec.stamp = stamp
+	t.reviewed[path] = rec
+}
+
+// fileViewed 说这个文件是否已标记为已读。
+func (t *repoTab) fileViewed(path string) bool { return t.reviewed[path].viewed }
+
+// toggleFileReviewed 在已读和未读之间切换一个文件。
+func (t *repoTab) toggleFileReviewed(path string) {
+	if t.reviewed == nil {
+		t.reviewed = map[string]fileReview{}
+	}
+	rec := t.reviewed[path]
+	rec.viewed = !rec.viewed
+	t.reviewed[path] = rec
+}
+
+// reviewedCount 数这批文件里已读的有几个、共几个。
+func (t *repoTab) reviewedCount() (viewed, total int) {
+	for _, f := range t.compareFiles {
+		total++
+		if t.fileViewed(f.path) {
+			viewed++
+		}
+	}
+	return viewed, total
 }

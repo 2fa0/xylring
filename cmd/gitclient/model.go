@@ -154,6 +154,8 @@ type repoTab struct {
 	fileTreeCount        int
 	fileTreeData         fileTree
 	fileSplit            float32
+	reviewed             map[string]fileReview // 文件路径 -> 审阅状态，生命周期是 reviewCtx。
+	reviewCtx            string                // "worktree" 或 "from:to"，换对比时清空。
 	diffSource           *fileDiffSource
 	diff                 *editor.DiffState
 	simpleDiff           *simpleDiff
@@ -178,6 +180,13 @@ type repoTab struct {
 	detailsErr     string
 	detailsGen     int
 	detailsCancel  context.CancelFunc
+}
+
+// fileReview 是一个文件的审阅状态：标记为已读，以及标记时内容的指纹。
+// status 判定不了失效——M 还是 M，内容可能已经变了——所以要指纹。
+type fileReview struct {
+	viewed bool
+	stamp  string
 }
 
 func newTab(id int, path string) *repoTab {
