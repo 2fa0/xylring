@@ -45,6 +45,17 @@ if [ -z "$version" ]; then
   fail "无法读取 cmd/gitclient/mygo.json 里的 version。"
 fi
 
+# 更新包必须用私钥签名。没有密钥时 mygo build 只给一句警告，打出来的包看着
+# 正常，实际不能让已安装的版本升级，所以在这里直接停下。
+if [ -z "${MYGO_UPDATER_PRIVATE_KEY:-}" ]; then
+  update_key="$HOME/Library/Application Support/mygo/update-keys/mygo-update.key"
+  if [ ! -f "$update_key" ]; then
+    fail "找不到更新签名密钥。先运行 cd cmd/gitclient && go tool mygo keygen，或把密钥放进 MYGO_UPDATER_PRIVATE_KEY。"
+  fi
+  MYGO_UPDATER_PRIVATE_KEY="$(cat "$update_key")"
+  export MYGO_UPDATER_PRIVATE_KEY
+fi
+
 have_nsis=0
 if command -v makensis >/dev/null 2>&1; then
   have_nsis=1
@@ -152,14 +163,41 @@ if [ "$found" -eq 0 ]; then
   fail "没有生成可交付的包。请查看上面的构建输出。"
 fi
 
+# 每个平台的构建目录里还有更新用的归档、清单和增量包。Release 必须带上它们，
+# 否则正在运行的旧版本查不到新版本。
+for target in darwin-arm64 darwin-amd64 windows-amd64; do
+  dir="$APP_DIR/build/$target"
+  [ -d "$dir" ] || continue
+  shopt -s nullglob
+  update_files=("$dir"/*.tar.gz "$dir"/*.delta "$dir"/update-*.json)
+  shopt -u nullglob
+  if [ "${#update_files[@]}" -eq 0 ]; then
+    fail "$target 里没有更新文件，这个包发出去后已安装的版本无法自动升级。"
+  fi
+  if ! cp -p "${update_files[@]}" "$staging/"; then
+    fail "无法复制 $target 的更新文件。"
+  fi
+done
+
 rm -rf "$PACKAGES"
 mkdir -p "$PACKAGES" || fail "无法创建 release/。"
 cp -p "$staging"/* "$PACKAGES/" || fail "无法把安装包放进 release/。"
+# 校验文件跟着包一起发；手工上传时也要带上。
+(cd "$PACKAGES" && shasum -a 256 * > checksums.txt) || fail "无法生成 checksums.txt。"
 
 elapsed=$(( $(date +%s) - started ))
 echo "可交付的包在 release/，用时 ${elapsed} 秒："
 echo
 ls -lh "$PACKAGES"
+echo
+
+echo "已安装的旧版本会读 update-*.json 自动升级；这些文件和安装包一起留在 Release 里。"
+echo
+echo "手工发布（浏览器上传）："
+echo "  1. 打开 https://github.com/2fa0/xylring-release/releases/new，标签填 v${version}"
+echo "  2. 把 release/ 里的全部文件拖上去：安装包、*.tar.gz、*.delta、update-*.json、checksums.txt"
+echo "  3. 勾上 Set as the latest release；正文粘 CHANGELOG.md 里 ${version} 那一段"
+echo "  4. 发完打开 https://github.com/2fa0/xylring-release/releases/latest/download/update-darwin-arm64.json 确认能下载"
 echo
 if [ "${#dmgs_arm[@]}" -eq 1 ]; then
   echo "macOS Apple 芯片（ARM64）：把 arm64 磁盘镜像发给 M1/M2/M3/M4 系列 Mac。对方打开后把 Xylring 拖进“应用程序”。"

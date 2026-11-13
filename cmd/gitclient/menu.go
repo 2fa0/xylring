@@ -25,6 +25,9 @@ func (a *app) installMenu() {
 		}},
 	}
 	if runtime.GOOS != "darwin" {
+		if item := updatesMenuItem(); item != nil {
+			file = append(file, item)
+		}
 		file = append(file, settingsItem, mygo.Separator(), &mygo.MenuItem{Role: mygo.RoleQuit})
 	}
 	operations := []*mygo.MenuItem{
@@ -72,10 +75,15 @@ func (a *app) installMenu() {
 		{Role: mygo.RoleWindowMenu},
 	}
 	if runtime.GOOS == "darwin" {
-		items = append([]*mygo.MenuItem{{Role: mygo.RoleAppMenu, Submenu: []*mygo.MenuItem{
-			{Role: mygo.RoleAbout}, mygo.Separator(), settingsItem, mygo.Separator(),
-			{Role: mygo.RoleServices}, mygo.Separator(), {Role: mygo.RoleHide}, {Role: mygo.RoleHideOthers}, {Role: mygo.RoleUnhide}, mygo.Separator(), {Role: mygo.RoleQuit},
-		}}}, items...)
+		appMenu := []*mygo.MenuItem{{Role: mygo.RoleAbout}}
+		if item := updatesMenuItem(); item != nil {
+			appMenu = append(appMenu, item)
+		}
+		appMenu = append(appMenu, mygo.Separator(), settingsItem, mygo.Separator(),
+			&mygo.MenuItem{Role: mygo.RoleServices}, mygo.Separator(),
+			&mygo.MenuItem{Role: mygo.RoleHide}, &mygo.MenuItem{Role: mygo.RoleHideOthers}, &mygo.MenuItem{Role: mygo.RoleUnhide},
+			mygo.Separator(), &mygo.MenuItem{Role: mygo.RoleQuit})
+		items = append([]*mygo.MenuItem{{Role: mygo.RoleAppMenu, Submenu: appMenu}}, items...)
 	}
 	a.menu = mygo.NewMenu(items)
 	mygo.App.SetMenu(a.menu)

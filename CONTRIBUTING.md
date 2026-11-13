@@ -1,7 +1,7 @@
 # Contributing to Xylring
 
-Thanks for taking the time to contribute. This document covers what you need to
-build the project locally, run the tests, and get a pull request merged.
+The source is not public. This document covers what you need to build the
+project locally, run the tests, and land a change in the main working copy.
 
 ## Prerequisites
 
@@ -14,10 +14,7 @@ build the project locally, run the tests, and get a pull request merged.
 ## Getting started
 
 ```sh
-git clone https://github.com/2fa0/xylring.git
-cd xylring
-
-# Run the app against any repository
+# From the root of the source working copy
 go run ./cmd/gitclient /path/to/some/repo
 ```
 
@@ -70,13 +67,13 @@ A commit written entirely by a human should declare `AI-Agent: human` and omit
 the model. Existing human authorship, co-author, and `Signed-off-by` trailers
 must be preserved.
 
-These trailers are not enforced on pull requests, so your build will not fail
-if they are missing — but the project uses them to trace how changes were
-produced, and they are appreciated.
+The trailers are not enforced by a hook on every path, so your build may not
+fail when they are missing — but the project uses them to trace how changes were
+produced.
 
-## Pull requests
+## Changes
 
-1. Fork the repository and create a branch from `main`.
+1. Work on a branch off `main` in the source working copy.
 2. Keep the change focused. Separate unrelated refactors from behavior changes.
 3. Add or update tests when you change behavior, and make sure `go test ./...`
    passes on your machine.

@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.2-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.8.3-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
 </p>
@@ -52,13 +52,16 @@ Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Gi
 
 ## 📦 下载与安装
 
-从 [**GitHub Releases**](https://github.com/2fa0/xylring/releases) 下载预编译安装包。
+从 [**GitHub Releases**](https://github.com/2fa0/xylring-release/releases) 下载预编译安装包。
+
+装好之后，Xylring 会自己检查新版本：有新版本时弹出更新窗口，装完重启即可。
+0.8.2 及更早的版本还没有这项能力，需要手动装一次带自动更新的版本。
 
 ### macOS 用户 (Apple Silicon / Intel)
 
 1. 根据芯片架构下载对应磁盘镜像：
-   - **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.8.2-arm64.dmg`
-   - **Intel 芯片 (x86_64)**：`xylring-0.8.2-amd64.dmg`
+   - **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.8.3-arm64.dmg`
+   - **Intel 芯片 (x86_64)**：`xylring-0.8.3-amd64.dmg`
 2. 双击打开 `.dmg`，将 **Xylring** 拖入「应用程序（Applications）」文件夹。
 
 > [!NOTE]
@@ -70,18 +73,15 @@ Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Gi
 
 ### Windows 用户 (Windows 10 & 11 x64)
 
-- **安装版**：下载运行 `xylring-setup-0.8.2-amd64.exe`（安装到当前用户目录，无需管理员权限）。
-- **便携版**：下载解压 `xylring-0.8.2-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
+- **安装版**：下载运行 `xylring-setup-0.8.3-amd64.exe`（安装到当前用户目录，无需管理员权限）。
+- **便携版**：下载解压 `xylring-0.8.3-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
 
 ### 源码编译安装
 
 环境要求：**Go 1.27+** 和系统 **Git**。
 
 ```sh
-# 克隆仓库
-git clone https://github.com/2fa0/xylring.git
-cd xylring
-
+# 源码不公开：在源码工作副本的根目录运行
 # 直接运行
 go run ./cmd/gitclient /path/to/your/repo
 
@@ -159,15 +159,10 @@ macOS 也可能生成独立的系统诊断报告。
 
 ---
 
-## 🤝 参与贡献
+## 🤝 反馈
 
-欢迎在 [Issue 页面](https://github.com/2fa0/xylring/issues)反馈普通问题、提出建议或提交 Pull Request；安全漏洞请按下文私下报告。
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feat/AmazingFeature`)
-3. 提交改动 (`git commit -m 'feat: add amazing feature'`)
-4. 推送分支 (`git push origin feat/AmazingFeature`)
-5. 提交 Pull Request
+源码不对外公开，没有公开的问题跟踪或 PR 渠道；问题与建议请发邮件到
+[11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com)，安全漏洞请按下文私下报告。
 
 ---
 

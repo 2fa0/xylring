@@ -1,8 +1,13 @@
 {
   "name": "Xylring",
   "identifier": "dev.xylring.app",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "icon": "resources/logo.png",
   "resources": ["../../LICENSE"],
-  "out": "build"
+  "out": "build",
+  "updates": {
+    "publicKey": "zXh69xdr2qd3FX6g4ev7j10DuQgNE4USGIc21RBWYQ8=",
+    "github": "2fa0/xylring-release",
+    "changelog": "../../CHANGELOG.md"
+  }
 }
