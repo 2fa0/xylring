@@ -1035,6 +1035,7 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 		} else {
 			a.diffLayoutToggle(c)
 			a.diffIgnoreWhitespaceToggle(c, t)
+			a.diffWrapToggle(c)
 			if t.diff != nil || t.simpleDiff != nil {
 				findTip := "在 Diff 中查找 (⌘F)"
 				if runtime.GOOS != "darwin" {
@@ -1127,6 +1128,22 @@ func (a *app) diffIgnoreWhitespaceToggle(c *ui.Context, t *repoTab) {
 		if t != nil && t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
 			a.loadFileDiff(t, t.fileSel)
 		}
+	}
+}
+
+func (a *app) diffWrapToggle(c *ui.Context) {
+	theme := c.Theme()
+	btn := ui.ButtonBase(c.Key("diff-wrap-toggle")).Height(24).Label(tr("折行")).Tooltip(tr("折行显示长行")).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+	if a.diffWrap {
+		btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
+	} else {
+		btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
+	}
+	btn.Children(func() {
+		ui.Text(c, tr("折行")).FontSize(11).SingleLine()
+	})
+	if btn.Clicked() {
+		a.diffWrap = !a.diffWrap
 	}
 }
 
@@ -1612,6 +1629,7 @@ func (a *app) fileDiffContent(c *ui.Context, diff *editor.DiffState, simple *sim
 			editor.View(c.Key("large-diff-new"), &simple.new).Grow(1).Basis(0).FillHeight().MinWidth(0)
 		})
 	case diff != nil:
+		diff.Wrap = a.diffWrap
 		diff.Layout = a.currentDiffLayout()
 		diff.RenderFindBar = renderFindBar
 		editor.DiffView(c.Key("file-diff"), diff).Grow(1).MinHeight(0)

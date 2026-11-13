@@ -104,6 +104,7 @@ type app struct {
 	fileView             int // 0 list, 1 tree
 	diffLayout           int // 0 split, 1 unified
 	diffIgnoreWhitespace bool
+	diffWrap             bool
 
 	showWrite bool
 	write     commitWrite
@@ -148,6 +149,7 @@ func newApp() *app {
 		}
 		a.restoreDisabled, a.fileView, a.diffLayout = p.RestoreDisabled, p.FileView, p.DiffLayout
 		a.diffIgnoreWhitespace = p.IgnoreWhitespace
+		a.diffWrap = p.Wrap
 		if validAutoFetch(p.AutoFetch) {
 			a.autoFetch = p.AutoFetch
 		}
