@@ -732,48 +732,31 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 	}
 	ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		items := a.repoItems()
+		rows := a.sidebarRows(items)
 		a.repoSel = -1
-		for i, p := range items {
-			if p == active {
+		for i, row := range rows {
+			if row.path == active {
 				a.repoSel = i
 				break
 			}
 		}
 		a.repoListState.Selected = &a.repoSel
-		a.repoListState.Key = func(i int) any { return items[i] }
-		a.repoListState.Reorder = func(rows []int, to int) {
-			a.reorderRepos(items, rows, to)
+		a.repoListState.Key = func(i int) any { return rows[i].path }
+		a.repoListState.Reorder = func(dragged []int, to int) {
+			a.reorderRepos(items, repoIndexes(rows, dragged), repoIndexAt(rows, to, len(items)))
 		}
 		closeIdx := -1
 		hideFound := ""
-		list := ui.List(c.Key("repositories"), &a.repoListState, len(items), func(i int) {
-			p := items[i]
-			label := repoListLabel(a.foundFrom, items, p)
-			level := repoNestLevel(items, p)
-			tabIdx := -1
-			for j, tab := range a.tabs {
-				if tab.path == p {
-					tabIdx = j
-					break
-				}
+		requestClose := func(p string, tabIdx int) {
+			if tabIdx >= 0 {
+				closeIdx = tabIdx
+			} else {
+				hideFound = p
 			}
-			padL := float32(10) + float32(level)*c.Theme().Space(4)
-			branch, dirty, ahead, behind := a.repoStatus(p)
-			if tabIdx < 0 || !a.tabs[tabIdx].loaded {
-				if !a.isRepoSummaryFresh(p) {
-					a.ensureRepoSummary(p)
-				}
-			}
-			branchDisplay := sidebarBranchDisplay(branch, dirty)
-			if sync := syncBadge(ahead, behind); sync != "" {
-				branchDisplay += " " + sync
-			}
-			tip := tr("当前分支：") + displayBranch(branch)
-			if dirty {
-				tip += tr("（工作区有未提交或未跟踪的代码）")
-			}
-			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
-			row.ContextMenu(func(m *ui.Menu) {
+		}
+		// 工作树子行沿用仓库行的菜单：都是同一个目录上的动作。
+		contextMenu := func(p string, tabIdx int) func(m *ui.Menu) {
+			return func(m *ui.Menu) {
 				revealName := "在访达中显示"
 				if runtime.GOOS == "windows" {
 					revealName = "在资源管理器中显示"
@@ -796,13 +779,40 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				}
 				m.Separator()
 				if m.Item(tr("关闭仓库")).Chosen() {
-					if tabIdx >= 0 {
-						closeIdx = tabIdx
-					} else {
-						hideFound = p
-					}
+					requestClose(p, tabIdx)
 				}
-			})
+			}
+		}
+		list := ui.List(c.Key("repositories"), &a.repoListState, len(rows), func(i int) {
+			record := rows[i]
+			p := record.path
+			tabIdx := a.tabIndex(p)
+			level := repoNestLevel(items, items[record.repo])
+			if record.worktree != nil {
+				level++
+			}
+			padL := float32(10) + float32(level)*c.Theme().Space(4)
+			if record.worktree != nil {
+				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, tabIdx))
+				return
+			}
+			label := repoListLabel(a.foundFrom, items, p)
+			branch, dirty, ahead, behind := a.repoStatus(p)
+			if tabIdx < 0 || !a.tabs[tabIdx].loaded {
+				if !a.isRepoSummaryFresh(p) {
+					a.ensureRepoSummary(p)
+				}
+			}
+			branchDisplay := sidebarBranchDisplay(branch, dirty)
+			if sync := syncBadge(ahead, behind); sync != "" {
+				branchDisplay += " " + sync
+			}
+			tip := tr("当前分支：") + displayBranch(branch)
+			if dirty {
+				tip += tr("（工作区有未提交或未跟踪的代码）")
+			}
+			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
+			row.ContextMenu(contextMenu(p, tabIdx))
 			row.Children(func() {
 				ui.Text(c, label).FontSize(13).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
 				if branchDisplay != "" {
@@ -812,11 +822,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 					})
 				}
 				if closeIconButton(c, "close-repo:"+p, tr("关闭 ")+label).Clicked() {
-					if tabIdx >= 0 {
-						closeIdx = tabIdx
-					} else {
-						hideFound = p
-					}
+					requestClose(p, tabIdx)
 				}
 			})
 		}).Grow(1).MinHeight(0).Gap(2)
@@ -824,8 +830,101 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			a.closeTab(closeIdx)
 		} else if hideFound != "" {
 			a.found = slices.DeleteFunc(a.found, func(p string) bool { return p == hideFound })
-		} else if list.Changed() && a.repoSel >= 0 && a.repoSel < len(items) {
-			a.openRoot(items[a.repoSel])
+		} else if list.Changed() && a.repoSel >= 0 && a.repoSel < len(rows) {
+			if wt := rows[a.repoSel].worktree; wt != nil {
+				a.openRepo(wt.path)
+			} else {
+				a.openRoot(items[rows[a.repoSel].repo])
+			}
+		}
+	})
+}
+
+// sidebarRow 是侧栏列表里的一行：仓库本身（worktree 为 nil），或挂在它下面的工作树。
+type sidebarRow struct {
+	path     string
+	worktree *repoWorktree
+	repo     int // items 里的下标，工作树行指向它所属的仓库
+}
+
+// sidebarRows 摊平仓库列表：每个仓库后面跟它的工作树子行。已经作为工作树列在
+// 别处的仓库不再单独占一行，同一个目录只出现一次（工作树优先）。
+func (a *app) sidebarRows(items []string) []sidebarRow {
+	worktrees := make(map[string][]repoWorktree, len(items))
+	nested := map[string]bool{}
+	for _, p := range items {
+		worktrees[p] = a.repoWorktrees(p)
+		for _, wt := range worktrees[p] {
+			nested[wt.path] = true
+		}
+	}
+	rows := make([]sidebarRow, 0, len(items))
+	for i, p := range items {
+		if nested[p] {
+			continue
+		}
+		rows = append(rows, sidebarRow{repo: i, path: p})
+		for _, wt := range worktrees[p] {
+			wt := wt
+			rows = append(rows, sidebarRow{repo: i, path: wt.path, worktree: &wt})
+		}
+	}
+	return rows
+}
+
+// repoWorktrees 返回已加载仓库的工作树。没打开过的仓库不为它额外跑 git。
+func (a *app) repoWorktrees(path string) []repoWorktree {
+	for _, tab := range a.tabs {
+		if tab.path == path && tab.loaded {
+			return tab.worktrees
+		}
+	}
+	return nil
+}
+
+func (a *app) tabIndex(path string) int {
+	for i, tab := range a.tabs {
+		if tab.path == path {
+			return i
+		}
+	}
+	return -1
+}
+
+// repoIndexes 把列表行号换回仓库下标：抓住工作树子行拖动等于拖动它所属的仓库。
+func repoIndexes(rows []sidebarRow, indexes []int) []int {
+	out := make([]int, 0, len(indexes))
+	for _, i := range indexes {
+		if i >= 0 && i < len(rows) {
+			out = append(out, rows[i].repo)
+		}
+	}
+	return out
+}
+
+func repoIndexAt(rows []sidebarRow, at, count int) int {
+	if at >= 0 && at < len(rows) {
+		return rows[at].repo
+	}
+	return count
+}
+
+// sidebarWorktreeRow 画一个工作树子行：比它所属的仓库低一层，主文案是分支，
+// 后面是锁定 / 可清理两个图标，点开这个目录。
+func (a *app) sidebarWorktreeRow(c *ui.Context, p string, wt repoWorktree, padL float32, menu func(m *ui.Menu)) {
+	_, dirty, _, _ := a.repoStatus(p)
+	if !a.isRepoSummaryFresh(p) {
+		a.ensureRepoSummary(p)
+	}
+	row := ui.Row(c).FillWidth().MinHeight(28).Padding(6, 10, 6, padL).Gap(6).AlignItems(ui.Center)
+	row.ContextMenu(menu)
+	row.Children(func() {
+		ui.Text(c, worktreeRowLabel(wt, dirty)).FontSize(12).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
+		if wt.locked != "" {
+			ui.Icon(c, iconLock).Size(12, 12).TextColor(c.Theme().TextMuted).Shrink(0).Tooltip(tr("已锁定"))
+		}
+		if wt.prunable != "" {
+			ui.Icon(c, iconAlertCircle).Size(12, 12).TextColor(c.Theme().Warning).Shrink(0).Tooltip(tr("可清理"))
 		}
 	})
 }

@@ -698,6 +698,7 @@ type repoMeta struct {
 	outgoing    [][20]byte
 	upstream    string
 	hasUpstream bool
+	worktrees   []repoWorktree // nil 表示「不知道」，分页重建的 meta 用它保留已有列表。
 }
 
 var errRepoUnavailable = errors.New("仓库不可用：.git 已被删除或无法访问。恢复 .git 或重新初始化后将自动重新加载；git init 不会恢复原提交历史。")
@@ -741,11 +742,90 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 		return m, err
 	}
 	m.refs = parseRefs(rawRefs)
+	// 工作树只是附加信息：读不到就当没有，不阻断仓库加载。非 nil 的空切片
+	// 表示「确实没有」，分页重建的 meta 用 nil 表示「不知道，别覆盖」。
+	m.worktrees = []repoWorktree{}
+	if linked, werr := listWorktrees(ctx, dir); werr == nil {
+		m.worktrees = linked
+	}
 	m.operation, err = operationState(ctx, dir)
 	if err != nil {
 		return m, err
 	}
 	return m, nil
+}
+
+// listWorktrees 读这个仓库的 linked worktree。主工作树不在结果里：它就是侧栏里
+// 的仓库行本身，重复成子行没有意义。
+func listWorktrees(ctx context.Context, dir string) ([]repoWorktree, error) {
+	raw, err := runGit(ctx, dir, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return nil, err
+	}
+	all := parseWorktreeList(raw)
+	self := canonicalRepoDir(dir)
+	linked := make([]repoWorktree, 0, len(all))
+	for i, wt := range all {
+		// git 把主工作树排在第一条；从 linked worktree 里读时它的路径也不等于 dir，
+		// 所以位置和路径两条都算数。
+		if i == 0 || wt.path == self {
+			continue
+		}
+		linked = append(linked, wt)
+	}
+	return linked, nil
+}
+
+// parseWorktreeList 解析 `git worktree list --porcelain -z`：字段以 \0 分隔，
+// 条目之间多一个空的 \0。路径可以含空格，所以只有第一个空格是字段分隔符。
+func parseWorktreeList(raw []byte) []repoWorktree {
+	var out []repoWorktree
+	var cur repoWorktree
+	started := false
+	flush := func() {
+		if !started {
+			return
+		}
+		cur.path = canonicalRepoDir(cur.path)
+		out = append(out, cur)
+		cur, started = repoWorktree{}, false
+	}
+	for _, field := range strings.Split(string(raw), "\x00") {
+		if field == "" {
+			flush()
+			continue
+		}
+		key, value, _ := strings.Cut(field, " ")
+		switch key {
+		case "worktree":
+			flush()
+			cur.path, started = value, true
+		case "HEAD":
+			if h, err := parseHash(value); err == nil {
+				cur.head = h
+			}
+		case "branch":
+			cur.branch = strings.TrimPrefix(value, "refs/heads/")
+		case "detached":
+			cur.detached = true
+		case "locked":
+			// 没有 reason 时 porcelain 只有一个 locked 词，这里也留一个非空值，
+			// 「locked 非空即锁定」对两种写法都成立。
+			cur.locked = value
+			if cur.locked == "" {
+				cur.locked = worktreeMarkLocked
+			}
+		case "prunable":
+			cur.prunable = value
+			if cur.prunable == "" {
+				cur.prunable = worktreeMarkPrunable
+			}
+		case "bare":
+			cur.bare = true
+		}
+	}
+	flush()
+	return out
 }
 
 func parseRefs(raw []byte) map[[20]byte][]refInfo {

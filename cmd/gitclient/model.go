@@ -36,6 +36,23 @@ func (c commit) whenText() string {
 	return time.Unix(c.when, 0).Local().Format("2006-01-02 15:04")
 }
 
+// repoWorktree 是 `git worktree list` 的一条。本轮只读：不创建、不删除、不 prune。
+// locked / prunable 非空即成立，值是 git 给的可选 reason（没有时是下面两个占位）。
+type repoWorktree struct {
+	path     string
+	branch   string
+	head     [20]byte
+	detached bool
+	locked   string
+	prunable string
+	bare     bool
+}
+
+const (
+	worktreeMarkLocked   = "locked"
+	worktreeMarkPrunable = "prunable"
+)
+
 // repoTab 是一个已导入的仓库。当前只保留读历史和画图谱需要的状态。
 type repoTab struct {
 	ring             ringUI
@@ -83,6 +100,7 @@ type repoTab struct {
 	outgoing     map[[20]byte]bool // 本地独有；行渲染只做查表。
 	upstream     string
 	hasUpstream  bool
+	worktrees    []repoWorktree // 挂在仓库行下面的子行，主工作树不在里面。
 	syncBusy     bool
 	commitMsg    string
 	commitAmend  bool
@@ -264,6 +282,22 @@ func repoNestLevel(items []string, path string) int {
 		}
 	}
 	return n
+}
+
+// worktreeRowLabel 是工作树子行的主文案：分支名；没有分支就是分离头指针的短哈希。
+func worktreeRowLabel(wt repoWorktree, dirty bool) string {
+	label := wt.branch
+	if label == "" || wt.detached {
+		if wt.head == zeroHash {
+			label = tr("尚无提交")
+		} else {
+			label = tr("分离头指针") + " " + shortHash(wt.head)
+		}
+	}
+	if dirty {
+		label += "*"
+	}
+	return label
 }
 
 func repoListLabel(from string, items []string, path string) string {
