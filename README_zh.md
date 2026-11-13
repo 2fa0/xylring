@@ -21,6 +21,8 @@
   <img src="https://img.shields.io/badge/Release-v0.8.3-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
+  <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
+  <img src="https://img.shields.io/badge/许可-Apache%202.0-blue.svg?style=flat-square" alt="License" />
 </p>
 
 <p align="center">
@@ -81,7 +83,7 @@ Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Gi
 环境要求：**Go 1.27+** 和系统 **Git**。
 
 ```sh
-# 源码不公开：在源码工作副本的根目录运行
+# 先克隆仓库，再在仓库根目录运行
 # 直接运行
 go run ./cmd/gitclient /path/to/your/repo
 
@@ -152,17 +154,15 @@ macOS 也可能生成独立的系统诊断报告。
 
 ## 🛡️ 报告安全漏洞
 
-请通过 [11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com) 私下报告潜在漏洞，
-不要将漏洞细节直接发布到公开 Issue。请说明受影响版本、复现步骤和影响；
-分享日志或示例仓库前，请移除凭据及其他敏感信息。维护者将尽力处理报告；
-条件允许时，请先使用最新默认分支或最新已发布版本复现。
+请按 [安全策略](SECURITY.md) 私下报告潜在漏洞，不要将漏洞细节直接发布到
+公开 Issue。
 
 ---
 
 ## 🤝 反馈
 
-源码不对外公开，没有公开的问题跟踪或 PR 渠道；问题与建议请发邮件到
-[11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com)，安全漏洞请按下文私下报告。
+问题、功能建议和 PR 欢迎提到 [Issue 区](https://github.com/2fa0/xylring/issues)；
+如何编译和验证改动见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

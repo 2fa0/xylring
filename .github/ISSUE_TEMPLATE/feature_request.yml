@@ -1,0 +1,20 @@
+name: Feature request
+description: Something the app should do but does not
+labels: [enhancement]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: What are you trying to do
+      description: Describe the task or the workflow, not only the control you imagine.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How you handle it today
+      description: The command line, another tool, or a workaround, and what makes it painful.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything else
