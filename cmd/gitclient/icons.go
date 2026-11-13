@@ -68,6 +68,9 @@ var iconMinimizeSVG []byte
 //go:embed icons/alert-circle.svg
 var iconAlertCircleSVG []byte
 
+//go:embed icons/lock.svg
+var iconLockSVG []byte
+
 //go:embed icons/chevrons-up-down.svg
 var iconExpandAllSVG []byte
 
@@ -136,6 +139,7 @@ var (
 	iconMaximize    = ui.MustParseSVG(iconMaximizeSVG)
 	iconMinimize    = ui.MustParseSVG(iconMinimizeSVG)
 	iconAlertCircle = ui.MustParseSVG(iconAlertCircleSVG)
+	iconLock        = ui.MustParseSVG(iconLockSVG)
 	iconExpandAll   = ui.MustParseSVG(iconExpandAllSVG)
 	iconCollapseAll = ui.MustParseSVG(iconCollapseAllSVG)
 	iconPlus        = ui.MustParseSVG(iconPlusSVG)

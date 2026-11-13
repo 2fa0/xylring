@@ -105,12 +105,17 @@ func (a *app) ensureRepoSummary(path string) {
 
 // Only visible rows need periodic status. A batch uses one worker and one UI update.
 func (a *app) visibleRepoPaths() []string {
-	items := a.repoItems()
+	rows := a.sidebarRows(a.repoItems())
 	first, last := a.repoListState.Visible()
 	if first < 0 || last < first {
-		first, last = 0, min(32, len(items))-1
+		first, last = 0, min(32, len(rows))-1
 	}
-	return items[min(first, len(items)):min(last+1, len(items))]
+	// 列表里还有工作树子行，行号不等于仓库下标，按行取路径。
+	paths := make([]string, 0, last-first+1)
+	for _, row := range rows[min(first, len(rows)):min(last+1, len(rows))] {
+		paths = append(paths, row.path)
+	}
+	return paths
 }
 
 func (a *app) refreshRepoSummaries() { a.refreshSummaryBatch(a.visibleRepoPaths()) }

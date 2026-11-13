@@ -556,6 +556,10 @@ func (a *app) installHistory(t *repoTab, meta repoMeta, p preparedHistory) {
 		t.ring.checked = time.Now()
 	}
 	t.ahead, t.behind, t.upstream, t.hasUpstream = meta.ahead, meta.behind, meta.upstream, meta.hasUpstream
+	// 分页重建的 meta 不带工作树（nil），只有整仓加载才覆盖列表。
+	if meta.worktrees != nil {
+		t.worktrees = meta.worktrees
+	}
 	t.incoming, t.outgoing = hashSet(meta.incoming), hashSet(meta.outgoing)
 	a.summaryMu.Lock()
 	if a.repoSummaries != nil {
