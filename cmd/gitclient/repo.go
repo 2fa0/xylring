@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/2fa0/xylring/internal/crashlog"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func (a *app) post(fn func()) {
@@ -27,6 +29,21 @@ func (a *app) post(fn func()) {
 func (a *app) setBanner(msg, path string) {
 	a.banner = msg
 	a.bannerPath = path
+}
+
+// gitLogBannerButton 打开命令日志，选中最近一条失败。它只在这次会话真的有过
+// Git 调用失败时出现：磁盘错误、会话保存失败这类横幅背后没有可看的命令。
+func (a *app) gitLogBannerButton(c *ui.Context) {
+	dir := ""
+	if a.bannerPath != "" {
+		dir = a.bannerPath
+	}
+	if _, ok := gitLog.lastFailure(dir); !ok {
+		return
+	}
+	if ui.Button(c.Key("banner-git-log"), tr("查看 Git 日志")).Clicked() {
+		a.openGitLog(dir, true)
+	}
 }
 
 func (a *app) notifySuccess(tab *repoTab, msg string) {

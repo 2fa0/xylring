@@ -63,6 +63,9 @@ func (a *app) installMenu() {
 					a.openCompareModal(tab)
 				}
 			}},
+			{ID: "git-command-log", Label: tr("Git 日志…"), Click: func(*mygo.MenuItem, *mygo.Window) {
+				a.openGitLog("", false)
+			}},
 			mygo.Separator(),
 			{Role: mygo.RoleToggleFullScreen},
 		}},
