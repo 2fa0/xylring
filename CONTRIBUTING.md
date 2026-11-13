@@ -1,7 +1,11 @@
 # Contributing to Xylring
 
-The source is not public. This document covers what you need to build the
-project locally, run the tests, and land a change in the main working copy.
+Thanks for looking. This document covers how to build Xylring, run the tests, and
+land a change.
+
+Bugs and feature ideas go in the [issue tracker](https://github.com/2fa0/xylring/issues).
+Report security problems privately, following the [security policy](SECURITY.md),
+instead of opening a public issue.
 
 ## Prerequisites
 
@@ -73,7 +77,7 @@ produced.
 
 ## Changes
 
-1. Work on a branch off `main` in the source working copy.
+1. Work on a branch off `main`.
 2. Keep the change focused. Separate unrelated refactors from behavior changes.
 3. Add or update tests when you change behavior, and make sure `go test ./...`
    passes on your machine.

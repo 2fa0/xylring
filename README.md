@@ -21,6 +21,8 @@
   <img src="https://img.shields.io/badge/Release-v0.8.3-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
+  <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License" />
 </p>
 
 <p align="center">
@@ -81,7 +83,7 @@ Versions up to 0.8.2 have no updater yet, so install a build with it once by han
 Requirements: **Go 1.27+** and system **Git**.
 
 ```sh
-# The source is not public: run this from your source checkout
+# Clone the repository, then run from its root
 # Run directly
 go run ./cmd/gitclient /path/to/your/repo
 
@@ -155,20 +157,16 @@ logs and session files before sharing them.
 
 ## 🛡️ Reporting security vulnerabilities
 
-Please report potential vulnerabilities privately to
-[11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com), rather than opening a public
-issue. Include the affected version, reproduction steps, and impact; remove
-credentials and other sensitive information from any logs or sample repositories.
-Reports will be reviewed on a best-effort basis. Please reproduce against the
-latest default branch or latest available release when practical.
+Please report potential vulnerabilities privately, following the
+[security policy](SECURITY.md), rather than opening a public issue.
 
 ---
 
 ## 🤝 Feedback
 
-The source is not public, so there is no public issue tracker or pull request flow.
-Email [11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com) for questions and suggestions;
-report security vulnerabilities privately as described below.
+Bugs, feature ideas and pull requests are welcome in the
+[issue tracker](https://github.com/2fa0/xylring/issues). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for how to build and test a change.
 
 ---
 

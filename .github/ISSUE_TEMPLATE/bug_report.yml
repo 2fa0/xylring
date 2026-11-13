@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in the app behaves wrongly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove credentials, tokens and private repository contents from anything you paste.
+        Report security problems privately through the security policy instead of here.
+  - type: input
+    id: version
+    attributes:
+      label: Xylring version
+      placeholder: 0.8.3
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and Git version
+      placeholder: macOS 15.2 (Apple Silicon), git 2.47.1
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a repository that has ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from xylring.log or crash.log, with paths and credentials removed.
+      render: text
