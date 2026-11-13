@@ -29,6 +29,21 @@ type settingsState struct {
 	repo          string
 	gen           int
 	global, local gitSettingsScope
+	// gitOpen 记着 Git 分组折到了哪：打开设置时默认全展开，收起只在这一个
+	// 对话框的生命周期里有效，不写进配置。
+	gitOpen map[string]*bool
+}
+
+// gitGroupOpen 是某一组 Git 设置的展开状态，第一次问到时按展开算。
+func (s *settingsState) gitGroupOpen(id string) *bool {
+	if s.gitOpen == nil {
+		s.gitOpen = make(map[string]*bool)
+	}
+	if s.gitOpen[id] == nil {
+		open := true
+		s.gitOpen[id] = &open
+	}
+	return s.gitOpen[id]
 }
 
 var autoFetchOptions = []configOption{{"off", "关闭"}, {"2", "每 2 分钟"}, {"5", "每 5 分钟"}, {"10", "每 10 分钟"}, {"15", "每 15 分钟"}}
@@ -210,11 +225,15 @@ func settingsScopeLabel(scope string) string {
 }
 
 func settingsNotice(c *ui.Context, key, text string, color ui.Color) {
-	ui.Row(c.Key(key)).FillWidth().Padding(8, 10).Gap(8).AlignItems(ui.Center).Radius(8).
+	ui.Row(c.Key(key)).FillWidth().Padding(10, 14).Gap(8).AlignItems(ui.Center).Radius(8).
 		Background(color.Alpha(0.1)).Border(1, color.Alpha(0.35)).Children(func() {
-		ui.Text(c, trMessage(text)).FontSize(11).TextColor(color)
+		ui.Text(c, trMessage(text)).FontSize(12).TextColor(color)
 	})
 }
+
+// 设置页内容长短不一，读取 Git 配置时还会只剩一行提示；给对话框一个固定的
+// 高度上限（窗口更矮时按窗口来），切页签时就不会先缩短再长回去。
+const settingsModalHeight = 720
 
 func (a *app) settingsModal(c *ui.Context) {
 	d := &a.settings
@@ -225,7 +244,7 @@ func (a *app) settingsModal(c *ui.Context) {
 	busy := d.global.busy || d.local.busy
 	visible := true
 	discard := false
-	appModal(c.Key("settings-modal"), &visible, tr("设置"), 720, busy, func() {
+	appModalSized(c.Key("settings-modal"), &visible, tr("设置"), 720, settingsModalHeight, busy, func() {
 		if d.confirmClose {
 			settingsNotice(c, "settings-confirm-close", "有未应用的 Git 修改。", c.Theme().Warning)
 			ui.Row(c).Justify(ui.End).AlignItems(ui.Center).Children(func() {
@@ -236,7 +255,7 @@ func (a *app) settingsModal(c *ui.Context) {
 		}
 		ui.Tabs(c.Key("settings-pages"), &d.page, tr("通用"), "Git", tr("当前项目")).FillWidth()
 		ui.Divider(c)
-		ui.Column(c.Key("settings-page")).FillWidth().Gap(18).Children(func() {
+		ui.Column(c.Key("settings-page")).FillWidth().Gap(12).Children(func() {
 			switch d.page {
 			case 0:
 				a.generalSettings(c)
@@ -357,7 +376,7 @@ func (a *app) projectSettings(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
-	ui.Row(c.Key("project-path")).FillWidth().Padding(8, 11).Gap(8).AlignItems(ui.Center).Radius(8).
+	ui.Row(c.Key("project-path")).FillWidth().Padding(10, 14).Gap(8).AlignItems(ui.Center).Radius(8).
 		Background(t.Surface).Border(1, t.Border).Children(func() {
 		ui.Icon(c, iconFolder).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
 		ui.Text(c, homePath(d.repo)).FontSize(12).TextColor(t.Text).SingleLine().Grow(1).MinWidth(0).Tooltip(d.repo)
@@ -450,7 +469,7 @@ func (a *app) gitSettingsGroups(c *ui.Context, local bool) {
 			rows = append(rows, func() { a.gitSettingRow(c, s, i, local) })
 		}
 		if len(rows) > 0 {
-			settingsSection(c, "git-"+group.id, group.title, rows...)
+			settingsDisclosure(c, "git-"+group.id, group.title, a.settings.gitGroupOpen(group.id), rows...)
 		}
 	}
 }
@@ -469,13 +488,13 @@ func (a *app) gitSettingRow(c *ui.Context, s *gitSettingsScope, i int, local boo
 	}
 	ui.Column(c.Key("git-" + def.key)).FillWidth().Children(func() {
 		row := ui.SwitchBase(c.Key("git-"+def.key+"-switch"), &f.enabled).Label(tr(def.label)).FillWidth().
-			Padding(10, 12).Gap(12).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+			Padding(11, 16).Gap(12).AlignItems(ui.Center).Cursor(ui.CursorPointer).
 			Disabled(s.busy).Tooltip(tr(tip)).Transition(colorMotion())
 		if row.Hovered() && !s.busy {
 			row.Background(t.SurfaceHover)
 		}
 		row.Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Padding(0, 42, 0, 0).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Padding(0, 46, 0, 0).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 					settingsName(c, def.label)
 					if f.changed() {
@@ -487,7 +506,7 @@ func (a *app) gitSettingRow(c *ui.Context, s *gitSettingsScope, i int, local boo
 						if f.scope != pageScope {
 							chip(c, "scope", settingsScopeLabel(f.scope), chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10}).Tooltip(f.origin)
 						}
-						ui.Text(c, f.effective).FontSize(11).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(f.effective)
+						ui.Text(c, f.effective).FontSize(12).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(f.effective)
 					})
 				}
 			})
@@ -496,7 +515,7 @@ func (a *app) gitSettingRow(c *ui.Context, s *gitSettingsScope, i int, local boo
 		row.DrawOver(func(p *ui.Painter, r ui.Rect) { settingsSwitch(p, r, pos, t, s.busy) })
 		row.OnClick(func() { s.notice = "" })
 		if f.enabled {
-			ui.Row(c.Key("git-"+def.key+"-editor")).FillWidth().Padding(0, 12, 10, 40).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Row(c.Key("git-"+def.key+"-editor")).FillWidth().Padding(0, 16, 12, 40).Gap(8).AlignItems(ui.Center).Children(func() {
 				if len(def.options) == 0 {
 					ui.TextInput(c.Key("value"), &f.value).Label(tr(def.label)).Placeholder(tr("填写值")).FillWidth().Disabled(s.busy).
 						Invalid(strings.TrimSpace(f.value) == "")

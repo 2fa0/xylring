@@ -2,9 +2,9 @@ package main
 
 import "github.com/egoist/mygo/ui"
 
-// The settings window reads as sections of setting rows: a heading says what
-// the group is for, and each row puts the setting's name and its current
-// state on the left and the control that changes it on the right.
+// 设置页读起来是一摞卡片：卡片自己带着标题、边框和底色，行与行用一条往底色里
+// 褪过的细线分开。一行的形状固定——名字和说明在左，改它的控件在右。卡片的分组、
+// 行距和字号跟着另一个应用 snapover 的设置页走，两边的设置页因此是同一种手感。
 
 // settingsControlWidth is how much room a row leaves for its control: enough
 // for a menu's chosen value, less on a narrow window that has less to give.
@@ -16,23 +16,62 @@ func settingsControlWidth(c *ui.Context) float32 {
 }
 
 func settingsName(c *ui.Context, label string) {
-	ui.Text(c, tr(label)).FontSize(13).FontWeight(500).TextColor(c.Theme().Text)
+	ui.Text(c, tr(label)).FontSize(14).FontWeight(500).TextColor(c.Theme().Text)
 }
 
 func settingsDetail(c *ui.Context, text string) {
-	ui.Text(c, trMessage(text)).FontSize(11).TextColor(c.Theme().TextMuted)
+	ui.Text(c, trMessage(text)).FontSize(12).LineHeight(1.4).TextColor(c.Theme().TextMuted)
 }
 
-// settingsSection groups settings that belong together under one heading and
-// draws them on the card that holds them.
+// settingsCardDivider separates the rows of a card. The card's own border
+// already outlines the group, so the lines between rows sit most of the way
+// toward the card's background and leave the row names the heaviest thing in it.
+func settingsCardDivider(c *ui.Context) {
+	t := c.Theme()
+	ui.Box(c).Height(1).Shrink(0).FillWidth().Background(t.Border.Mix(t.Surface, 0.7))
+}
+
+// settingsSection groups settings that belong together on one card, titled
+// inside it: the title is the card's own first row, so a section reads as one
+// thing instead of a small caption over a box.
 func settingsSection(c *ui.Context, key, title string, rows ...func()) {
 	t := c.Theme()
-	ui.Column(c.Key(key)).FillWidth().Gap(6).Children(func() {
-		ui.Text(c, tr(title)).FontSize(12).FontWeight(600).TextColor(t.Text)
-		ui.Column(c.Key(key+"-card")).FillWidth().Radius(10).Background(t.Surface).Border(1, t.Border).Children(func() {
+	ui.Column(c.Key(key)).FillWidth().Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
+		ui.Text(c, tr(title)).FontSize(16).FontWeight(600).TextColor(t.Text).Padding(12, 16)
+		settingsCardDivider(c)
+		for i, row := range rows {
+			if i > 0 {
+				settingsCardDivider(c)
+			}
+			row()
+		}
+	})
+}
+
+// settingsDisclosure is settingsSection whose rows fold away: the title row is
+// the card's header and the chevron at its end says the rows can be put away,
+// so a page of long groups stays short until one of them is wanted. A pointer
+// over the header lights it, as a row of the same card would.
+func settingsDisclosure(c *ui.Context, key, title string, open *bool, rows ...func()) {
+	t := c.Theme()
+	ui.Column(c.Key(key)).FillWidth().Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
+		p := ui.CollapsibleBase(c.Key(key+"-fold"), open)
+		head := p.Trigger.FillWidth().Padding(12, 16).Gap(12).AlignItems(ui.Center).
+			Cursor(ui.CursorPointer).Radius(12).Transition(colorMotion())
+		if head.Hovered() {
+			head.Background(t.SurfaceHover)
+		}
+		head.Children(func() {
+			ui.Text(c, tr(title)).FontSize(16).FontWeight(600).TextColor(t.Text).
+				SingleLine().Grow(1).MinWidth(0)
+			ui.Icon(c, iconChevronDown).Size(16, 16).TextColor(t.TextMuted).Shrink(0).
+				Rotate(180 * p.Progress())
+		})
+		p.Panel(func() {
+			settingsCardDivider(c)
 			for i, row := range rows {
 				if i > 0 {
-					ui.Divider(c)
+					settingsCardDivider(c)
 				}
 				row()
 			}
@@ -43,8 +82,8 @@ func settingsSection(c *ui.Context, key, title string, rows ...func()) {
 // settingsRow lays out one setting, the shape every row of a card has: its
 // name and details on the left, its control on the right.
 func settingsRow(c *ui.Context, key string, left, right func()) {
-	ui.Row(c.Key(key)).FillWidth().Padding(10, 12).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(left)
+	ui.Row(c.Key(key)).FillWidth().Padding(11, 16).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(left)
 		ui.Row(c).Shrink(0).AlignItems(ui.Center).Gap(8).Children(right)
 	})
 }
@@ -53,7 +92,7 @@ func settingsRow(c *ui.Context, key string, left, right func()) {
 // edge, in the theme's colors and at the place the row reserved for it.
 func settingsSwitch(p *ui.Painter, r ui.Rect, pos float32, t *ui.Theme, disabled bool) {
 	const trackW, trackH, inset float32 = 34, 20, 2
-	track := ui.Rect{X: r.X + r.W - 12 - trackW, Y: r.Y + (r.H-trackH)/2, W: trackW, H: trackH}
+	track := ui.Rect{X: r.X + r.W - 16 - trackW, Y: r.Y + (r.H-trackH)/2, W: trackW, H: trackH}
 	angle := float32(0.15)
 	if t.Dark {
 		angle = 0.25
@@ -75,13 +114,13 @@ func settingsSwitch(p *ui.Painter, r ui.Rect, pos float32, t *ui.Theme, disabled
 func settingsSwitchRow(c *ui.Context, key, label, detail string, value *bool, disabled bool, onChange func()) {
 	t := c.Theme()
 	row := ui.SwitchBase(c.Key(key), value).Label(tr(label)).FillWidth().
-		Padding(10, 12).Gap(12).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+		Padding(11, 16).Gap(12).AlignItems(ui.Center).Cursor(ui.CursorPointer).
 		Disabled(disabled).Transition(colorMotion())
 	if row.Hovered() && !disabled {
 		row.Background(t.SurfaceHover)
 	}
 	row.Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Padding(0, 42, 0, 0).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Padding(0, 46, 0, 0).Children(func() {
 			settingsName(c, label)
 			if detail != "" {
 				settingsDetail(c, detail)

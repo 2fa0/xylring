@@ -83,6 +83,9 @@ var iconUploadSVG []byte
 //go:embed icons/arrow-down.svg
 var iconArrowDownSVG []byte
 
+//go:embed icons/chevron-down.svg
+var iconChevronDownSVG []byte
+
 //go:embed icons/plus.svg
 var iconPlusSVG []byte
 
@@ -123,6 +126,7 @@ var (
 	iconDownload    = ui.MustParseSVG(iconDownloadSVG)
 	iconUpload      = ui.MustParseSVG(iconUploadSVG)
 	iconArrowDown   = ui.MustParseSVG(iconArrowDownSVG)
+	iconChevronDown = ui.MustParseSVG(iconChevronDownSVG)
 	iconGitCompare  = ui.MustParseSVG(iconGitCompareSVG)
 	iconGitBranch   = ui.MustParseSVG(iconGitBranchSVG)
 	iconSearch      = ui.MustParseSVG(iconSearchSVG)

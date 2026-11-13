@@ -441,3 +441,68 @@ func TestGitSettingsRejectsCheckoutShorthandAsDefaultBranch(t *testing.T) {
 		t.Fatal("invalid default branch was written")
 	}
 }
+
+// 切页签时对话框高度不变：读取中的 Git 页只剩一行提示，若让面板跟着内容收缩，
+// 内容回来时就会闪一下。
+func TestSettingsDialogKeepsHeightAcrossPages(t *testing.T) {
+	a := &app{settings: settingsState{open: true, repo: "/work/repo", global: gitSettingsScope{busy: true}}}
+	tt := ui.NewTester(a.view, 1100, 720)
+	defer retireTester(tt)
+	tt.Frame()
+	height := func() float32 {
+		d, ok := tt.AccessByRole(ui.RoleDialog, "设置")
+		if !ok {
+			t.Fatal("missing settings dialog")
+		}
+		return d.Bounds.H
+	}
+	want := height()
+	for _, label := range []string{"Git", "当前项目", "通用", "Git"} {
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		if got := height(); got != want {
+			t.Fatalf("%s changed dialog height: got %v want %v", label, got, want)
+		}
+	}
+	a.settings.global = gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}
+	tt.Frame()
+	if got := height(); got != want {
+		t.Fatalf("loaded page changed dialog height: got %v want %v", got, want)
+	}
+	if !tt.HasText("提交姓名") {
+		t.Fatalf("loaded Git page did not render: %q", tt.Texts())
+	}
+}
+
+// Git 分组默认展开，收起后那一组的行不再占地方，别的组也不受影响。
+func TestGitSettingsGroupsFold(t *testing.T) {
+	a := &app{settings: settingsState{open: true, page: 1, repo: "/work/repo",
+		global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}}
+	tt := ui.NewTester(a.view, 1100, 760)
+	defer retireTester(tt)
+	tt.Frame()
+	if !tt.HasText("提交姓名") {
+		t.Fatalf("Git groups should start open: %q", tt.Texts())
+	}
+	if err := tt.Click("提交身份"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	tt.Frame()
+	if tt.HasText("提交姓名") || tt.HasText("提交邮箱") {
+		t.Fatalf("folded group still shows its rows: %q", tt.Texts())
+	}
+	if !tt.HasText("拉取方式") {
+		t.Fatalf("folding one group hid another: %q", tt.Texts())
+	}
+	if err := tt.Click("提交身份"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	tt.Frame()
+	if !tt.HasText("提交姓名") {
+		t.Fatalf("group did not open again: %q", tt.Texts())
+	}
+}

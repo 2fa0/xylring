@@ -55,6 +55,13 @@ func copyIconButton(c *ui.Context, key, name, content string) ui.Element {
 // Keep the native dialog's focus trap and dismissal, but pin actions outside
 // the scrollable body. A running job must be cancelled through its own action.
 func appModal(c *ui.Context, open *bool, title string, width float32, busy bool, content, footer func()) {
+	appModalSized(c, open, title, width, 0, busy, content, footer)
+}
+
+// appModalSized keeps the panel at one height when tall is above zero: it fills
+// the window up to that height, so a dialog whose pages or loading states differ
+// in length does not collapse and grow back while they change.
+func appModalSized(c *ui.Context, open *bool, title string, width, tall float32, busy bool, content, footer func()) {
 	if !*open {
 		return
 	}
@@ -66,6 +73,9 @@ func appModal(c *ui.Context, open *bool, title string, width float32, busy bool,
 		panel.Width(min(width, max(0, w-32))).MaxHeight(max(0, h-32)).
 			Padding(0).Gap(0).Radius(12).Background(t.Background).
 			Border(1, t.Border).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.3)).Label(tr(title))
+		if tall > 0 {
+			panel.Height(min(max(0, h-32), tall))
+		}
 		panel.Children(func() {
 			ui.Row(c.Key("header")).Padding(12, 16).Gap(12).AlignItems(ui.Center).Shrink(0).
 				BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
@@ -74,7 +84,7 @@ func appModal(c *ui.Context, open *bool, title string, width float32, busy bool,
 					*open = false
 				}
 			})
-			ui.Scroll(c.Key("body")).Shrink(1).MinHeight(0).Children(func() {
+			ui.Scroll(c.Key("body")).Grow(1).MinHeight(0).Children(func() {
 				ui.Column(c).FillWidth().Padding(16).Gap(10).Children(content)
 			})
 			ui.Row(c.Key("footer")).Padding(12, 16).Gap(8).Justify(ui.End).Shrink(0).
