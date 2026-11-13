@@ -182,7 +182,7 @@ func (a *app) gitBinarySettings(c *ui.Context) {
 			settingsRow(c, "settings-git-status", func() {
 				settingsName(c, "Git 状态")
 				if !a.gitReady() {
-					ui.Text(c, trMessage(a.git.err)).FontSize(11).TextColor(t.Danger)
+					ui.Text(c, trMessage(a.git.err)).FontSize(12).TextColor(t.Danger)
 					return
 				}
 				detail := gitVersionDetail(a)
@@ -207,7 +207,7 @@ func (a *app) gitBinarySettings(c *ui.Context) {
 						a.applyGitExecutablePath(a.gitPathDraft)
 					}
 				})
-				ui.Row(c.Key("settings-git-path-editor")).FillWidth().Padding(0, 12, 10, 12).Children(func() {
+				ui.Row(c.Key("settings-git-path-editor")).FillWidth().Padding(0, 16, 11, 16).Children(func() {
 					input := ui.TextInput(c.Key("value"), &a.gitPathDraft).
 						Label(tr("Git 可执行文件路径")).
 						Placeholder(tr("留空则自动查找")).FillWidth().Disabled(a.git.checking)
