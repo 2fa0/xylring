@@ -3,7 +3,7 @@
 # 使用前提：安装并登录 GitHub CLI (brew install gh && gh auth login)
 #
 # 可选：不装 gh 也行，直接用浏览器在
-# https://github.com/2fa0/xylring-release/releases/new 把 release/ 里全部文件
+# https://github.com/2fa0/xylring/releases/new 把 release/ 里全部文件
 # 拖上去，记得勾 Set as the latest release。
 #
 # release/ 里除安装包外还有 update-*.json 和更新用的归档：它们一起上传，
@@ -13,8 +13,8 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_DIR="$ROOT/release"
-# 安装包与更新文件都发在公开的发布仓库里；源码仓库是私有的，客户端只读这里。
-RELEASE_REPO="2fa0/xylring-release"
+# 安装包与更新文件跟源码一起发在同一个公开仓库：客户端只读这里的 Releases。
+RELEASE_REPO="2fa0/xylring"
 
 TAG="${1:-}"
 if [ -z "$TAG" ]; then

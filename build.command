@@ -194,10 +194,10 @@ echo
 echo "已安装的旧版本会读 update-*.json 自动升级；这些文件和安装包一起留在 Release 里。"
 echo
 echo "手工发布（浏览器上传）："
-echo "  1. 打开 https://github.com/2fa0/xylring-release/releases/new，标签填 v${version}"
+echo "  1. 打开 https://github.com/2fa0/xylring/releases/new，标签填 v${version}"
 echo "  2. 把 release/ 里的全部文件拖上去：安装包、*.tar.gz、*.delta、update-*.json、checksums.txt"
 echo "  3. 勾上 Set as the latest release；正文粘 CHANGELOG.md 里 ${version} 那一段"
-echo "  4. 发完打开 https://github.com/2fa0/xylring-release/releases/latest/download/update-darwin-arm64.json 确认能下载"
+echo "  4. 发完打开 https://github.com/2fa0/xylring/releases/latest/download/update-darwin-arm64.json 确认能下载"
 echo
 if [ "${#dmgs_arm[@]}" -eq 1 ]; then
   echo "macOS Apple 芯片（ARM64）：把 arm64 磁盘镜像发给 M1/M2/M3/M4 系列 Mac。对方打开后把 Xylring 拖进“应用程序”。"
