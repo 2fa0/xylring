@@ -7,8 +7,7 @@ not patched, so update to the latest version before reporting.
 
 ## Reporting a vulnerability
 
-Report potential vulnerabilities privately to
-[11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com), or use the private
+Report potential vulnerabilities through the private
 [security advisory](https://github.com/2fa0/xylring/security/advisories/new)
 form. Do not open a public issue for a suspected vulnerability.
 
