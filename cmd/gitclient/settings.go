@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -355,7 +356,46 @@ func (a *app) generalSettings(c *ui.Context) {
 			})
 		},
 	)
+	a.updateSettings(c)
 	a.gitBinarySettings(c)
+}
+
+// updateSettings 是设置页的「更新」分组：一个后台检查开关，一行版本与手动检查。
+// 版本号只出现一次；有新版本时说能更新到哪一版，否则说上次检查是什么时候。
+func (a *app) updateSettings(c *ui.Context) {
+	usable := updatesUsable()
+	settingsSection(c, "settings-update", "更新",
+		func() {
+			auto := automaticUpdates()
+			settingsSwitchRow(c, "settings-auto-updates", "自动检查更新", "", &auto, !usable, func() {
+				setAutomaticUpdates(auto)
+			})
+		},
+		func() {
+			status := currentUpdatesStatus()
+			detail := ""
+			switch {
+			case !updaterReady.Load() || mygo.IsDev():
+				detail = "这个构建不能自更新"
+			case !usable:
+				detail = "当前安装位置不可写，不能自动更新"
+			case status.version != "":
+				detail = fmt.Sprintf("可更新到 %s", status.version)
+			case !status.lastCheck.IsZero():
+				detail = fmt.Sprintf("上次检查：%s", status.lastCheck.Local().Format("2006-01-02 15:04"))
+			}
+			settingsRow(c, "settings-updates", func() {
+				ui.Text(c, fmt.Sprintf(tr("当前版本 %s"), getAppVersion())).FontSize(14).FontWeight(500).TextColor(c.Theme().Text)
+				if detail != "" {
+					settingsDetail(c, detail)
+				}
+			}, func() {
+				if ui.Button(c.Key("settings-check-updates"), tr("检查更新")).Disabled(!usable).Clicked() {
+					checkUpdates()
+				}
+			})
+		},
+	)
 }
 
 // demoActivePath names the repository the preferences page speaks about: the

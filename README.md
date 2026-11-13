@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.2-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.8.3-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
 </p>
@@ -52,13 +52,16 @@ installation to browse and change local repositories.
 
 ## 📦 Installation
 
-Download prebuilt packages for **macOS** and **Windows** from [**GitHub Releases**](https://github.com/2fa0/xylring/releases).
+Download prebuilt packages for **macOS** and **Windows** from [**GitHub Releases**](https://github.com/2fa0/xylring-release/releases).
+
+Once installed, Xylring checks for new versions itself and offers to update in its own window.
+Versions up to 0.8.2 have no updater yet, so install a build with it once by hand.
 
 ### macOS (Apple Silicon & Intel)
 
 1. Download the `.dmg` matching your architecture:
-   - **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.8.2-arm64.dmg`
-   - **Intel x86_64**: `xylring-0.8.2-amd64.dmg`
+   - **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.8.3-arm64.dmg`
+   - **Intel x86_64**: `xylring-0.8.3-amd64.dmg`
 2. Open the disk image and drag **Xylring** into your `Applications` folder.
 
 > [!NOTE]
@@ -70,18 +73,15 @@ Download prebuilt packages for **macOS** and **Windows** from [**GitHub Releases
 
 ### Windows (10 & 11 x64)
 
-- **Installer**: Download and run `xylring-setup-0.8.2-amd64.exe` (installs to user directory, no admin rights required).
-- **Portable**: Download and extract `xylring-0.8.2-windows-x64.zip`, then run `Xylring.exe`.
+- **Installer**: Download and run `xylring-setup-0.8.3-amd64.exe` (installs to user directory, no admin rights required).
+- **Portable**: Download and extract `xylring-0.8.3-windows-x64.zip`, then run `Xylring.exe`.
 
 ### Build from Source
 
 Requirements: **Go 1.27+** and system **Git**.
 
 ```sh
-# Clone the repository
-git clone https://github.com/2fa0/xylring.git
-cd xylring
-
+# The source is not public: run this from your source checkout
 # Run directly
 go run ./cmd/gitclient /path/to/your/repo
 
@@ -164,16 +164,11 @@ latest default branch or latest available release when practical.
 
 ---
 
-## 🤝 Contributing
+## 🤝 Feedback
 
-Contributions, issues, and feature requests are welcome!  
-Use the [issues page](https://github.com/2fa0/xylring/issues) for public issues; report security vulnerabilities privately as described below.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feat/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'feat: add some amazing feature'`)
-4. Push to the Branch (`git push origin feat/AmazingFeature`)
-5. Open a Pull Request
+The source is not public, so there is no public issue tracker or pull request flow.
+Email [11802492+2fa0@users.noreply.github.com](mailto:11802492+2fa0@users.noreply.github.com) for questions and suggestions;
+report security vulnerabilities privately as described below.
 
 ---
 

@@ -1804,6 +1804,8 @@ func main() {
 		return
 	}
 	startLogging()
+	// 更新插件必须在 App.Run 之前注册；启动 10 秒后它自己查一次，请求不占主线程。
+	useUpdater()
 	a := newApp()
 
 	// 监听后续实例发送的命令行唤醒（如终端中输入 xylring .）
@@ -1836,6 +1838,7 @@ func main() {
 	mygo.App.WhenReady(func() {
 		a.configureLanguages()
 		a.installMenu()
+		a.watchUpdates()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:          "Xylring",
 			Width:          1200,
