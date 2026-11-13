@@ -405,7 +405,7 @@ func (a *app) reload(t *repoTab) {
 				commits = append(commits, extra...)
 			}
 			if err == nil {
-				prepared, err = prepareHistory(ctx, commits, graph{}, nil, query.term == "" && query.filePath == "")
+				prepared, err = prepareHistory(ctx, commits, graph{}, nil, true, query.filtered())
 			}
 		}
 		key := meta.key()
@@ -490,7 +490,7 @@ func (a *app) loadMore(t *repoTab) {
 		commits, more, err := p.next(ctx, n, remaining)
 		var prepared preparedHistory
 		if err == nil {
-			prepared, err = prepareHistory(ctx, commits, g, authors, query.term == "" && query.filePath == "")
+			prepared, err = prepareHistory(ctx, commits, g, authors, true, query.filtered())
 		}
 		a.post(func() {
 			if t.generation != gen || t.closed {
@@ -536,7 +536,7 @@ func (t *repoTab) canLoadHistory() bool {
 
 // Also used by small synchronous model tests; production prepares on the worker.
 func (a *app) applyHistory(t *repoTab, meta repoMeta, commits []commit, _, page int) {
-	prepared, _ := prepareHistory(context.Background(), commits, graph{}, nil, t.query.term == "" && t.query.filePath == "")
+	prepared, _ := prepareHistory(context.Background(), commits, graph{}, nil, true, t.query.filtered())
 	if page >= 0 {
 		t.hasMore = len(commits) == page
 	}

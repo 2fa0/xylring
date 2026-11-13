@@ -22,6 +22,9 @@ type historyQuery struct {
 	extraTip   [20]byte // 从任意快照的文件历史回到图谱时，保留该提交的可达历史。
 }
 
+// filtered 表示这条查询只返回匹配的提交：父提交大多落在结果集外面。
+func (q historyQuery) filtered() bool { return q.term != "" || q.filePath != "" }
+
 type historyLocation struct {
 	query       historyQuery
 	hash        [20]byte

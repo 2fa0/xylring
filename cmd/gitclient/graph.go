@@ -3,10 +3,12 @@ package main
 import "slices"
 
 // seg 是提交行里的一段图谱线。top/bot 表示线从行顶还是行中开始，到行中还是行底结束。
+// dash 是从节点往下的虚线短桩：父提交不在当前结果集里，这条线到不了下一行。
 type seg struct {
 	a, b  int
 	top   bool
 	bot   bool
+	dash  bool
 	color int
 	bend  uint8 // 1：S 曲线的下半行，2：下一行的上半行。
 }
@@ -22,6 +24,7 @@ type graph struct {
 	cols           [][20]byte
 	colors         []int
 	bends          []graphBend
+	visible        map[[20]byte]bool
 	maxLanes       int
 	incoming       [][20]byte
 	incomingColors []int
@@ -54,9 +57,15 @@ func (g *graph) add(c *commit) {
 
 	parentCols := make([]int, len(c.parents))
 	parentJoins := make([]bool, len(c.parents))
+	missing := false
 	for i, p := range c.parents {
 		parentCols[i] = -1
 		if p == zeroHash {
+			continue
+		}
+		// 过滤历史里父提交大多不在结果集中，开泳道会白白漏到列表底部。
+		if g.visible != nil && !g.visible[p] {
+			missing = true
 			continue
 		}
 		if j := indexHash(g.cols, p); j >= 0 {
@@ -66,7 +75,7 @@ func (g *graph) add(c *commit) {
 		}
 		dest := node
 		if i != 0 || g.cols[node] != zeroHash {
-			dest = g.alloc()
+			dest = g.allocFrom(node)
 		}
 		if i == 0 {
 			g.colors[dest] = nodeColor
@@ -119,6 +128,10 @@ func (g *graph) add(c *commit) {
 		}
 		segs = append(segs, s)
 	}
+	// 节点的列已经在往下接父链时，短桩没有地方画，也不该压在实线上。
+	if missing && !slices.Contains(parentCols, node) {
+		segs = append(segs, seg{a: node, b: node, dash: true, color: nodeColor})
+	}
 	c.nodeCol = node
 	c.nodeColor = nodeColor
 	// Consecutive rows often have identical through lanes. Keep their geometry once.
@@ -141,9 +154,11 @@ func (g graph) clone() graph {
 	return g
 }
 
-func (g *graph) alloc() int {
-	for i, h := range g.cols {
-		if h == zeroHash {
+// alloc 从第 start 列开始找空位。父提交的泳道只在自己的列或更右边落位，
+// 这样新分支永远朝右开场，不会为了回收左边空出来的列画一条横跨半个图谱的长弯。
+func (g *graph) allocFrom(start int) int {
+	for i := max(0, start); i < len(g.cols); i++ {
+		if g.cols[i] == zeroHash {
 			return i
 		}
 	}
@@ -151,6 +166,8 @@ func (g *graph) alloc() int {
 	g.colors = append(g.colors, 0)
 	return len(g.cols) - 1
 }
+
+func (g *graph) alloc() int { return g.allocFrom(0) }
 
 // 颜色跟随第一父链；新链从未被在途链占用的颜色中分配，与物理列无关。
 func (g *graph) freeColor(nodeColor int) int {

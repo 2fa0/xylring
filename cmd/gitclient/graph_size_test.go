@@ -163,28 +163,41 @@ func TestGraphNodeSizeFollowsChangeVolume(t *testing.T) {
 		png.Encode(f, img)
 		f.Close()
 	}
-	header, ok := tt.Find("图谱")
-	if !ok {
+	if _, ok := tt.Find("图谱"); !ok {
 		t.Fatal("图谱列没有显示")
 	}
-	// 没有年轮记录的实心节点，行中心的墨水宽度就是直径。
+	// 没有年轮记录的实心节点，行中心那一串连续墨水就是直径。节点外圈有背景色衬底，
+	// 右边的泳道和引导点线不会并进来。
 	width := func(subject string) int {
 		t.Helper()
 		row, ok := tt.Find(subject)
 		if !ok {
 			t.Fatalf("未找到行 %q", subject)
 		}
-		left, right := -1, -1
-		for x := int(header.X); x < int(header.X+header.W); x++ {
-			r, g, b, _ := img.At(x, int(row.Y+row.H/2)).RGBA()
-			if max(r, g, b)-min(r, g, b) > 0x1800 {
-				if left < 0 {
-					left = x
-				}
-				right = x
-			}
+		y := int(row.Y + row.H/2)
+		ink := func(x int) bool {
+			r, g, b, _ := img.At(x, y).RGBA()
+			return max(r, g, b)-min(r, g, b) > 0x1800
 		}
-		return right - left + 1
+		for i := range tab.commits {
+			if tab.commits[i].subject != subject {
+				continue
+			}
+			node := int(row.X + lanePad + float32(tab.commits[i].nodeCol)*laneGap + laneGap/2)
+			if !ink(node) {
+				t.Fatalf("行 %q 没有画出节点", subject)
+			}
+			left, right := node, node
+			for left-1 > int(row.X) && ink(left-1) {
+				left--
+			}
+			for right+1 < int(row.X+graphWidth(tab.graph.lanes())) && ink(right+1) {
+				right++
+			}
+			return right - left + 1
+		}
+		t.Fatalf("提交列表里没有 %q", subject)
+		return 0
 	}
 	tiny, huge, base := width("tiny-change"), width("huge-change"), width("base")
 	if !(tiny < base && base < huge) {

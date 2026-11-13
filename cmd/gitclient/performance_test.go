@@ -367,7 +367,7 @@ func BenchmarkInstallHistoryWithManySelections(b *testing.B) {
 		cs[i].hash = perfHash(i)
 		tab.selection.Add(cs[i].hash)
 	}
-	p, _ := prepareHistory(context.Background(), cs, graph{}, nil, false)
+	p, _ := prepareHistory(context.Background(), cs, graph{}, nil, false, false)
 	a := &app{}
 	b.ReportAllocs()
 	b.ResetTimer()
