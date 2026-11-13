@@ -32,7 +32,7 @@ func TestBuildConfigMatchesVersionAndUpdates(t *testing.T) {
 	if cfg.Updates == nil {
 		t.Fatal("mygo.json has no updates: builds cannot sign updates")
 	}
-	if cfg.Updates.PublicKey == "" || cfg.Updates.GitHub != "2fa0/xylring-release" || cfg.Updates.Changelog == "" {
+	if cfg.Updates.PublicKey == "" || cfg.Updates.GitHub != "2fa0/xylring" || cfg.Updates.Changelog == "" {
 		t.Fatalf("updates config is incomplete: %+v", *cfg.Updates)
 	}
 }

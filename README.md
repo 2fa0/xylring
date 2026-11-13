@@ -54,7 +54,7 @@ installation to browse and change local repositories.
 
 ## 📦 Installation
 
-Download prebuilt packages for **macOS** and **Windows** from [**GitHub Releases**](https://github.com/2fa0/xylring-release/releases).
+Download prebuilt packages for **macOS** and **Windows** from [**GitHub Releases**](https://github.com/2fa0/xylring/releases).
 
 Once installed, Xylring checks for new versions itself and offers to update in its own window.
 Versions up to 0.8.2 have no updater yet, so install a build with it once by hand.

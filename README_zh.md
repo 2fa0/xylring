@@ -54,7 +54,7 @@ Xylring 是使用 Go 和 MyGo 构建的桌面 Git 客户端。它调用系统 Gi
 
 ## 📦 下载与安装
 
-从 [**GitHub Releases**](https://github.com/2fa0/xylring-release/releases) 下载预编译安装包。
+从 [**GitHub Releases**](https://github.com/2fa0/xylring/releases) 下载预编译安装包。
 
 装好之后，Xylring 会自己检查新版本：有新版本时弹出更新窗口，装完重启即可。
 0.8.2 及更早的版本还没有这项能力，需要手动装一次带自动更新的版本。
