@@ -17,6 +17,7 @@ type appPreferences struct {
 	FileView         int    `json:"file_view,omitempty"`
 	DiffLayout       int    `json:"diff_layout,omitempty"`
 	IgnoreWhitespace bool   `json:"ignore_whitespace,omitempty"`
+	Wrap             bool   `json:"diff_wrap,omitempty"`
 	AutoFetch        string `json:"auto_fetch,omitempty"`
 	GitExecutable    string `json:"git_executable,omitempty"`
 }
@@ -33,7 +34,7 @@ type settingsState struct {
 var autoFetchOptions = []configOption{{"off", "关闭"}, {"2", "每 2 分钟"}, {"5", "每 5 分钟"}, {"10", "每 10 分钟"}, {"15", "每 15 分钟"}}
 
 func (a *app) preferences() appPreferences {
-	return appPreferences{RestoreDisabled: a.restoreDisabled, FileView: a.fileView, DiffLayout: a.diffLayout, IgnoreWhitespace: a.diffIgnoreWhitespace, AutoFetch: a.autoFetch, Language: a.language, GitExecutable: a.gitExecutable}
+	return appPreferences{RestoreDisabled: a.restoreDisabled, FileView: a.fileView, DiffLayout: a.diffLayout, IgnoreWhitespace: a.diffIgnoreWhitespace, Wrap: a.diffWrap, AutoFetch: a.autoFetch, Language: a.language, GitExecutable: a.gitExecutable}
 }
 func (a *app) autoFetchDelay(path string) time.Duration {
 	value := a.autoFetch
@@ -304,6 +305,9 @@ func (a *app) generalSettings(c *ui.Context) {
 					a.loadFileDiff(t, t.fileSel)
 				}
 			})
+		},
+		func() {
+			settingsSwitchRow(c, "settings-diff-wrap", "差异默认折行", "", &a.diffWrap, false, nil)
 		},
 		func() {
 			settingsSwitchRow(c, "settings-bottom-width", "底部详情面板全宽", "", &a.bottomFullWidth, false, nil)
