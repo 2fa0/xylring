@@ -48,6 +48,12 @@ var (
 	iconRows2       = lucide.Rows2()
 	iconImage       = lucide.Image()
 	iconGitCommit   = lucide.GitCommit()
+	iconKanban      = lucide.Kanban()
+	iconMore        = lucide.Ellipsis()
+	iconArchive     = lucide.Archive()
+	iconLink        = lucide.Link2()
+	iconMessage     = lucide.MessageSquareText()
+	iconTag         = lucide.Tag()
 )
 
 var (

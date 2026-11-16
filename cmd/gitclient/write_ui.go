@@ -93,6 +93,27 @@ func (a *app) commitRowMenu(c *ui.Context, m *ui.Menu, tab *repoTab, row int) {
 	if m.Item(tr("复制提交信息")).Chosen() {
 		a.copyCommitInfo(c, tab, commit.hash)
 	}
+	m.Submenu(tr("关联到看板任务"), func(sm *ui.Menu) {
+		a.ensureBoardLoaded()
+		var active []boardTask
+		for _, bt := range a.board.file.Tasks {
+			if !bt.Archived {
+				active = append(active, bt)
+			}
+		}
+		for _, bt := range active {
+			taskID := bt.ID
+			if sm.Item(bt.ID + " · " + bt.Title).Chosen() {
+				a.linkCommitToBoardTask(tab, commit, taskID)
+			}
+		}
+		if len(active) > 0 {
+			sm.Separator()
+		}
+		if sm.Item(tr("新建任务并关联…")).Chosen() {
+			a.createBoardTaskWithCommit(tab, commit)
+		}
+	})
 	m.Separator()
 	if m.Item(tr("添加标签…")).Chosen() {
 		a.openCommitWrite(tab, writeTag, commit)
