@@ -55,6 +55,8 @@ type app struct {
 	autoFetch       string
 	gitExecutable   string
 	gitPathDraft    string
+	externalEditor  string
+	editorPathDraft string
 	git             gitState
 	gitCheckGen     uint64
 	repoAutoFetch   map[string]string
@@ -163,6 +165,7 @@ func newApp() *app {
 			a.autoFetch = p.AutoFetch
 		}
 		a.gitExecutable = strings.TrimSpace(p.GitExecutable)
+		a.externalEditor = strings.TrimSpace(p.ExternalEditor)
 		if a.fileView != 1 {
 			a.fileView = 0
 		}
@@ -724,6 +727,11 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 				a.setBanner("打开终端失败: "+err.Error(), path)
 			}
 		}
+		if m.Item(a.openEditorMenuLabel()).Chosen() {
+			if err := a.openInEditor(path); err != nil {
+				a.setBanner("打开失败: "+err.Error(), path)
+			}
+		}
 		if m.Item(tr("复制路径")).Chosen() {
 			c.Services().WriteClipboard(path)
 			c.Toast(tr("已复制路径"))
@@ -888,6 +896,11 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				if m.Item(tr("在终端中打开")).Chosen() {
 					if err := openInTerminal(p); err != nil {
 						a.setBanner("打开终端失败: "+err.Error(), p)
+					}
+				}
+				if m.Item(a.openEditorMenuLabel()).Chosen() {
+					if err := a.openInEditor(p); err != nil {
+						a.setBanner("打开失败: "+err.Error(), p)
 					}
 				}
 				if m.Item(tr("复制路径")).Chosen() {

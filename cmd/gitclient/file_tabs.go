@@ -223,19 +223,6 @@ func (a *app) openFileHistoryForTab(t *repoTab, tab *fileDiffTab) {
 	a.changeHistory(t, q)
 }
 
-func openWithDefaultEditor(path string) error {
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", path).Start()
-	case "windows":
-		cmd := exec.Command("cmd", "/c", "start", "", path)
-		hideConsoleWindow(cmd)
-		return cmd.Start()
-	default:
-		return exec.Command("xdg-open", path).Start()
-	}
-}
-
 func revealInFileManager(path string) error {
 	if _, err := os.Stat(path); err != nil {
 		return err
@@ -404,10 +391,10 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 											action = func() { a.openFileHistoryForTab(t, tab) }
 										}
 									}
-									if m.Item(tr("使用默认编辑器打开")).Chosen() {
+									if m.Item(a.openEditorMenuLabel()).Chosen() {
 										if _, err := os.Stat(fullPath); err != nil {
 											c.Toast(tr("工作区中不存在此文件"))
-										} else if err := openWithDefaultEditor(fullPath); err != nil {
+										} else if err := a.openInEditor(fullPath); err != nil {
 											c.Toast(trMessage("打开失败: " + err.Error()))
 										}
 									}
