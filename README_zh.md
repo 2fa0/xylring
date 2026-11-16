@@ -15,7 +15,7 @@
   <a href="./README.md">English</a>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.4-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.8.5-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
@@ -63,10 +63,10 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 ### macOS
 
-根据芯片架构从 [Release v0.8.4](https://github.com/2fa0/xylring/releases) 下载对应的 `.dmg`：
+根据芯片架构从 [Release v0.8.5](https://github.com/2fa0/xylring/releases) 下载对应的 `.dmg`：
 
-- **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.8.4-arm64.dmg`
-- **Intel 芯片 (x86_64)**：`xylring-0.8.4-amd64.dmg`
+- **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.8.5-arm64.dmg`
+- **Intel 芯片 (x86_64)**：`xylring-0.8.5-amd64.dmg`
 
 也可以下载 `.app.tar.gz` 自行放置应用。双击打开 `.dmg`，把 **Xylring** 拖入「应用程序（Applications）」文件夹。
 
@@ -82,8 +82,8 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 从 [Releases](https://github.com/2fa0/xylring/releases) 下载 `.exe` 安装程序或免安装 `.zip` 压缩包：
 
-- **安装版**：运行 `xylring-setup-0.8.4-amd64.exe`（安装到当前用户目录，无需管理员权限）。
-- **便携版**：解压 `xylring-0.8.4-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
+- **安装版**：运行 `xylring-setup-0.8.5-amd64.exe`（安装到当前用户目录，无需管理员权限）。
+- **便携版**：解压 `xylring-0.8.5-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
 
 ### 从源码构建
 

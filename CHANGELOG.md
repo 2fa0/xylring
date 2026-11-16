@@ -1,3 +1,25 @@
+## 0.8.5 - 2026-11-16
+
+### 更新内容
+
+- 通用设置新增「默认编辑器」：内置 VS Code、Cursor、Zed、Windsurf、Trae、Antigravity、Sublime Text、GoLand、IntelliJ IDEA 预设，也可以填自己的命令；对比文件、文件标签页、侧栏和首页的右键菜单都按这个设置打开文件或仓库目录。
+- 年轮会自动识别 `AGENTS.md`、`CLAUDE.md` 和 Cursor 规则文件是否已写入、是否已过期，规则预览的写入与移除更直接；侧栏的状态控件改用状态点加简短文案，完整说明放进悬停提示。
+- 设置里取值固定的 Git 配置项（拉取方式、快进策略等）改成单个下拉选择；没覆盖时显示「继承全局设置」，选过之后显示可读的选项名，而不是原始配置值。
+- 历史范围筛选、全局搜索和比较按钮并入顶部标题栏，宽窗口下一行放下；新增顶栏分支按钮，可以切换本地分支、新建分支和复制分支名。
+- 全局搜索的分支、标签、Agent 与模型建议改为固定顺序，空查询或刷新时不再跳动；建议弹窗限制了高度，超出可滚动。
+- 侧栏长分支名不再把改动和同步状态（`*`、`↑n ↓n`）挤出视野，分支名自己截断，状态标记保持完整。
+- 界面图标改为直接引用 lobe-mygo 的 Lucide 图标，仓库里不再藏 37 个 SVG 文件；mygo 升级到 v0.9.1。
+
+### Changes
+
+- Add a default editor in General settings with presets for VS Code, Cursor, Zed, Windsurf, Trae, Antigravity, Sublime Text, GoLand, and IntelliJ IDEA, plus a custom command; file comparisons, file tabs, and the row menus in the sidebar and start page open files and repository folders with it.
+- Detect whether `AGENTS.md`, `CLAUDE.md`, and Cursor rule files are written and up to date, and make previewing, writing, and removing the rules more direct. The sidebar control now shows a status dot with a short label and keeps the details in a tooltip.
+- Fixed-value Git settings such as pull mode and fast-forward policy become a single dropdown; uncovered values read “Inherit global setting” and covered ones show the option name instead of the raw config value.
+- Move the history range filter, global search, and compare button into the title bar so they fit on one line in wide windows, and add a branch button that switches local branches, creates one, or copies its name.
+- Keep branch, tag, agent, and model suggestions in a fixed order so they no longer jump on an empty query or refresh, and cap the suggestion popup height with scrolling.
+- Stop long branch names in the sidebar from crowding out the change and sync markers (`*`, `↑n ↓n`); the name truncates and the markers stay whole.
+- Reference Lucide icons from lobe-mygo instead of 37 SVGs checked into the repository, and upgrade mygo to v0.9.1.
+
 ## 0.8.4 - 2026-11-13
 
 ### 更新内容
