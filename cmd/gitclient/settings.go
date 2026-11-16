@@ -516,8 +516,15 @@ func (a *app) gitSettingsGroups(c *ui.Context, local bool) {
 
 // gitSettingRow is one Git key: its name and current effective value, a switch
 // for writing the key in this scope, and the value editor while it is on.
+// Keys with a fixed set of values go through gitChoiceSettingRow instead: a
+// switch cannot say which of three values is meant.
 func (a *app) gitSettingRow(c *ui.Context, s *gitSettingsScope, i int, local bool) {
-	def, f := settingsGitKeys[i], &s.fields[i]
+	def := settingsGitKeys[i]
+	if len(def.options) > 0 {
+		a.gitChoiceSettingRow(c, s, i, local)
+		return
+	}
+	f := &s.fields[i]
 	t := c.Theme()
 	tip := "在全局配置中设置"
 	// 当前页面本身就是这个范围，所以只有生效值来自更高优先级的范围时才需要括出来源。
@@ -556,17 +563,78 @@ func (a *app) gitSettingRow(c *ui.Context, s *gitSettingsScope, i int, local boo
 		row.OnClick(func() { s.notice = "" })
 		if f.enabled {
 			ui.Row(c.Key("git-"+def.key+"-editor")).FillWidth().Padding(0, 16, 12, 40).Gap(8).AlignItems(ui.Center).Children(func() {
-				if len(def.options) == 0 {
-					ui.TextInput(c.Key("value"), &f.value).Label(tr(def.label)).Placeholder(tr("填写值")).FillWidth().Disabled(s.busy).
-						Invalid(strings.TrimSpace(f.value) == "")
-				} else {
-					options := slices.Clone(def.options)
-					if !slices.ContainsFunc(options, func(o configOption) bool { return o.value == f.value }) {
-						options = append(options, configOption{f.value, tr("保留当前值：") + f.value})
-					}
-					settingsChoice(c, "value", def.label, f.value, options, func(v string) { f.value = v }).Disabled(s.busy)
-				}
+				ui.TextInput(c.Key("value"), &f.value).Label(tr(def.label)).Placeholder(tr("填写值")).FillWidth().Disabled(s.busy).
+					Invalid(strings.TrimSpace(f.value) == "")
 			})
 		}
 	})
+}
+
+// gitChoiceSettingRow 是取值固定的 Git 键（拉取方式、快进策略、清理已删除的远程
+// 分支）：菜单本身就是控件，选一个值就是在这个范围里覆盖它，选第一项就是不覆盖。
+// 这样打开一项只要点一次，也不用把 git 的原始值（true / false / only）摊给用户看。
+func (a *app) gitChoiceSettingRow(c *ui.Context, s *gitSettingsScope, i int, local bool) {
+	def, f := settingsGitKeys[i], &s.fields[i]
+	t := c.Theme()
+	pageScope := "global"
+	inherit := "未设置"
+	if local {
+		pageScope = "local"
+		inherit = "继承全局设置"
+	}
+	choices := slices.Clone(def.options)
+	if f.enabled && !slices.ContainsFunc(choices, func(o configOption) bool { return o.value == f.value }) {
+		choices = append(choices, configOption{f.value, tr("保留当前值：") + f.value})
+	}
+	choices = append([]configOption{{"", inherit}}, choices...)
+	selected := ""
+	if f.enabled {
+		selected = f.value
+	}
+	// 未覆盖时生效值来自别的范围：在这一行下面写成人能读的取值，菜单里只留“不覆盖”。
+	// 覆盖了就是自己这份值，菜单已经写着，不重复第二遍。
+	value := ""
+	if !f.enabled {
+		if label, ok := configOptionLabel(def, f.effective); ok {
+			value = tr(label)
+		} else {
+			value = f.effective
+		}
+	}
+	settingsRow(c, "git-"+def.key, func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+			settingsName(c, def.label)
+			if f.changed() {
+				chip(c, "changed", tr("已修改"), chipStyle{Text: t.Accent, Background: t.Accent.Alpha(0.12), FontSize: 10})
+			}
+		})
+		if value != "" {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+				if f.scope != pageScope {
+					chip(c, "scope", settingsScopeLabel(f.scope), chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10}).Tooltip(f.origin)
+				}
+				ui.Text(c, value).FontSize(12).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
+			})
+		}
+	}, func() {
+		settingsChoice(c, "git-"+def.key+"-choice", def.label, selected, choices, func(v string) {
+			s.notice = ""
+			if v == "" {
+				f.enabled, f.value = false, ""
+				return
+			}
+			f.enabled, f.value = true, v
+		}).Disabled(s.busy)
+	})
+}
+
+// configOptionLabel 是配置文件里的原始值对应的说明文字，例如 pull.rebase 的 true
+// 在界面上是“变基”。值不在候选里时（例如手工写的别名）由调用方照原样显示。
+func configOptionLabel(def configDefinition, value string) (string, bool) {
+	for _, o := range def.options {
+		if o.value == value {
+			return o.label, true
+		}
+	}
+	return "", false
 }
