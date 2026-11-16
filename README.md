@@ -15,7 +15,7 @@
   <a href="./README_zh.md">简体中文</a>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.4-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.8.5-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
@@ -63,10 +63,10 @@ So Xylring was stitched together as a lightweight, Go-native desktop companion�
 
 ### macOS
 
-Download the `.dmg` matching your architecture from [Release v0.8.4](https://github.com/2fa0/xylring/releases):
+Download the `.dmg` matching your architecture from [Release v0.8.5](https://github.com/2fa0/xylring/releases):
 
-- **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.8.4-arm64.dmg`
-- **Intel x86_64**: `xylring-0.8.4-amd64.dmg`
+- **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.8.5-arm64.dmg`
+- **Intel x86_64**: `xylring-0.8.5-amd64.dmg`
 
 Or grab the `.app.tar.gz` archive if you prefer to place the app yourself. Open the disk image and drag **Xylring** into your `Applications` folder.
 
@@ -82,8 +82,8 @@ Once installed, Xylring checks for new versions itself and offers to update in i
 
 Download the `.exe` installer or the standalone `.zip` archive from [Releases](https://github.com/2fa0/xylring/releases):
 
-- **Installer**: run `xylring-setup-0.8.4-amd64.exe` (installs to your user directory, no admin rights required).
-- **Portable**: extract `xylring-0.8.4-windows-x64.zip` and run `Xylring.exe`.
+- **Installer**: run `xylring-setup-0.8.5-amd64.exe` (installs to your user directory, no admin rights required).
+- **Portable**: extract `xylring-0.8.5-windows-x64.zip` and run `Xylring.exe`.
 
 ### Build from Source
 
