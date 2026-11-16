@@ -12,6 +12,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -32,7 +33,7 @@ const (
 	// 图谱要画进这块内边距，线才能接到下一行的格线上。
 	graphCellPadY   = 1.5
 	graphCellPadX   = 2.5
-	chromeMinHeight = 40
+	chromeMinHeight = 44
 	chromePad       = 12
 )
 
@@ -376,10 +377,10 @@ func (a *app) handleShortcuts(c *ui.Context) {
 	}
 }
 
-func (a *app) chrome(c *ui.Context) {
+func (a *app) chromeMetrics(c *ui.Context) (h, padL, padR float32, empty, sidebarOpen bool, rightPadL, rightW float32) {
 	bar := c.TitleBar()
-	h := max(bar.Height, chromeMinHeight)
-	padL, padR := bar.Left, bar.Right
+	h = max(bar.Height, chromeMinHeight)
+	padL, padR = bar.Left, bar.Right
 	if bar.Left > 0 {
 		padL = bar.Left + 8
 	} else if padL < chromePad {
@@ -389,14 +390,113 @@ func (a *app) chrome(c *ui.Context) {
 		padR = chromePad
 	}
 	tab := a.activeTab()
-	empty := a.showHome || (tab == nil && len(a.found) <= 1)
-	sidebarOpen := !empty && a.showRepoSidebar() && a.repoSplit > 0 && (tab == nil || !tab.diffMaximized)
+	empty = a.showHome || (tab == nil && len(a.found) <= 1)
+	if !empty && a.showRepoSidebar() && a.repoSplit <= 0 {
+		a.repoSplit = defaultSidebarWidth
+	}
+	sidebarOpen = !empty && a.showRepoSidebar() && a.repoSplit > 0 && (tab == nil || !tab.diffMaximized)
+	rightPadL = padL
+	if sidebarOpen {
+		rightPadL = max(padL, a.repoSplit+10)
+	} else if !empty {
+		rightPadL = padL + 64
+	} else {
+		rightPadL = padL + 34
+	}
+	winW, _ := c.Size()
+	rightW = winW - rightPadL - padR
+	return h, padL, padR, empty, sidebarOpen, rightPadL, rightW
+}
+
+func (a *app) unifiedTopToolbar(c *ui.Context, tab *repoTab) bool {
+	if tab == nil || tab.unavailable || tab.contentTab != 0 || tab.query.filePath != "" {
+		return false
+	}
+	_, _, _, empty, _, _, rightW := a.chromeMetrics(c)
+	return !empty && rightW >= 720
+}
+
+func (a *app) chromeBranchButton(c *ui.Context, tab *repoTab, sidebarOpen, unified bool) {
+	th := c.Theme()
+	label := tab.title
+	branchText := displayBranch(tab.branch)
+	if tab.branch != "" {
+		if sidebarOpen {
+			label = branchText
+		} else {
+			label += " · " + branchText
+		}
+		if sync := syncBadge(tab.ahead, tab.behind); sync != "" {
+			label += " " + sync
+		}
+	}
+	tip := tab.path
+	if tab.branch != "" {
+		tip += "\n" + branchText
+	}
+	btn := ui.ButtonBase(c.Key("topbar-branch")).Height(28).Padding(0, 8).Gap(5).
+		Radius(th.Radius).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+		Tooltip(tip).Label(label).MinWidth(0).Shrink(1).Transition(colorMotion())
+	if unified {
+		btn.MaxWidth(210)
+	} else {
+		btn.MaxWidthPercent(55)
+	}
+	switch {
+	case btn.Pressed():
+		btn.Background(th.SurfacePressed)
+	case btn.Hovered():
+		btn.Background(th.SurfaceHover)
+	}
+	btn.Children(func() {
+		ui.Icon(c, iconGitBranch).Size(13, 13).TextColor(th.TextMuted).Shrink(0)
+		ui.Text(c, label).FontSize(12.5).FontWeight(600).TextColor(th.Text).SingleLine().MinWidth(0)
+		if !tab.unavailable {
+			ui.Icon(c, iconChevronDown).Size(12, 12).TextColor(th.TextMuted).Shrink(0)
+		}
+	})
+	if tab.unavailable {
+		return
+	}
+	disabled := tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
+	btn.Menu(func(m *ui.Menu) {
+		branches := make([]string, 0, len(tab.refs))
+		for name := range localBranchNames(tab.refs) {
+			branches = append(branches, name)
+		}
+		slices.Sort(branches)
+		for _, name := range branches {
+			branchName := name
+			if m.Item(branchName).Checked(branchName == tab.branch).Disabled(disabled || branchName == tab.branch).Chosen() {
+				a.runCheckoutBranch(tab, branchName)
+			}
+		}
+		if len(branches) > 0 {
+			m.Separator()
+		}
+		if m.Item(tr("新建分支…")).Disabled(disabled || tab.head == zeroHash).Chosen() {
+			a.openCommitWrite(tab, writeBranch, commit{hash: tab.head})
+		}
+		if tab.branch != "" && !strings.HasPrefix(tab.branch, "分离头指针") && tab.branch != "尚无提交" {
+			if m.Item(tr("复制分支名")).Chosen() {
+				c.Services().WriteClipboard(tab.branch)
+				c.Toast(tr("已复制分支名"))
+			}
+		}
+	})
+}
+
+func (a *app) chrome(c *ui.Context) {
+	bar := c.TitleBar()
+	h, padL, padR, empty, sidebarOpen, rightPadL, rightW := a.chromeMetrics(c)
+	tab := a.activeTab()
+	unified := a.unifiedTopToolbar(c, tab)
 	ui.Box(c).Height(h).Shrink(0).DragWindow().Children(func() {
 		if sidebarOpen {
 			ui.Box(c).Absolute().Left(a.repoSplit - 1).Top(0).Bottom(0).Width(1).Background(c.Theme().Border)
 		}
 		btnY := (h - 26) / 2
-		if runtime.GOOS == "darwin" && bar.Left > 0 {
+		if runtime.GOOS == "darwin" && bar.Left > 0 && h >= 48 {
 			btnY = 13
 		}
 		if sidebarOpen {
@@ -453,59 +553,54 @@ func (a *app) chrome(c *ui.Context) {
 				a.openSettings()
 			}
 		}
-		rightPadL := padL
-		if sidebarOpen {
-			rightPadL = max(padL, a.repoSplit+8)
-		}
-		ui.Row(c).Fill().Padding(0, padR, 0, rightPadL).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Grow(1)
-			if empty {
-				return
-			}
-			if tab != nil {
-				disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
-				// 拉取会改本地代码，藏在菜单里点两下不亏；推送最常用，一颗按钮一步到位（再一次确认）。
-				chromeIconButton(c, "topbar-pull", "拉取或获取远程更新", iconDownload).
-					Menu(func(m *ui.Menu) {
-						if m.Item(tr("获取远程更新")).Disabled(disabled).
-							Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
-							a.quickFetch(tab)
-						}
-						pullLabel := tr("拉取到当前分支")
-						if tab.behind > 0 {
-							pullLabel += fmt.Sprintf(tr("（落后 %d 个提交）"), tab.behind)
-						}
-						if m.Item(pullLabel).Disabled(disabled).
-							Tooltip(tr("git pull：获取并整合远程更新，会修改本地代码")).Chosen() {
-							a.quickPull(tab)
-						}
-						m.Separator()
-						if m.Item(tr("获取选项…")).Disabled(disabled).Chosen() {
-							a.openFetch(tab)
-						}
-					}).Disabled(disabled)
-				if chromeIconButton(c, "topbar-push", "推送当前分支", iconUpload).
-					Disabled(disabled).Clicked() {
-					a.requestPush(tab)
-				}
-			}
-			if tab == nil {
-				return
-			}
-		})
 		if empty || tab == nil {
 			return
 		}
-		label := tab.title
-		if tab.branch != "" {
-			label += "  ·  " + displayBranch(tab.branch)
-			if sync := syncBadge(tab.ahead, tab.behind); sync != "" {
-				label += " " + sync
+		ui.Row(c).Fill().Padding(0, padR, 0, rightPadL).Gap(6).AlignItems(ui.Center).Children(func() {
+			a.chromeBranchButton(c, tab, sidebarOpen, unified)
+			if unified {
+				a.historyScopeControls(c, tab)
+				var searchMax float32
+				if rightW > 1100 {
+					searchMax = 560
+				}
+				a.historySearchControls(c, tab, searchMax)
+				if searchMax > 0 && tab.query.term == "" {
+					ui.Box(c).Grow(1).MinWidth(8)
+				}
+				if chromeIconButton(c, "compare", "比较", iconGitCompare).
+					Disabled(tab.loading).Clicked() {
+					a.openCompareModal(tab)
+				}
+			} else {
+				ui.Box(c).Grow(1).MinWidth(8)
 			}
-		}
-		ui.Text(c, label).Bold().SingleLine().MinWidth(0).MaxWidthPercent(50).Tooltip(tab.path).
-			ContentTransition(contentFade()).
-			Attach(ui.AnchorCenter, ui.AnchorCenter)
+			disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
+			// 拉取会改本地代码，藏在菜单里点两下不亏；推送最常用，一颗按钮一步到位（再一次确认）。
+			chromeIconButton(c, "topbar-pull", "拉取或获取远程更新", iconDownload).
+				Menu(func(m *ui.Menu) {
+					if m.Item(tr("获取远程更新")).Disabled(disabled).
+						Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
+						a.quickFetch(tab)
+					}
+					pullLabel := tr("拉取到当前分支")
+					if tab.behind > 0 {
+						pullLabel += fmt.Sprintf(tr("（落后 %d 个提交）"), tab.behind)
+					}
+					if m.Item(pullLabel).Disabled(disabled).
+						Tooltip(tr("git pull：获取并整合远程更新，会修改本地代码")).Chosen() {
+						a.quickPull(tab)
+					}
+					m.Separator()
+					if m.Item(tr("获取选项…")).Disabled(disabled).Chosen() {
+						a.openFetch(tab)
+					}
+				}).Disabled(disabled)
+			if chromeIconButton(c, "topbar-push", "推送当前分支", iconUpload).
+				Disabled(disabled).Clicked() {
+				a.requestPush(tab)
+			}
+		})
 	})
 }
 
