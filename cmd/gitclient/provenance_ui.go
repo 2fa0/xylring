@@ -10,14 +10,14 @@ import (
 )
 
 type ringUI struct {
-	ruleTarget          string
-	ruleRemove          bool
-	preview             *rulePreview
-	status              string
-	stamp               ringStamp
-	checked             time.Time
-	busy, open, confirm bool
-	err                 string
+	ruleStatuses []ruleFileStatus
+	rulesBusy    bool
+	preview      *rulePreview
+	status       string
+	stamp        ringStamp
+	checked      time.Time
+	busy, open   bool
+	err          string
 }
 
 func (a *app) refreshRing(t *repoTab) {
@@ -31,6 +31,7 @@ func (a *app) refreshRing(t *repoTab) {
 		defer cancel()
 		status := ringHookStatus(ctx, path)
 		stamp, err := readStamp(ctx, path)
+		statuses := inspectRuleFiles(path)
 		// Expired stamps are ignored by both readers; do not remove a file that
 		// another process may have replaced between reading and cleanup.
 		a.post(func() {
@@ -41,9 +42,28 @@ func (a *app) refreshRing(t *repoTab) {
 			t.ring.checked = time.Now()
 			t.ring.status = status
 			t.ring.stamp = stamp
+			t.ring.ruleStatuses = statuses
 			if err != nil {
 				t.ring.err = err.Error()
 			}
+		})
+	}()
+}
+
+func (a *app) refreshRingRules(t *repoTab) {
+	if t.ring.rulesBusy {
+		return
+	}
+	t.ring.rulesBusy = true
+	path := t.path
+	go func() {
+		statuses := inspectRuleFiles(path)
+		a.post(func() {
+			if t.closed {
+				return
+			}
+			t.ring.rulesBusy = false
+			t.ring.ruleStatuses = statuses
 		})
 	}()
 }
@@ -88,17 +108,47 @@ func woodColor(t *ui.Theme) ui.Color {
 	return ui.Hex("#986b46")
 }
 
+func ringStatusShort(status string) (short, full string) {
+	if status == "" {
+		return "未开启", ""
+	}
+	if strings.HasPrefix(status, "需手动集成") {
+		return "需手动集成", status
+	}
+	return status, ""
+}
+
+func ringStatusColor(status string, th *ui.Theme) ui.Color {
+	switch {
+	case strings.HasPrefix(status, "已开启"):
+		return th.Success
+	case status == "版本过旧" || strings.HasPrefix(status, "需手动集成"):
+		return th.Warning
+	default:
+		return th.TextMuted
+	}
+}
+
 func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
 	th := c.Theme()
 	wood := woodColor(th)
-	status := t.ring.status
-	if status == "" {
-		status = "未开启"
+	short, full := ringStatusShort(t.ring.status)
+	dot := ringStatusColor(t.ring.status, th)
+	if !strings.HasPrefix(t.ring.status, "已开启") && t.ring.status != "版本过旧" && !strings.HasPrefix(t.ring.status, "需手动集成") {
+		dot = th.TextMuted.Alpha(0.5)
 	}
-	row := ui.ButtonBase(c.Key(key)).Label(tr("年轮 · ")+trMessage(status)).
-		Tooltip(tr("管理本仓库终端提交的年轮记录")).
-		FillWidth().MinWidth(0).Shrink(0).Padding(6, 8).Gap(9).
-		Radius(22).Border(1, th.Border).Background(th.Surface).
+	tip := tr("管理本仓库终端提交的年轮记录")
+	if full != "" {
+		tip += "\n" + trMessage(full)
+	}
+	if s := t.ring.stamp; s.p.agent != "" && s.expires > time.Now().Unix() {
+		mins := max(1, int(time.Until(time.Unix(s.expires, 0)).Minutes()))
+		tip += "\n" + fmt.Sprintf(tr("生效印章：%s · 剩余 %d 分钟"), s.p.description(), mins)
+	}
+	row := ui.ButtonBase(c.Key(key)).
+		Tooltip(tip).
+		FillWidth().MinWidth(0).Shrink(0).Padding(6, 10).Gap(8).
+		Radius(10).Border(1, th.Border).Background(th.Surface).
 		AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
 	switch {
 	case row.Pressed():
@@ -107,23 +157,17 @@ func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
 		row.Background(th.SurfaceHover)
 	}
 	row.Children(func() {
-		ui.Box(c).Size(28, 28).Radius(14).Background(wood.Alpha(0.12)).Center().Shrink(0).Children(func() {
-			ui.Icon(c, iconTreeRings).Size(22, 22).TextColor(wood)
-		})
-		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, tr("年轮")).FontSize(13).FontWeight(600).TextColor(th.Text).SingleLine()
-			ui.Text(c, trMessage(status)).FontSize(11).TextColor(th.TextMuted).SingleLine().MinWidth(0)
-		})
-		ui.Box(c).Size(24, 24).Radius(12).Border(1, th.Border).Center().Shrink(0).Children(func() {
-			ui.Icon(c, iconRingSettings).Size(13, 13).TextColor(th.TextMuted)
-		})
+		ui.Icon(c, iconTreeRings).Size(16, 16).TextColor(wood).Shrink(0)
+		ui.Text(c, tr("年轮")).FontSize(12.5).FontWeight(600).TextColor(th.Text).SingleLine().Shrink(0)
+		ui.Box(c).Size(6, 6).Radius(3).Background(dot).Shrink(0)
+		ui.Text(c, trMessage(short)).FontSize(11.5).TextColor(th.TextMuted).SingleLine().Grow(1).MinWidth(0)
+		ui.Icon(c, iconRingSettings).Size(13, 13).TextColor(th.TextMuted).Shrink(0)
 	})
 	if row.Clicked() {
 		t.ring.open = true
+		t.ring.err = ""
 		a.refreshRing(t)
-	}
-	if s := t.ring.stamp; s.p.agent != "" && s.expires > time.Now().Unix() {
-		ui.Text(c, fmt.Sprintf(tr("印章：%s · 剩余 %d 分钟"), s.p.agent, max(1, int(time.Until(time.Unix(s.expires, 0)).Minutes())))).FontSize(11).TextColor(c.Theme().TextMuted)
+		a.refreshRingRules(t)
 	}
 }
 func provenanceInputs(c *ui.Context, key string, p *provenance, disabled bool) bool {
@@ -150,25 +194,29 @@ func (a *app) commitRingControl(c *ui.Context, t *repoTab) {
 		if provenanceInputs(c, "commit-ring", &t.commitProv, t.commitBusy) {
 			t.commitProvEdited = true
 		}
-		for i, p := range a.recentProvenance {
-			p := p
-			if ui.Button(c.Key(fmt.Sprintf("recent-prov-%d", i)), p.description()).Disabled(t.commitBusy).Clicked() {
-				t.commitProv = p
+		hasStamp := t.ring.stamp.p.agent != "" && t.ring.stamp.expires > time.Now().Unix()
+		ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+			for i, p := range a.recentProvenance {
+				p := p
+				if ui.Button(c.Key(fmt.Sprintf("recent-prov-%d", i)), p.description()).Disabled(t.commitBusy).Clicked() {
+					t.commitProv = p
+					t.commitProvEdited = true
+				}
+			}
+			if hasStamp {
+				s := t.ring.stamp
+				if ui.Button(c.Key("apply-stamp"), tr("应用建议印章：")+s.p.description()).Disabled(t.commitBusy).Clicked() {
+					t.commitProv = s.p
+					t.commitProv.attribution = ""
+					t.commitProvEdited = true
+				}
+			}
+			if ui.Button(c.Key("commit-ring-clear"), tr("清空年轮")).Disabled(t.commitBusy).Clicked() {
+				t.commitProv = provenance{}
 				t.commitProvEdited = true
 			}
-		}
-		if ui.Button(c.Key("commit-ring-clear"), tr("清空年轮")).Disabled(t.commitBusy).Clicked() {
-			t.commitProv = provenance{}
-			t.commitProvEdited = true
-		}
+		})
 		a.ringStatusControl(c, t, "commit-ring-settings")
-		if s := t.ring.stamp; s.p.agent != "" && s.expires > time.Now().Unix() {
-			if ui.Button(c.Key("apply-stamp"), tr("应用建议印章：")+s.p.description()).Disabled(t.commitBusy).Clicked() {
-				t.commitProv = s.p
-				t.commitProv.attribution = ""
-				t.commitProvEdited = true
-			}
-		}
 	}
 }
 func (a *app) rememberProvenance(p provenance) {
@@ -188,69 +236,231 @@ func (a *app) rememberProvenance(p provenance) {
 	}
 	a.recentProvenance = next
 }
+
+func ringCopyButton(c *ui.Context, key, label, tooltip, content string) {
+	b := ui.Button(c.Key(key), "").Shrink(0)
+	if b.Clicked() {
+		c.Services().WriteClipboard(content)
+		b.Jump("copied", 1)
+	}
+	copied := b.AnimateTo("copied", 0, ui.Animation{Duration: 2 * time.Second}) > 0
+	display := label
+	if copied {
+		display = tr("已复制")
+	}
+	b.Label(display)
+	if tooltip != "" {
+		b.Tooltip(tooltip)
+	}
+	b.Children(func() {
+		ui.Text(c, display).SingleLine()
+	})
+}
+
+func renderRuleDiff(c *ui.Context, diff string, th *ui.Theme) {
+	lines := strings.Split(strings.TrimSuffix(diff, "\n"), "\n")
+	spans := make([]ui.Span, 0, len(lines)*2)
+	for i, line := range lines {
+		if i > 0 {
+			spans = append(spans, ui.Span{Text: "\n"})
+		}
+		color := th.Text
+		switch {
+		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
+			color = th.TextMuted
+		case strings.HasPrefix(line, "+"):
+			color = th.Success
+		case strings.HasPrefix(line, "-"):
+			color = th.Danger
+		}
+		spans = append(spans, ui.Span{Text: line, Color: color})
+	}
+	ui.RichText(c, spans...).Font("monospace").FontSize(11).LineHeight(1.45)
+}
+
+func findRuleStatus(statuses []ruleFileStatus, target string) ruleFileStatus {
+	for _, s := range statuses {
+		if s.target == target {
+			return s
+		}
+	}
+	return ruleFileStatus{target: target}
+}
+
 func (a *app) ringModal(c *ui.Context) {
 	t := a.activeTab()
 	if t == nil || !t.ring.open {
 		return
 	}
-	appModal(c.Key("ring-settings-modal"), &t.ring.open, tr("本仓库年轮记录"), 500, t.ring.busy, func() {
+	th := c.Theme()
+	shortStatus, _ := ringStatusShort(t.ring.status)
+	statusColor := ringStatusColor(t.ring.status, th)
+	isEnabled := strings.HasPrefix(t.ring.status, "已开启")
+	isOutdated := t.ring.status == "版本过旧"
+	isManual := strings.HasPrefix(t.ring.status, "需手动集成")
+	hasStamp := t.ring.stamp.p.agent != "" && t.ring.stamp.expires > time.Now().Unix()
+
+	appModal(c.Key("ring-settings-modal"), &t.ring.open, tr("本仓库年轮记录"), 560, t.ring.busy, func() {
 		if reason := provenanceReadStatus(); reason != "" {
-			ui.Text(c, reason).FontSize(12).TextColor(c.Theme().TextMuted)
-		}
-		ui.Text(c, tr("开启会写入 .git/hooks，Agent 与模型信息会随提交公开。")).FontSize(12)
-		if strings.HasPrefix(t.ring.status, "需手动集成") {
-			if ui.Button(c.Key("ring-copy-script"), tr("复制集成脚本")).
-				Tooltip(tr("将年轮脚本保存到现有 Hook 可调用的位置，再在 prepare-commit-msg 中执行该脚本并传入原参数；脚本仅依赖 Git 和 POSIX sh。")).Clicked() {
-				c.Services().WriteClipboard(ringHookScript())
-			}
-		} else {
-			if strings.HasPrefix(t.ring.status, "已开启") {
-				if ui.Button(c.Key("ring-uninstall"), tr("关闭并还原原 Hook")).Disabled(t.ring.busy).Clicked() {
-					a.ringAction(t, "uninstall")
-				}
-			} else {
-				ui.Checkbox(c.Key("ring-confirm"), &t.ring.confirm, tr("我了解以上改动并同意在本仓库开启"))
-				ui.Checkbox(c.Key("ring-skip-notice"), &a.ringSkipNotice, tr("以后开启其他仓库时不再提示"))
-				if ui.Button(c.Key("ring-install"), tr("开启终端年轮记录")).Disabled(t.ring.busy || (!t.ring.confirm && !a.ringSkipNotice)).Clicked() {
-					a.ringAction(t, "install")
-				}
-			}
-		}
-		if t.ring.stamp.p.agent != "" {
-			ui.Text(c, tr("生效印章：")+t.ring.stamp.p.description())
-			if ui.Button(c.Key("ring-clear-stamp"), tr("清除印章")).Disabled(t.ring.busy).Clicked() {
-				a.ringAction(t, "clear")
-			}
-		}
-		if ui.Button(c.Key("ring-copy-rules"), tr("复制 Agent 规则片段")).Clicked() {
-			c.Services().WriteClipboard(provenanceRuleSnippet())
-			c.Toast(tr("已复制，可粘贴到项目规则文件"))
-		}
-		ui.Text(c, tr("项目规则")).FontSize(12).FontWeight(600)
-		ui.TextInput(c.Key("rule-target"), &t.ring.ruleTarget).Placeholder("AGENTS.md / CLAUDE.md / .cursor/rules/xylring-provenance.mdc")
-		ui.Checkbox(c.Key("rule-remove"), &t.ring.ruleRemove, tr("移除已有年轮规则"))
-		if ui.Button(c.Key("rule-preview"), tr("预览规则 diff")).Disabled(t.ring.busy).Clicked() {
-			a.previewRingRules(t)
-		}
-		if preview := t.ring.preview; preview != nil {
-			ui.Scroll(c).Height(180).Children(func() { ui.Text(c, preview.diff).Font("monospace").FontSize(11) })
-			if ui.Button(c.Key("rule-save"), tr("确认写入以上 diff")).Disabled(t.ring.busy).Clicked() {
-				a.saveRingRules(t)
-			}
+			settingsNotice(c, "ring-read-status", reason, th.Warning)
 		}
 		if t.ring.err != "" {
-			ui.Text(c, trMessage(t.ring.err)).TextColor(c.Theme().Danger)
+			settingsNotice(c, "ring-error", t.ring.err, th.Danger)
 		}
+
+		// Card 1: Terminal commit Hook & active stamp
+		ui.Column(c.Key("ring-hook-card")).FillWidth().Radius(10).Clip().Background(th.Surface).Border(1, th.Border).Children(func() {
+			ui.Row(c.Key("ring-hook-row")).FillWidth().Padding(12, 14).Gap(12).AlignItems(ui.Center).Children(func() {
+				ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Wrap().Children(func() {
+						ui.Text(c, tr("终端提交 Hook")).FontSize(13.5).FontWeight(600).TextColor(th.Text)
+						chipSoft(c, "ring-hook-badge", trMessage(shortStatus), statusColor, false)
+					})
+					switch {
+					case isManual:
+						ui.Text(c, tr("已设置 core.hooksPath，请在现有 prepare-commit-msg 中调用年轮脚本。")).FontSize(12).LineHeight(1.4).TextColor(th.TextMuted)
+					case isOutdated:
+						ui.Text(c, tr("Hook 版本过旧，建议更新到最新脚本。")).FontSize(12).LineHeight(1.4).TextColor(th.TextMuted)
+					case !isEnabled && !a.ringSkipNotice:
+						ui.Text(c, tr("开启后会写入 .git/hooks/prepare-commit-msg，Agent 与模型信息会随提交公开。")).FontSize(12).LineHeight(1.4).TextColor(th.TextMuted)
+						ui.Checkbox(c.Key("ring-skip-notice"), &a.ringSkipNotice, tr("以后开启其他仓库时不再提示"))
+					}
+				})
+				ui.Row(c).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
+					switch {
+					case isManual:
+						ringCopyButton(c, "ring-copy-script", tr("复制脚本"), tr("将年轮脚本保存到现有 Hook 可调用的位置，再在 prepare-commit-msg 中执行该脚本并传入原参数；脚本仅依赖 Git 和 POSIX sh。"), ringHookScript())
+					case isEnabled:
+						if ui.Button(c.Key("ring-uninstall"), tr("停用")).Disabled(t.ring.busy).Tooltip(tr("移除年轮 Hook 并还原原 Hook")).Clicked() {
+							a.ringAction(t, "uninstall")
+						}
+					case isOutdated:
+						if ui.Button(c.Key("ring-uninstall"), tr("停用")).Disabled(t.ring.busy).Tooltip(tr("移除年轮 Hook 并还原原 Hook")).Clicked() {
+							a.ringAction(t, "uninstall")
+						}
+						if ui.PrimaryButton(c.Key("ring-install"), tr("更新 Hook")).Disabled(t.ring.busy).Clicked() {
+							a.ringAction(t, "install")
+						}
+					default:
+						if ui.PrimaryButton(c.Key("ring-install"), tr("开启 Hook")).Disabled(t.ring.busy).Clicked() {
+							a.ringAction(t, "install")
+						}
+					}
+				})
+			})
+			if hasStamp {
+				settingsCardDivider(c)
+				mins := max(1, int(time.Until(time.Unix(t.ring.stamp.expires, 0)).Minutes()))
+				ttlText := fmt.Sprintf(tr("剩余 %d 分钟"), mins)
+				if t.ring.stamp.once {
+					ttlText += tr(" · 单次有效")
+				}
+				ui.Row(c.Key("ring-stamp-row")).FillWidth().Padding(10, 14).Gap(12).AlignItems(ui.Center).Children(func() {
+					ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+						ui.Row(c).Gap(8).AlignItems(ui.Center).Wrap().Children(func() {
+							ui.Text(c, tr("生效印章")).FontSize(12.5).FontWeight(500).TextColor(th.Text)
+							chipSoft(c, "ring-stamp-desc", t.ring.stamp.p.description(), woodColor(th), false)
+						})
+						ui.Text(c, ttlText).FontSize(11.5).TextColor(th.TextMuted)
+					})
+					if ui.Button(c.Key("ring-clear-stamp"), tr("清除印章")).Disabled(t.ring.busy).Shrink(0).Clicked() {
+						a.ringAction(t, "clear")
+					}
+				})
+			}
+		})
+
+		// Card 2: Project rules
+		ui.Column(c.Key("ring-rules-card")).FillWidth().Radius(10).Clip().Background(th.Surface).Border(1, th.Border).Children(func() {
+			ui.Row(c.Key("ring-rules-header")).FillWidth().Padding(10, 14).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, tr("项目规则")).FontSize(13.5).FontWeight(600).TextColor(th.Text).Grow(1).MinWidth(0)
+				ringCopyButton(c, "ring-copy-rules", tr("复制规则片段"), tr("复制到剪贴板，可粘贴到全局或其他规则文件"), provenanceRuleSnippet())
+			})
+			for _, target := range provenanceRuleTargets {
+				st := findRuleStatus(t.ring.ruleStatuses, target)
+				settingsCardDivider(c)
+				row := ui.Row(c.Key("rule-row-"+target)).FillWidth().Padding(9, 14).Gap(8).AlignItems(ui.Center)
+				if t.ring.preview != nil && t.ring.preview.target == target {
+					row.Background(th.Accent.Alpha(0.06))
+				}
+				row.Children(func() {
+					ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, target).Font("monospace").FontSize(12).FontWeight(500).TextColor(th.Text).SingleLine().MinWidth(0).Tooltip(target)
+						switch {
+						case st.hasRule && !st.outdated:
+							chipSoft(c, "rule-status-"+target, tr("已写入"), th.Success, false)
+						case st.hasRule && st.outdated:
+							chipSoft(c, "rule-status-"+target, tr("可更新"), th.Warning, false)
+						case st.exists:
+							chipSoft(c, "rule-status-"+target, tr("已有文件"), th.TextMuted, false)
+						}
+					})
+					ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
+						switch {
+						case !st.hasRule:
+							if ui.Button(c.Key("rule-add-"+target), tr("写入…")).Disabled(t.ring.busy).Clicked() {
+								a.previewRingRulesFor(t, target, false)
+							}
+						case st.outdated:
+							if ui.Button(c.Key("rule-update-"+target), tr("更新…")).Disabled(t.ring.busy).Clicked() {
+								a.previewRingRulesFor(t, target, false)
+							}
+							if ui.Button(c.Key("rule-remove-"+target), tr("移除…")).Disabled(t.ring.busy).Clicked() {
+								a.previewRingRulesFor(t, target, true)
+							}
+						default:
+							if ui.Button(c.Key("rule-remove-"+target), tr("移除…")).Disabled(t.ring.busy).Clicked() {
+								a.previewRingRulesFor(t, target, true)
+							}
+						}
+					})
+				})
+			}
+			if preview := t.ring.preview; preview != nil {
+				settingsCardDivider(c)
+				previewTitle := fmt.Sprintf(tr("预览写入：%s"), preview.target)
+				confirmLabel := tr("确认写入")
+				if preview.remove {
+					previewTitle = fmt.Sprintf(tr("预览移除：%s"), preview.target)
+					confirmLabel = tr("确认移除")
+				}
+				ui.Column(c.Key("ring-rule-preview")).FillWidth().Padding(12, 14).Gap(8).Background(th.Background).Children(func() {
+					ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, previewTitle).FontSize(12).FontWeight(600).TextColor(th.Text).SingleLine().Grow(1).MinWidth(0)
+						if ui.Button(c.Key("rule-preview-cancel"), tr("取消")).Disabled(t.ring.busy).Shrink(0).Clicked() {
+							t.ring.preview = nil
+						}
+						if ui.PrimaryButton(c.Key("rule-save"), confirmLabel).Disabled(t.ring.busy).Shrink(0).Clicked() {
+							a.saveRingRules(t)
+						}
+					})
+					ui.Scroll(c.Key("rule-diff-scroll")).Height(160).FillWidth().Radius(8).Border(1, th.Border).Background(th.Surface).Children(func() {
+						ui.Column(c).Padding(8, 10).Children(func() {
+							renderRuleDiff(c, preview.diff, th)
+						})
+					})
+				})
+			}
+		})
 	}, func() {
+		if t.ring.busy || t.ring.rulesBusy {
+			busyRow(c, "ring-busy", tr("正在处理…"), "")
+		}
+		ui.Box(c).Grow(1)
 		if ui.Button(c.Key("ring-close"), tr("关闭")).Disabled(t.ring.busy).Clicked() {
 			t.ring.open = false
+			t.ring.preview = nil
+			t.ring.err = ""
 		}
 	})
 }
 
-func (a *app) previewRingRules(t *repoTab) {
+func (a *app) previewRingRulesFor(t *repoTab, target string, remove bool) {
+	if t.ring.busy {
+		return
+	}
 	t.ring.busy = true
-	dir, target, remove := t.path, t.ring.ruleTarget, t.ring.ruleRemove
+	dir := t.path
 	go func() {
 		p, err := previewRuleSnippet(dir, target, remove)
 		a.post(func() {
@@ -262,6 +472,8 @@ func (a *app) previewRingRules(t *repoTab) {
 			t.ring.err = ""
 			if err != nil {
 				t.ring.err = err.Error()
+			} else if p.diff == "" {
+				a.refreshRingRules(t)
 			} else {
 				t.ring.preview = &p
 			}
@@ -286,6 +498,7 @@ func (a *app) saveRingRules(t *repoTab) {
 				t.ring.err = err.Error()
 			} else {
 				t.ring.preview = nil
+				a.refreshRingRules(t)
 				a.refreshWorktree(t)
 			}
 		})
