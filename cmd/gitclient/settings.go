@@ -454,7 +454,9 @@ func (a *app) projectSettings(c *ui.Context) {
 					if ui.Button(c.Key("settings-ring"), tr("本仓库年轮设置…")).Disabled(dirty || d.global.busy || d.local.busy).Clicked() {
 						d.open = false
 						tab.ring.open = true
+						tab.ring.err = ""
 						a.refreshRing(tab)
+						a.refreshRingRules(tab)
 					}
 				}
 			})

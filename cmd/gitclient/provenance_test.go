@@ -441,3 +441,77 @@ func TestProvenanceHistoryPerformance(t *testing.T) {
 		t.Fatal("commit memory budget exceeded")
 	}
 }
+
+func TestInspectRuleFilesAndRingModalFlow(t *testing.T) {
+	dir, _ := ringTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# Claude\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".cursor/rules/xylring-provenance.mdc"), nil, 0644); err == nil {
+		t.Fatal("expected missing .cursor/rules dir")
+	}
+	statuses := inspectRuleFiles(dir)
+	if len(statuses) != 3 {
+		t.Fatalf("unexpected statuses: %+v", statuses)
+	}
+	if statuses[0].exists || statuses[0].hasRule {
+		t.Fatalf("AGENTS.md should not exist: %+v", statuses[0])
+	}
+	if !statuses[1].exists || statuses[1].hasRule {
+		t.Fatalf("CLAUDE.md should exist without rule: %+v", statuses[1])
+	}
+
+	// Outdated rule marker is detected as outdated.
+	outdatedPath := filepath.Join(dir, ".cursor/rules/xylring-provenance.mdc")
+	if err := os.MkdirAll(filepath.Dir(outdatedPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outdatedPath, []byte("<!-- xylring:provenance:start v0 -->\nold\n<!-- xylring:provenance:end -->\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	statuses = inspectRuleFiles(dir)
+	if !statuses[2].exists || !statuses[2].hasRule || !statuses[2].outdated {
+		t.Fatalf("expected outdated cursor rule: %+v", statuses[2])
+	}
+
+	updates := make(chan func(), 64)
+	tab := newTab(1, dir)
+	tab.ring.status = "未开启"
+	tab.ring.open = true
+	tab.ring.ruleStatuses = statuses
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+	tt := ui.NewTester(func(c *ui.Context) { a.ringModal(c) }, 800, 720)
+	defer retireTester(tt)
+	tt.Frame()
+
+	// 1-click enable without extra confirmation checkbox.
+	if err := tt.Click("开启 Hook"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdates(t, updates, func() bool { return !tab.ring.busy && strings.HasPrefix(tab.ring.status, "已开启") })
+	tt.Frame()
+	if tt.HasText("开启后会写入 .git/hooks/prepare-commit-msg，Agent 与模型信息会随提交公开。") {
+		t.Fatal("enable notice should disappear once hook is enabled")
+	}
+
+	// 1-click preview for AGENTS.md, then confirm write.
+	if err := tt.Click("写入…"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdates(t, updates, func() bool { return !tab.ring.busy && tab.ring.preview != nil })
+	tt.Frame()
+	if !tt.HasText("预览写入：AGENTS.md") {
+		t.Fatalf("missing preview title: %v", tt.Texts())
+	}
+	saveLobePreview(t, tt, "ring-preview-enabled")
+	if err := tt.Click("确认写入"); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdates(t, updates, func() bool {
+		return !tab.ring.busy && !tab.ring.rulesBusy && tab.ring.preview == nil && findRuleStatus(tab.ring.ruleStatuses, "AGENTS.md").hasRule
+	})
+	tt.Frame()
+	if !tt.HasText("已写入") {
+		t.Fatalf("missing configured chip after save: %v", tt.Texts())
+	}
+}
