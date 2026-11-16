@@ -1756,10 +1756,10 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func()
 	}
 	m.Separator()
 	fullPath := repoFilePath(t.path, f.path, true)
-	if m.Item(tr("使用默认编辑器打开")).Chosen() {
+	if m.Item(a.openEditorMenuLabel()).Chosen() {
 		if _, err := os.Stat(fullPath); err != nil {
 			c.Toast(tr("工作区中不存在此文件"))
-		} else if err := openWithDefaultEditor(fullPath); err != nil {
+		} else if err := a.openInEditor(fullPath); err != nil {
 			c.Toast(trMessage("打开失败: " + err.Error()))
 		}
 	}
