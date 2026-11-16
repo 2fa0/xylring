@@ -51,6 +51,9 @@ func (a *app) startAutoRefresh() {
 					if a.win == nil || a.win.IsFocused() && !a.win.IsMinimized() {
 						a.checkActiveRepo()
 						a.maybeAutoFetch()
+						if a.showBoard || refreshSummaries {
+							a.pollBoardFile()
+						}
 						if refreshSummaries && a.showRepoSidebar() {
 							a.refreshRepoSummaries()
 						}

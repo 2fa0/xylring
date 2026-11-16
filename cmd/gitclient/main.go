@@ -126,6 +126,8 @@ type app struct {
 	discard        discardDialog
 	showPush       bool
 	push           pushDialog
+	showBoard      bool
+	board          boardState
 }
 
 type discardDialog struct {
@@ -224,7 +226,11 @@ func (a *app) view(c *ui.Context) {
 	}
 	root.Children(func() {
 		a.chrome(c)
-		if a.showHome || (a.activeTab() == nil && len(a.found) <= 1) {
+		if a.showBoard {
+			ui.Column(c.Key("page-board")).Grow(1).MinWidth(0).MinHeight(0).Transition(fadeEnter()).Children(func() {
+				a.boardScreen(c)
+			})
+		} else if a.showHome || (a.activeTab() == nil && len(a.found) <= 1) {
 			ui.Column(c.Key("page-home")).Grow(1).MinWidth(0).MinHeight(0).Transition(fadeEnter()).Children(func() {
 				a.emptyState(c)
 			})
@@ -259,6 +265,7 @@ func (a *app) view(c *ui.Context) {
 	a.operationModal(c)
 	a.settingsModal(c)
 	a.gitLogModal(c)
+	a.boardModals(c)
 }
 
 func (a *app) handleShortcuts(c *ui.Context) {
@@ -393,18 +400,18 @@ func (a *app) chromeMetrics(c *ui.Context) (h, padL, padR float32, empty, sideba
 		padR = chromePad
 	}
 	tab := a.activeTab()
-	empty = a.showHome || (tab == nil && len(a.found) <= 1)
+	empty = !a.showBoard && (a.showHome || (tab == nil && len(a.found) <= 1))
 	if !empty && a.showRepoSidebar() && a.repoSplit <= 0 {
 		a.repoSplit = defaultSidebarWidth
 	}
-	sidebarOpen = !empty && a.showRepoSidebar() && a.repoSplit > 0 && (tab == nil || !tab.diffMaximized)
+	sidebarOpen = !empty && a.showRepoSidebar() && a.repoSplit > 0 && (a.showBoard || tab == nil || !tab.diffMaximized)
 	rightPadL = padL
 	if sidebarOpen {
 		rightPadL = max(padL, a.repoSplit+10)
 	} else if !empty {
-		rightPadL = padL + 64
+		rightPadL = padL + 94
 	} else {
-		rightPadL = padL + 34
+		rightPadL = padL + 64
 	}
 	winW, _ := c.Size()
 	rightW = winW - rightPadL - padR
@@ -539,7 +546,7 @@ func (a *app) chrome(c *ui.Context) {
 					}
 				})
 			}
-		} else if !empty {
+		} else if !empty && (len(a.found) > 0 || len(a.tabs) > 0) {
 			btn := chromeIconButton(c, "toggle-sidebar", "切换侧边栏", iconPanelLeft).
 				Absolute().Left(padL).Top(btnY).
 				Tooltip(sidebarToggleTip(a.showRepoSidebar()))
@@ -549,14 +556,36 @@ func (a *app) chrome(c *ui.Context) {
 		}
 		if !sidebarOpen {
 			x := padL
-			if !empty {
+			if !empty && (len(a.found) > 0 || len(a.tabs) > 0) {
 				x += 30
 			}
+			if a.showBoard && len(a.found) == 0 && len(a.tabs) == 0 {
+				if chromeIconButton(c, "chrome-home-btn", "返回首页", iconHome).Absolute().Left(x).Top(btnY).Clicked() {
+					a.goHome()
+				}
+				x += 30
+			}
+			boardTip := tr("看板")
+			if a.showBoard {
+				boardTip = tr("返回仓库")
+			}
+			boardBtn := chromeIconButton(c, "open-board", "看板", iconKanban).
+				Absolute().Left(x).Top(btnY).Tooltip(boardTip)
+			if boardBtn.Clicked() {
+				if a.showBoard && (len(a.tabs) > 0 || len(a.found) > 0) {
+					a.showBoard = false
+				} else if a.showBoard {
+					a.goHome()
+				} else {
+					a.openBoard()
+				}
+			}
+			x += 30
 			if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Absolute().Left(x).Top(btnY).Clicked() {
 				a.openSettings()
 			}
 		}
-		if empty || tab == nil {
+		if empty || tab == nil || a.showBoard {
 			return
 		}
 		ui.Row(c).Fill().Padding(0, padR, 0, rightPadL).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -848,17 +877,22 @@ func (a *app) repoItems() []string {
 
 func (a *app) repoList(c *ui.Context) {
 	ui.Themed(c, listTheme(c)).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Padding(6, 8, 8, 8).Children(func() {
+		a.sidebarBoardRow(c)
 		a.sidebarRepoSection(c)
-		if tab := a.activeTab(); tab != nil && !tab.unavailable {
-			a.ringStatusControl(c, tab, "sidebar-ring-settings")
+		if !a.showBoard {
+			if tab := a.activeTab(); tab != nil && !tab.unavailable {
+				a.ringStatusControl(c, tab, "sidebar-ring-settings")
+			}
 		}
 	})
 }
 
 func (a *app) sidebarRepoSection(c *ui.Context) {
 	active := ""
-	if tab := a.activeTab(); tab != nil {
-		active = tab.path
+	if !a.showBoard {
+		if tab := a.activeTab(); tab != nil {
+			active = tab.path
+		}
 	}
 	ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		items := a.repoItems()
