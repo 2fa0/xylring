@@ -315,6 +315,61 @@ func TestGitSettingsChoicesStayDisabledDuringSave(t *testing.T) {
 	}
 }
 
+// 取值固定的 Git 键在项目页上只有菜单一个控件：不覆盖时菜单写“继承全局设置”，
+// 生效值写成人能读的取值（变基），而不是 git 的原始值 true。
+func TestGitSettingsProjectChoiceInheritsAndOverrides(t *testing.T) {
+	s := gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}
+	s.fields[2] = gitSetting{effective: "true", origin: "/home/x/.gitconfig", scope: "global"}
+	a := &app{}
+	tt := ui.NewTester(func(c *ui.Context) { a.gitSettingRow(c, &s, 2, true) }, 720, 300)
+	defer retireTester(tt)
+	tt.Frame()
+	if !tt.HasText("变基") || !tt.HasText("继承全局设置") {
+		t.Fatalf("inherited value should read as its option label: %q", tt.Texts())
+	}
+	for _, text := range tt.Texts() {
+		if text == "true" {
+			t.Fatalf("raw git value shown: %q", tt.Texts())
+		}
+	}
+
+	clickControl(t, tt, "拉取方式")
+	if err := tt.ChooseMenuItem("合并"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.fields[2].enabled || s.fields[2].value != "false" {
+		t.Fatalf("choosing a value did not override: %+v", s.fields[2])
+	}
+
+	clickControl(t, tt, "拉取方式")
+	if err := tt.ChooseMenuItem("继承全局设置"); err != nil {
+		t.Fatal(err)
+	}
+	if s.fields[2].enabled || s.fields[2].value != "" {
+		t.Fatalf("choosing inheritance did not drop the override: %+v", s.fields[2])
+	}
+}
+
+// 全局页没有可继承的范围：不覆盖那一项就是“未设置”，选它把这个键删掉。
+func TestGitSettingsGlobalChoiceUnsets(t *testing.T) {
+	s := gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}
+	s.fields[3] = gitSetting{enabled: true, value: "only", original: []string{"only"}}
+	a := &app{}
+	tt := ui.NewTester(func(c *ui.Context) { a.gitSettingRow(c, &s, 3, false) }, 720, 300)
+	defer retireTester(tt)
+	tt.Frame()
+	if !tt.HasText("仅快进") {
+		t.Fatalf("chosen value should show its label: %q", tt.Texts())
+	}
+	clickControl(t, tt, "快进策略")
+	if err := tt.ChooseMenuItem("未设置"); err != nil {
+		t.Fatal(err)
+	}
+	if s.fields[3].enabled || s.fields[3].value != "" || !gitSettingsDirty(&s) {
+		t.Fatalf("unsetting did not clear the key: %+v", s.fields[3])
+	}
+}
+
 func TestSettingsProjectPageOwnsItsOverride(t *testing.T) {
 	a := &app{settings: settingsState{open: true, page: 2, repo: "/work/repo",
 		global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))},
