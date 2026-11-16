@@ -285,7 +285,8 @@ func repoNestLevel(items []string, path string) int {
 }
 
 // worktreeRowLabel 是工作树子行的主文案：分支名；没有分支就是分离头指针的短哈希。
-func worktreeRowLabel(wt repoWorktree, dirty bool) string {
+// 工作区有改动用单独的文本标记，不拼在分支名里（分支名会被截断）。
+func worktreeRowLabel(wt repoWorktree) string {
 	label := wt.branch
 	if label == "" || wt.detached {
 		if wt.head == zeroHash {
@@ -293,9 +294,6 @@ func worktreeRowLabel(wt repoWorktree, dirty bool) string {
 		} else {
 			label = tr("分离头指针") + " " + shortHash(wt.head)
 		}
-	}
-	if dirty {
-		label += "*"
 	}
 	return label
 }

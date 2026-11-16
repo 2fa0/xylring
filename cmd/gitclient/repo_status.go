@@ -50,23 +50,32 @@ func queryRepoSummary(ctx context.Context, dir string) repoSummary {
 	return s
 }
 
-func sidebarBranchDisplay(branch string, dirty bool) string {
+// sidebarBranchName 是侧栏显示的分支名，不带状态标记：分支名可以被截断，
+// 状态另外画，长分支名不会把状态挤掉。
+func sidebarBranchName(branch string) string {
 	if branch == "" {
-		if dirty {
-			return "*"
-		}
 		return ""
 	}
-	b := branch
-	if strings.HasPrefix(b, "分离头指针 ") {
-		b = "(" + strings.TrimPrefix(b, "分离头指针 ") + ")"
-	} else if b == "尚无提交" {
-		b = "(" + tr("尚无提交") + ")"
+	if strings.HasPrefix(branch, "分离头指针 ") {
+		return "(" + strings.TrimPrefix(branch, "分离头指针 ") + ")"
 	}
+	if branch == "尚无提交" {
+		return "(" + tr("尚无提交") + ")"
+	}
+	return branch
+}
+
+// sidebarBranchStatus 是分支名后面的状态标记：工作区有改动是 *，领先 / 落后
+// 提交数是 ↑n ↓n。它单独成一个文本，分支名再长也截不掉它。
+func sidebarBranchStatus(dirty bool, ahead, behind int) string {
+	parts := make([]string, 0, 2)
 	if dirty {
-		b += "*"
+		parts = append(parts, "*")
 	}
-	return b
+	if sync := syncBadge(ahead, behind); sync != "" {
+		parts = append(parts, sync)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (a *app) repoStatus(path string) (branch string, dirty bool, ahead, behind int) {

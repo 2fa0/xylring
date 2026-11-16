@@ -121,7 +121,7 @@ func TestWorktreeListExcludesMainWorktree(t *testing.T) {
 	if rows[1].worktree == nil || rows[1].path != canonicalRepoDir(side) {
 		t.Fatalf("child row = %+v", rows[1])
 	}
-	if label := worktreeRowLabel(*rows[1].worktree, false); label != "side" {
+	if label := worktreeRowLabel(*rows[1].worktree); label != "side" {
 		t.Fatalf("child label = %q", label)
 	}
 }

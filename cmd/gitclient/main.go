@@ -825,10 +825,8 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 					a.ensureRepoSummary(p)
 				}
 			}
-			branchDisplay := sidebarBranchDisplay(branch, dirty)
-			if sync := syncBadge(ahead, behind); sync != "" {
-				branchDisplay += " " + sync
-			}
+			branchName := sidebarBranchName(branch)
+			branchStatus := sidebarBranchStatus(dirty, ahead, behind)
 			tip := tr("当前分支：") + displayBranch(branch)
 			if dirty {
 				tip += tr("（工作区有未提交或未跟踪的代码）")
@@ -837,10 +835,16 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			row.ContextMenu(contextMenu(p))
 			row.Children(func() {
 				ui.Text(c, label).FontSize(13).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
-				if branchDisplay != "" {
+				if branchName != "" || branchStatus != "" {
+					// 分支名可以被截断，状态标记不参与收缩：侧栏再窄也留得下状态。
 					ui.Row(c).Gap(3).AlignItems(ui.Center).Shrink(0).MaxWidth(130).Tooltip(tip).Children(func() {
 						ui.Icon(c, iconGitBranch).Size(12, 12).TextColor(c.Theme().TextMuted)
-						ui.Text(c, branchDisplay).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
+						if branchName != "" {
+							ui.Text(c, branchName).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine().MinWidth(0)
+						}
+						if branchStatus != "" {
+							ui.Text(c, branchStatus).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine().Shrink(0)
+						}
 					})
 				}
 				if closeIconButton(c, "close-repo:"+p, tr("关闭 ")+label).Clicked() {
@@ -939,7 +943,10 @@ func (a *app) sidebarWorktreeRow(c *ui.Context, p string, wt repoWorktree, padL 
 	row := ui.Row(c).FillWidth().MinHeight(28).Padding(6, 10, 6, padL).Gap(6).AlignItems(ui.Center)
 	row.ContextMenu(menu)
 	row.Children(func() {
-		ui.Text(c, worktreeRowLabel(wt, dirty)).FontSize(12).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
+		ui.Text(c, worktreeRowLabel(wt)).FontSize(12).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
+		if status := sidebarBranchStatus(dirty, 0, 0); status != "" {
+			ui.Text(c, status).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Shrink(0)
+		}
 		if wt.locked != "" {
 			ui.Icon(c, iconLock).Size(12, 12).TextColor(c.Theme().TextMuted).Shrink(0).Tooltip(tr("已锁定"))
 		}

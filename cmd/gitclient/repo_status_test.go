@@ -22,28 +22,44 @@ func activateWorktreeInspect(tab *repoTab) {
 	tab.detailSplit = 45
 }
 
-func TestSidebarBranchDisplay(t *testing.T) {
+func TestSidebarBranchName(t *testing.T) {
 	cases := []struct {
 		branch string
-		dirty  bool
 		want   string
 	}{
-		{"main", false, "main"},
-		{"main", true, "main*"},
-		{"feature/login", false, "feature/login"},
-		{"feature/login", true, "feature/login*"},
-		{"分离头指针 abc1234", false, "(abc1234)"},
-		{"分离头指针 abc1234", true, "(abc1234)*"},
-		{"尚无提交", false, "(尚无提交)"},
-		{"尚无提交", true, "(尚无提交)*"},
-		{"", false, ""},
-		{"", true, "*"},
+		{"main", "main"},
+		{"feature/login", "feature/login"},
+		{"分离头指针 abc1234", "(abc1234)"},
+		{"尚无提交", "(尚无提交)"},
+		{"", ""},
 	}
 
 	for _, tc := range cases {
-		got := sidebarBranchDisplay(tc.branch, tc.dirty)
+		got := sidebarBranchName(tc.branch)
 		if got != tc.want {
-			t.Errorf("sidebarBranchDisplay(%q, %v) = %q, want %q", tc.branch, tc.dirty, got, tc.want)
+			t.Errorf("sidebarBranchName(%q) = %q, want %q", tc.branch, got, tc.want)
+		}
+	}
+}
+
+func TestSidebarBranchStatus(t *testing.T) {
+	cases := []struct {
+		dirty         bool
+		ahead, behind int
+		want          string
+	}{
+		{false, 0, 0, ""},
+		{true, 0, 0, "*"},
+		{false, 1, 0, "↑1"},
+		{false, 0, 2, "↓2"},
+		{false, 3, 1, "↑3 ↓1"},
+		{true, 1, 1, "* ↑1 ↓1"},
+	}
+
+	for _, tc := range cases {
+		got := sidebarBranchStatus(tc.dirty, tc.ahead, tc.behind)
+		if got != tc.want {
+			t.Errorf("sidebarBranchStatus(%v, %d, %d) = %q, want %q", tc.dirty, tc.ahead, tc.behind, got, tc.want)
 		}
 	}
 }
@@ -138,9 +154,9 @@ func TestRepoSidebarShowsBranchAndDirty(t *testing.T) {
 	if !tt.HasText("main") {
 		t.Fatalf("缺少分支 main：%q", tt.Texts())
 	}
-	// beta is dirty -> shows "feature-ui*"
-	if !tt.HasText("feature-ui*") {
-		t.Fatalf("缺少未提交标记 feature-ui*：%q", tt.Texts())
+	// beta is dirty -> 分支名和未提交标记分开画
+	if !tt.HasText("feature-ui") || !tt.HasText("*") {
+		t.Fatalf("缺少未提交标记：%q", tt.Texts())
 	}
 
 	// Now beta commits changes -> clean
@@ -153,8 +169,8 @@ func TestRepoSidebarShowsBranchAndDirty(t *testing.T) {
 	// alpha gets dirty
 	tab1.worktreeCount = 1
 	tt.Frame()
-	if !tt.HasText("main*") {
-		t.Fatalf("alpha 变脏后应展示 main*：%q", tt.Texts())
+	if !tt.HasText("*") {
+		t.Fatalf("alpha 变脏后应展示未提交标记：%q", tt.Texts())
 	}
 }
 
@@ -208,8 +224,8 @@ func TestRepoSidebarFetchesFoundRepoSummary(t *testing.T) {
 	})
 
 	tt.Frame()
-	if !tt.HasText("dev*") {
-		t.Fatalf("未打开的子仓库 beta 应异步展示 dev*：%q", tt.Texts())
+	if !tt.HasText("dev") || !tt.HasText("*") {
+		t.Fatalf("未打开的子仓库 beta 应异步展示 dev 与未提交标记：%q", tt.Texts())
 	}
 }
 
