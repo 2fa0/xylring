@@ -20,5 +20,6 @@ require (
 
 require (
 	github.com/egoist/mygo v0.9.1
+	github.com/lobehub/lobe-mygo v0.0.0-20261110162706-5e5fea5ef9e2
 	golang.org/x/image v0.46.0
 )
