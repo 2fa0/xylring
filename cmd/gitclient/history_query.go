@@ -674,111 +674,106 @@ func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Elemen
 	})
 }
 
+func (a *app) historyScopeControls(c *ui.Context, t *repoTab) {
+	scope := 0
+	if !t.query.hideRemote {
+		scope = 1
+	}
+	if ui.Segmented(c.Key("branch-visibility"), &scope, tr("本地分支"), tr("全部分支")).Label(tr("分支显示范围")).Shrink(0).Changed() {
+		q := t.query
+		q.ref, q.hideRemote = "", scope == 0
+		a.changeScope(t, q)
+	}
+	a.scopeMenu(c, t)
+}
+
+func (a *app) historySearchControls(c *ui.Context, t *repoTab, maxWidth float32) {
+	if t.locate != "" && t.searchText == "" {
+		t.searchText = t.locate
+	}
+	searchBox := ui.Row(c.Key(fmt.Sprintf("search-container-%d", t.id))).
+		Grow(1).
+		MinWidth(160).
+		AlignItems(ui.Center).
+		Gap(4)
+	if maxWidth > 0 && t.query.term == "" {
+		searchBox.MaxWidth(maxWidth)
+	}
+
+	searchBox.Children(func() {
+		input, submit := omniSearchField(c, t)
+
+		if input.Changed() {
+			t.locate = t.searchText
+			t.locateErr = ""
+			t.locateGen++
+			t.searchSuggestOpen = true
+		}
+
+		if submit {
+			a.omniSubmit(t)
+		}
+
+		if t.query.term != "" {
+			if ui.Button(c.Key("search-locate"), tr("定位到此提交")).Shrink(0).Disabled(t.inspecting == zeroHash).Clicked() {
+				a.locateCommitInGraph(t, t.inspecting)
+			}
+			backBtn := ui.ButtonBase(c.Key("search-clear")).
+				Label(tr("返回")).
+				Tooltip(tr("返回完整提交历史 (Esc)")).
+				Padding(2, 8).
+				Radius(c.Theme().Radius).
+				Background(c.Theme().SurfaceHover).
+				Shrink(0).
+				Cursor(ui.CursorPointer)
+			backBtn.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, iconBack).Size(13, 13)
+					ui.Text(c, tr("返回")).FontSize(12)
+				})
+			})
+			if backBtn.Clicked() {
+				a.leaveSearch(t)
+			}
+		}
+	})
+
+	if t.searchSuggestOpen {
+		a.omniSuggestionsPopover(c, t, searchBox)
+	}
+}
+
 func (a *app) historyToolbar(c *ui.Context, t *repoTab) {
 	if t.query.filePath != "" {
 		a.fileHistoryToolbar(c, t)
 		return
 	}
-	if t.locate != "" && t.searchText == "" {
-		t.searchText = t.locate
-	}
-
-	scopeControls := func() {
-		scope := 0
-		if !t.query.hideRemote {
-			scope = 1
-		}
-		if ui.Segmented(c.Key("branch-visibility"), &scope, tr("本地分支"), tr("全部分支")).Label(tr("分支显示范围")).Shrink(0).Changed() {
-			q := t.query
-			q.ref, q.hideRemote = "", scope == 0
-			a.changeScope(t, q)
-		}
-		a.scopeMenu(c, t)
-	}
-
-	omniSearchBox := func() {
-		searchBox := ui.Row(c.Key(fmt.Sprintf("search-container-%d", t.id))).
-			Grow(1).
-			MinWidth(160).
-			AlignItems(ui.Center).
-			Gap(4)
-
-		searchBox.Children(func() {
-			input, submit := omniSearchField(c, t)
-
-			if input.Changed() {
-				t.locate = t.searchText
-				t.locateErr = ""
-				t.locateGen++
-				t.searchSuggestOpen = true
+	if !a.unifiedTopToolbar(c, t) {
+		actionButtons := func() {
+			if iconButton(c, "compare", tr("比较"), iconGitCompare).Shrink(0).Disabled(t.loading).Clicked() {
+				a.openCompareModal(t)
 			}
-
-			if submit {
-				a.omniSubmit(t)
-			}
-
-			if t.query.term != "" {
-				if ui.Button(c.Key("search-locate"), tr("定位到此提交")).Shrink(0).Disabled(t.inspecting == zeroHash).Clicked() {
-					a.locateCommitInGraph(t, t.inspecting)
-				}
-				backBtn := ui.ButtonBase(c.Key("search-clear")).
-					Label(tr("返回")).
-					Tooltip(tr("返回完整提交历史 (Esc)")).
-					Padding(2, 8).
-					Radius(c.Theme().Radius).
-					Background(c.Theme().SurfaceHover).
-					Shrink(0).
-					Cursor(ui.CursorPointer)
-				backBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, iconBack).Size(13, 13)
-						ui.Text(c, tr("返回")).FontSize(12)
-					})
-				})
-				if backBtn.Clicked() {
-					a.leaveSearch(t)
-				}
-			}
-		})
-
-		if t.searchSuggestOpen {
-			a.omniSuggestionsPopover(c, t, searchBox)
 		}
-	}
 
-	actionButtons := func() {
-		if iconButton(c, "compare", tr("比较"), iconGitCompare).Shrink(0).Disabled(t.loading).Clicked() {
-			a.openCompareModal(t)
+		_, _, _, _, _, _, rightW := a.chromeMetrics(c)
+		if rightW >= 660 {
+			ui.Row(c).Padding(4, 12, 8, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+				a.historyScopeControls(c, t)
+				a.historySearchControls(c, t, 0)
+				actionButtons()
+			})
+		} else {
+			ui.Row(c).Padding(4, 12, 4, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+				a.historyScopeControls(c, t)
+				actionButtons()
+			})
+			ui.Row(c).Padding(0, 12, 8, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+				a.historySearchControls(c, t, 0)
+			})
 		}
-	}
-
-	winW, _ := c.Size()
-	mainW := winW
-	if a.showRepoSidebar() {
-		split := a.repoSplit
-		if split <= 0 {
-			split = 320
-		}
-		mainW -= split
-	}
-	singleRow := mainW >= 660
-	if singleRow {
-		ui.Row(c).Padding(4, 12, 8, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-			scopeControls()
-			omniSearchBox()
-			actionButtons()
-		})
-	} else {
-		ui.Row(c).Padding(4, 12, 4, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-			scopeControls()
-			actionButtons()
-		})
-		ui.Row(c).Padding(0, 12, 8, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-			omniSearchBox()
-		})
 	}
 	if t.locateErr != "" {
-		ui.Row(c).Padding(0, 12, 6, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+		ui.Row(c).Padding(4, 12, 6, 12).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 			ui.Icon(c, iconAlertCircle).Size(14, 14).TextColor(c.Theme().Danger)
 			ui.Text(c, trMessage(t.locateErr)).FontSize(12).TextColor(c.Theme().Danger).Grow(1).MinWidth(0).SingleLine()
 		})

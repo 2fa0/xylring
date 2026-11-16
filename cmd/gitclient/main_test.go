@@ -429,25 +429,67 @@ func TestToggleSidebarEmptyState(t *testing.T) {
 	}
 }
 
-func TestChromeCentersTitle(t *testing.T) {
+func TestChromeUnifiedToolbarAndBranchMenu(t *testing.T) {
 	tab := newTab(1, "/tmp/网关代码/gateway-source")
 	tab.loaded = true
 	tab.branch = "dev"
+	tab.head = hashN(1)
+	tab.refs[hashN(1)] = []refInfo{{kind: refBranch, name: "dev"}, {kind: refBranch, name: "main"}}
 	a := &app{tabs: []*repoTab{tab}}
 	tt := ui.NewTester(a.view, 1100, 720)
+	defer retireTester(tt)
 	tt.SetTitleBar(ui.TitleBar{Height: 28, Left: 72, Right: 10})
 	tt.Frame()
-	label := "gateway-source  ·  dev"
-	r, ok := tt.Find(label)
+
+	branchBtn, ok := tt.Find("dev")
 	if !ok {
-		t.Fatalf("没有标题：%q", tt.Texts())
+		t.Fatalf("没有顶栏分支按钮：%q", tt.Texts())
 	}
-	mid := r.X + r.W/2
-	if mid < 500 || mid > 600 {
-		t.Fatalf("标题没有居中：mid=%.0f box=%+v", mid, r)
+	if branchBtn.X < defaultSidebarWidth {
+		t.Fatalf("顶栏分支按钮越过侧边栏：x=%.0f", branchBtn.X)
 	}
-	if r.X < 80 {
-		t.Fatalf("标题还在红绿灯下面：x=%.0f", r.X)
+	scopeBtn, ok := tt.Find("本地分支")
+	if !ok || scopeBtn.Y+scopeBtn.H > chromeMinHeight+2 {
+		t.Fatalf("范围控件未并入顶栏：ok=%v box=%+v", ok, scopeBtn)
+	}
+	searchField, ok := tt.AccessByRole(ui.RoleTextField, "搜索提交、代码、分支、作者或路径")
+	if !ok || searchField.Bounds.Y+searchField.Bounds.H > chromeMinHeight+2 {
+		t.Fatalf("搜索框未并入顶栏：ok=%v box=%+v", ok, searchField.Bounds)
+	}
+
+	if err := tt.Click("dev"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	hasMain := false
+	hasCreate := false
+	for _, item := range tt.Menu() {
+		if item == "main" {
+			hasMain = true
+		}
+		if item == "新建分支…" {
+			hasCreate = true
+		}
+	}
+	if !hasMain || !hasCreate {
+		t.Fatalf("分支菜单缺少本地分支或新建入口：%q", tt.Menu())
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+
+	// Collapsing the sidebar prepends the repository title and still clears top-left chrome icons.
+	a.toggleSidebar()
+	tt.Frame()
+	settingsBtn, ok := tt.Find("设置")
+	if !ok {
+		t.Fatalf("收起侧栏后缺少设置按钮：%q", tt.Texts())
+	}
+	pill, ok := tt.Find("gateway-source · dev")
+	if !ok {
+		t.Fatalf("收起侧栏后缺少仓库与分支标题：%q", tt.Texts())
+	}
+	if pill.X < settingsBtn.X+settingsBtn.W {
+		t.Fatalf("顶栏分支按钮遮挡设置按钮：pill=%+v settings=%+v", pill, settingsBtn)
 	}
 }
 
