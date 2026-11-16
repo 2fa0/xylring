@@ -317,27 +317,20 @@ func (a *app) omniSubmit(t *repoTab) {
 	a.searchHistory(t)
 }
 
+func sortCaseInsensitive(items []string) {
+	sort.Slice(items, func(i, j int) bool {
+		li, lj := strings.ToLower(items[i]), strings.ToLower(items[j])
+		if li != lj {
+			return li < lj
+		}
+		return items[i] < items[j]
+	})
+}
+
 func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 	var items []omniSuggestItem
 	clean := strings.TrimSpace(term)
 	lower := strings.ToLower(clean)
-	seen := map[string]bool{}
-	for _, p := range t.provenance.snapshot() {
-		for _, entry := range []struct{ kind, value string }{{"Agent", p.agent}, {"模型", normalizeModel(p.model)}} {
-			e := entry
-			if e.value == "" || seen[e.kind+e.value] || !strings.Contains(strings.ToLower(e.value), lower) {
-				continue
-			}
-			seen[e.kind+e.value] = true
-			items = append(items, omniSuggestItem{kind: e.kind, icon: iconSearch, title: fmt.Sprintf("按%s筛选：%s", e.kind, e.value), action: func() { t.searchKind = e.kind; t.searchText = e.value; a.searchHistory(t) }})
-			if len(items) >= 8 {
-				break
-			}
-		}
-		if len(items) >= 8 {
-			break
-		}
-	}
 
 	if term, ok := cutSearchPrefix(clean, "code:", "diff:", "content:", "代码:", "内容:", "代码改动:"); ok {
 		items = append(items, omniSuggestItem{
@@ -382,62 +375,146 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 		return items
 	}
 
-	matchedBranches := 0
-	matchedTags := 0
+	var localBranches, remoteBranches, tags []string
+	seenRefs := map[string]bool{}
 	for _, refs := range t.refs {
 		for _, r := range refs {
-			rLower := strings.ToLower(r.name)
-			if clean == "" || strings.Contains(rLower, lower) {
-				refName := r.name
-				switch r.kind {
-				case refBranch:
-					if matchedBranches < 5 {
-						matchedBranches++
-						items = append(items, omniSuggestItem{
-							kind:  "分支",
-							icon:  iconGitBranch,
-							title: refName,
-							action: func() {
-								t.searchSuggestOpen = false
-								t.searchText = refName
-								t.locate = refName
-								a.locateRef(t, refName)
-							},
-						})
-					}
-				case refRemote:
-					if !t.query.hideRemote && matchedBranches < 5 {
-						matchedBranches++
-						items = append(items, omniSuggestItem{
-							kind:  "远程分支",
-							icon:  iconGitBranch,
-							title: refName,
-							action: func() {
-								t.searchSuggestOpen = false
-								t.searchText = refName
-								t.locate = refName
-								a.locateRef(t, refName)
-							},
-						})
-					}
-				case refTag:
-					if matchedTags < 3 {
-						matchedTags++
-						items = append(items, omniSuggestItem{
-							kind:  "标签",
-							icon:  iconLocate,
-							title: refName,
-							action: func() {
-								t.searchSuggestOpen = false
-								t.searchText = refName
-								t.locate = refName
-								a.locateRef(t, refName)
-							},
-						})
-					}
+			if clean != "" && !strings.Contains(strings.ToLower(r.name), lower) {
+				continue
+			}
+			switch r.kind {
+			case refBranch:
+				if !seenRefs["branch:"+r.name] {
+					seenRefs["branch:"+r.name] = true
+					localBranches = append(localBranches, r.name)
+				}
+			case refRemote:
+				if !t.query.hideRemote && !seenRefs["remote:"+r.name] {
+					seenRefs["remote:"+r.name] = true
+					remoteBranches = append(remoteBranches, r.name)
+				}
+			case refTag:
+				if !seenRefs["tag:"+r.name] {
+					seenRefs["tag:"+r.name] = true
+					tags = append(tags, r.name)
 				}
 			}
 		}
+	}
+	sort.Slice(localBranches, func(i, j int) bool {
+		if (localBranches[i] == t.branch) != (localBranches[j] == t.branch) {
+			return localBranches[i] == t.branch
+		}
+		li, lj := strings.ToLower(localBranches[i]), strings.ToLower(localBranches[j])
+		if li != lj {
+			return li < lj
+		}
+		return localBranches[i] < localBranches[j]
+	})
+	sortCaseInsensitive(remoteBranches)
+	sortCaseInsensitive(tags)
+
+	branchBudget := 5
+	for _, refName := range localBranches {
+		if branchBudget == 0 {
+			break
+		}
+		branchBudget--
+		name := refName
+		items = append(items, omniSuggestItem{
+			kind:  "分支",
+			icon:  iconGitBranch,
+			title: name,
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchText = name
+				t.locate = name
+				a.locateRef(t, name)
+			},
+		})
+	}
+	for _, refName := range remoteBranches {
+		if branchBudget == 0 {
+			break
+		}
+		branchBudget--
+		name := refName
+		items = append(items, omniSuggestItem{
+			kind:  "远程分支",
+			icon:  iconGitBranch,
+			title: name,
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchText = name
+				t.locate = name
+				a.locateRef(t, name)
+			},
+		})
+	}
+	for i, refName := range tags {
+		if i >= 3 {
+			break
+		}
+		name := refName
+		items = append(items, omniSuggestItem{
+			kind:  "标签",
+			icon:  iconLocate,
+			title: name,
+			action: func() {
+				t.searchSuggestOpen = false
+				t.searchText = name
+				t.locate = name
+				a.locateRef(t, name)
+			},
+		})
+	}
+
+	var agents, models []string
+	seenProv := map[string]bool{}
+	for idx, p := range t.provenance.snapshot() {
+		// Index 0 is empty and index 1 is the overflow sentinel ("其他"), not a real commit agent.
+		if idx < 2 {
+			continue
+		}
+		if p.agent != "" && !seenProv["Agent:"+p.agent] && (clean == "" || strings.Contains(strings.ToLower(p.agent), lower)) {
+			seenProv["Agent:"+p.agent] = true
+			agents = append(agents, p.agent)
+		}
+		model := normalizeModel(p.model)
+		if model != "" && !seenProv["模型:"+model] && (clean == "" || strings.Contains(strings.ToLower(model), lower)) {
+			seenProv["模型:"+model] = true
+			models = append(models, model)
+		}
+	}
+	sortCaseInsensitive(agents)
+	sortCaseInsensitive(models)
+
+	provBudget := 8
+	for _, agent := range agents {
+		if provBudget == 0 {
+			break
+		}
+		provBudget--
+		val := agent
+		items = append(items, omniSuggestItem{
+			kind:   "Agent",
+			icon:   iconSearch,
+			title:  fmt.Sprintf("按%s筛选：%s", "Agent", val),
+			action: func() { t.searchKind = "Agent"; t.searchText = val; a.searchHistory(t) },
+		})
+	}
+	for _, model := range models {
+		if provBudget == 0 {
+			break
+		}
+		provBudget--
+		val := model
+		items = append(items, omniSuggestItem{
+			kind:   "模型",
+			icon:   iconSearch,
+			title:  fmt.Sprintf("按%s筛选：%s", "模型", val),
+			action: func() { t.searchKind = "模型"; t.searchText = val; a.searchHistory(t) },
+		})
 	}
 
 	if clean != "" && isHexCommitHash(clean) {
@@ -470,26 +547,29 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 	}
 
 	if clean != "" && len(t.authors) > 0 {
-		matchedAuthors := 0
+		var authors []string
 		for author := range t.authors {
 			if strings.Contains(strings.ToLower(author), lower) {
-				matchedAuthors++
-				aut := author
-				items = append(items, omniSuggestItem{
-					kind:  "作者",
-					icon:  iconSearch,
-					title: aut,
-					action: func() {
-						t.searchSuggestOpen = false
-						t.searchKind = "作者"
-						t.searchText = aut
-						a.searchHistory(t)
-					},
-				})
-				if matchedAuthors >= 3 {
-					break
-				}
+				authors = append(authors, author)
 			}
+		}
+		sortCaseInsensitive(authors)
+		for i, aut := range authors {
+			if i >= 3 {
+				break
+			}
+			author := aut
+			items = append(items, omniSuggestItem{
+				kind:  "作者",
+				icon:  iconSearch,
+				title: author,
+				action: func() {
+					t.searchSuggestOpen = false
+					t.searchKind = "作者"
+					t.searchText = author
+					a.searchHistory(t)
+				},
+			})
 		}
 	}
 
@@ -542,16 +622,24 @@ func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Elemen
 			})
 			return
 		}
-		ui.Column(c).MaxHeight(320).Children(func() {
-			for idx, item := range items {
+		ui.Scroll(c.Key(fmt.Sprintf("suggest-scroll-%d", t.id))).MaxHeight(320).FillWidth().Children(func() {
+			keySeen := map[string]int{}
+			for _, item := range items {
 				itemCopy := item
-				row := ui.ButtonBase(c.Key(fmt.Sprintf("suggest-item-%d-%d", t.id, idx))).
+				baseKey := itemCopy.kind + "\x00" + itemCopy.title
+				n := keySeen[baseKey]
+				keySeen[baseKey] = n + 1
+				rowKey := fmt.Sprintf("suggest-item-%d-%s-%d", t.id, baseKey, n)
+				row := ui.ButtonBase(c.Key(rowKey)).
 					FillWidth().
+					Shrink(0).
 					Padding(6, 10).
 					Radius(th.Radius).
 					Cursor(ui.CursorPointer).
 					Transition(colorMotion())
-				if row.Hovered() {
+				if row.Pressed() {
+					row.Background(th.SurfacePressed)
+				} else if row.Hovered() {
 					row.Background(th.SurfaceHover)
 				}
 				if row.Clicked() {
@@ -562,7 +650,7 @@ func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Elemen
 						if itemCopy.icon != nil {
 							ui.Icon(c, itemCopy.icon).Size(14, 14).TextColor(th.TextMuted).Shrink(0)
 						}
-						ui.Column(c).Grow(1).Children(func() {
+						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 							ui.Text(c, func() string {
 								if itemCopy.kind == "搜索" || itemCopy.kind == "Agent" || itemCopy.kind == "模型" {
 									return trMessage(itemCopy.title)

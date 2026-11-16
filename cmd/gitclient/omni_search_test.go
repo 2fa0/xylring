@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -229,4 +232,76 @@ func TestOmniSearchCodeChanges(t *testing.T) {
 	}
 
 	retireTester(tt)
+}
+
+func TestOmniSearchEmptyPopoverStabilityAndScroll(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("commit", "--allow-empty", "-m", "base\n\nAI-Agent: Cindy\nAI-Model: gpt-6.1-terra", "--author=Alice <alice@example.com>")
+	for i, name := range []string{"alpha", "beta", "gamma", "delta", "epsilon"} {
+		git("checkout", "-b", name)
+		msg := fmt.Sprintf("commit on %s\n\nAI-Agent: pi\nAI-Model: deepseek-v4-1-flash", name)
+		if i%2 == 0 {
+			msg = fmt.Sprintf("commit on %s\n\nAI-Agent: Cindy\nAI-Model: gpt-6.1-sol", name)
+		}
+		git("commit", "--allow-empty", "-m", msg, fmt.Sprintf("--author=Author%d <a%d@example.com>", i, i))
+		git("tag", fmt.Sprintf("v0.%d.0", i+1))
+		git("checkout", "main")
+	}
+
+	tab := newTab(1, dir)
+	updates := make(chan func(), 64)
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+	defer tab.cancel()
+	a.reload(tab)
+	waitUpdates(t, updates, func() bool { return !tab.loading })
+
+	suggestionTitles := func(query string) []string {
+		items := a.omniSuggestions(tab, query)
+		out := make([]string, len(items))
+		for i, item := range items {
+			out[i] = item.kind + ":" + item.title
+		}
+		return out
+	}
+
+	baseEmpty := suggestionTitles("")
+	baseFiltered := suggestionTitles("a")
+	for i := 0; i < 20; i++ {
+		if got := suggestionTitles(""); !slices.Equal(got, baseEmpty) {
+			t.Fatalf("empty suggestions changed order on iteration %d:\nwant=%v\ngot =%v", i, baseEmpty, got)
+		}
+		if got := suggestionTitles("a"); !slices.Equal(got, baseFiltered) {
+			t.Fatalf("filtered suggestions changed order on iteration %d:\nwant=%v\ngot =%v", i, baseFiltered, got)
+		}
+	}
+
+	tt := ui.NewTester(a.view, 1100, 720)
+	defer retireTester(tt)
+	tt.Frame()
+
+	tt.Key(commandModifier(), ui.KeyP)
+	tt.Frame()
+	if !tab.searchSuggestOpen {
+		t.Fatal("Cmd+P did not open suggestions")
+	}
+	if tt.HasText("按Agent筛选：其他") {
+		t.Fatalf("sentinel agent 其他 should not appear in suggestions: %q", tt.Texts())
+	}
+
+	firstTexts := tt.Texts()
+	for i := 0; i < 6; i++ {
+		tt.Advance(550 * time.Millisecond)
+		tt.Frame()
+		if got := tt.Texts(); !slices.Equal(got, firstTexts) {
+			t.Fatalf("popover texts jumped across frames at tick %d:\nwant=%q\ngot =%q", i, firstTexts, got)
+		}
+	}
+
+	popup, ok := tt.AccessByRole(ui.RolePopup, "")
+	if !ok {
+		t.Fatal("missing suggestion popup")
+	}
+	if popup.Bounds.H > 340 {
+		t.Fatalf("suggestion popup exceeded max height: %+v", popup.Bounds)
+	}
 }
