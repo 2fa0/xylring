@@ -194,11 +194,11 @@ func TestCopyTextButtonConfirmsInPlace(t *testing.T) {
 
 func TestDisplayPathKeepsNearestDirectory(t *testing.T) {
 	cases := map[string]string{
-		"compare.go":                                           "compare.go",
-		"cmd/gitclient/compare.go":                             "cmd/gitclient/compare.go",
-		"cmd/gitclient/ui/editor/diffview.go":                  "…/editor/diffview.go",
-		`C:\work\src\cmd\gitclient\compare.go`:                 "…/gitclient/compare.go",
-		"/Users/me/work/xylring/cmd/gitclient/ui/file_tree.go": "…/ui/file_tree.go",
+		"compare.go":                                              "compare.go",
+		"cmd/xylring-main/compare.go":                             "cmd/xylring-main/compare.go",
+		"cmd/xylring-main/ui/editor/diffview.go":                  "…/editor/diffview.go",
+		`C:\work\src\cmd\xylring-main\compare.go`:                 "…/xylring-main/compare.go",
+		"/Users/me/work/xylring/cmd/xylring-main/ui/file_tree.go": "…/ui/file_tree.go",
 	}
 	for in, want := range cases {
 		if got := displayPath(in); got != want {
@@ -208,7 +208,7 @@ func TestDisplayPathKeepsNearestDirectory(t *testing.T) {
 }
 
 func TestPathBreadcrumbShowsDirAndFile(t *testing.T) {
-	full := "/work/xylring/cmd/gitclient/compare.go"
+	full := "/work/xylring/cmd/xylring-main/compare.go"
 	for _, width := range []int{420, 160} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			tt := ui.NewTester(func(c *ui.Context) {
@@ -220,10 +220,10 @@ func TestPathBreadcrumbShowsDirAndFile(t *testing.T) {
 			}, width, 60)
 			defer retireTester(tt)
 			tt.Frame()
-			if !tt.HasText("…/gitclient/compare.go") {
+			if !tt.HasText("…/xylring-main/compare.go") {
 				t.Fatalf("面包屑文案不符: %q", tt.Texts())
 			}
-			r, ok := tt.Find("…/gitclient/compare.go")
+			r, ok := tt.Find("…/xylring-main/compare.go")
 			if !ok || r.X < 0 || r.X+r.W > float32(width) {
 				t.Fatalf("面包屑溢出窗口: %+v", r)
 			}

@@ -285,7 +285,7 @@ func TestLobeEmptyStates(t *testing.T) {
 }
 
 func TestLobePathHeader(t *testing.T) {
-	path := "/work/xylring/cmd/gitclient/compare.go"
+	path := "/work/xylring/cmd/xylring-main/compare.go"
 	for _, dark := range []bool{false, true} {
 		for _, width := range []int{860, 420} {
 			t.Run(fmt.Sprintf("%d/dark=%t", width, dark), func(t *testing.T) {
@@ -301,7 +301,7 @@ func TestLobePathHeader(t *testing.T) {
 				defer retireTester(tt)
 				tt.SetDark(dark)
 				tt.Frame()
-				r, ok := tt.Find("…/gitclient/compare.go")
+				r, ok := tt.Find("…/xylring-main/compare.go")
 				if !ok || r.X+r.W > float32(width) {
 					t.Fatalf("路径头溢出: %+v", r)
 				}

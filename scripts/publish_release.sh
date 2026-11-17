@@ -18,7 +18,7 @@ RELEASE_REPO="2fa0/xylring"
 
 TAG="${1:-}"
 if [ -z "$TAG" ]; then
-  version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$ROOT/cmd/gitclient/mygo.json")"
+  version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$ROOT/cmd/xylring-main/mygo.json")"
   TAG="v$version"
 fi
 

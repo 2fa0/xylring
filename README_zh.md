@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="cmd/gitclient/resources/logo.png" alt="Xylring 图标" width="96" height="96" />
+  <img src="cmd/xylring-main/resources/logo.png" alt="Xylring 图标" width="96" height="96" />
 </p>
 <h1 align="center">Xylring</h1>
 <h3 align="center">面向 AI 编程工作流的原生 Git 进度看板。</h3>
@@ -92,10 +92,10 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 ```sh
 # 先克隆仓库，再在仓库根目录运行
 # 直接运行
-go run ./cmd/gitclient /path/to/your/repo
+go run ./cmd/xylring-main /path/to/your/repo
 
 # 或编译 macOS 原生 .app
-cd cmd/gitclient
+cd cmd/xylring-main
 go tool mygo build -skip-dmg -skip-notarize
 ```
 
@@ -177,4 +177,4 @@ Xylring 基于 [Apache License 2.0](LICENSE) 协议开源。
 
 简而言之，你可以自由地将本软件用于商业或非商业用途，也可以修改并分发修改后的版本，但需保留原有的版权与协议声明、注明所修改的文件，并随分发附上 [LICENSE](LICENSE) 与 [NOTICE](NOTICE) 文件。协议同时包含贡献者的明确专利授权；软件按“现状”提供，不附带任何形式的担保。
 
-内置第三方组件各自保留其原有协议，详见[第三方声明文件](cmd/gitclient/resources/THIRD_PARTY_NOTICES.txt)。
+内置第三方组件各自保留其原有协议，详见[第三方声明文件](cmd/xylring-main/resources/THIRD_PARTY_NOTICES.txt)。

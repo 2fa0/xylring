@@ -10,7 +10,7 @@ set -u
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:${PATH:-/usr/bin:/bin}"
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$ROOT/cmd/gitclient"
+APP_DIR="$ROOT/cmd/xylring-main"
 PACKAGES="$ROOT/release"
 
 pause() {
@@ -33,7 +33,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 if [ ! -f "$ROOT/go.mod" ] || [ ! -f "$APP_DIR/mygo.json" ]; then
-  fail "找不到 cmd/gitclient/。请把 build.command 留在仓库根目录。"
+  fail "找不到 cmd/xylring-main/。请把 build.command 留在仓库根目录。"
 fi
 
 if ! command -v go >/dev/null 2>&1; then
@@ -42,7 +42,7 @@ fi
 
 version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$APP_DIR/mygo.json" 2>/dev/null || true)"
 if [ -z "$version" ]; then
-  fail "无法读取 cmd/gitclient/mygo.json 里的 version。"
+  fail "无法读取 cmd/xylring-main/mygo.json 里的 version。"
 fi
 
 # 更新包必须用私钥签名。没有密钥时 mygo build 只给一句警告，打出来的包看着
@@ -50,7 +50,7 @@ fi
 if [ -z "${MYGO_UPDATER_PRIVATE_KEY:-}" ]; then
   update_key="$HOME/Library/Application Support/mygo/update-keys/mygo-update.key"
   if [ ! -f "$update_key" ]; then
-    fail "找不到更新签名密钥。先运行 cd cmd/gitclient && go tool mygo keygen，或把密钥放进 MYGO_UPDATER_PRIVATE_KEY。"
+    fail "找不到更新签名密钥。先运行 cd cmd/xylring-main && go tool mygo keygen，或把密钥放进 MYGO_UPDATER_PRIVATE_KEY。"
   fi
   MYGO_UPDATER_PRIVATE_KEY="$(cat "$update_key")"
   export MYGO_UPDATER_PRIVATE_KEY
@@ -79,7 +79,7 @@ echo
 echo "目标电脑需要已安装 Git。这些包没有发行签名和公证。"
 echo
 
-cd "$APP_DIR" || fail "无法进入 cmd/gitclient/。"
+cd "$APP_DIR" || fail "无法进入 cmd/xylring-main/。"
 
 started=$(date +%s)
 # makensis 在 LANG 为空或 C 时写安装包会崩溃（NSIS bug 1165）。
@@ -91,7 +91,7 @@ if [ "$build_status" -ne 0 ]; then
   fail "构建命令未成功（退出码 ${build_status}），未更新 release/。"
 fi
 
-staging="$(mktemp -d "${TMPDIR:-/tmp}/gitclient-packages.XXXXXX")"
+staging="$(mktemp -d "${TMPDIR:-/tmp}/xylring-packages.XXXXXX")"
 cleanup() {
   rm -rf "$staging"
 }
@@ -138,7 +138,7 @@ if [ -d "$win_dir" ]; then
   fi
 
   if [ -f "$win_dir/Xylring.exe" ]; then
-    payload="$(mktemp -d "${TMPDIR:-/tmp}/gitclient-win.XXXXXX")"
+    payload="$(mktemp -d "${TMPDIR:-/tmp}/xylring-win.XXXXXX")"
     inner="$payload/Xylring"
     mkdir -p "$inner"
     for entry in "$win_dir"/*; do
