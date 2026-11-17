@@ -283,7 +283,7 @@ func (a *app) handleShortcuts(c *ui.Context) {
 			a.toggleSidebar()
 		}
 		if a.showBoard {
-			if !a.board.showNewModal && !a.board.showLinkModal && !a.board.showSnippet {
+			if !a.board.showNewModal && !a.board.showLinkModal && !a.board.showSnippet && a.board.deleteTaskID == "" {
 				if c.Shortcut(commandModifier(), ui.KeyF) || c.Shortcut(commandModifier(), ui.KeyP) || c.Shortcut(commandModifier(), ui.KeyK) {
 					a.board.searchInput.Focus(c)
 					return
@@ -589,7 +589,7 @@ func (a *app) chrome(c *ui.Context) {
 				Absolute().Left(x).Top(btnY).Tooltip(boardTip)
 			if boardBtn.Clicked() {
 				if a.showBoard && (len(a.tabs) > 0 || len(a.found) > 0) {
-					a.showBoard = false
+					a.leaveBoard()
 				} else if a.showBoard {
 					a.goHome()
 				} else {

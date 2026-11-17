@@ -165,7 +165,7 @@ func (a *app) openRepo(path string) {
 
 func (a *app) openPath(path string) {
 	crashlog.Breadcrumb("打开路径 " + path)
-	a.showBoard = false
+	a.leaveBoard()
 	a.showHome = false
 	a.scanRepos(path, true)
 }
@@ -262,7 +262,7 @@ func (a *app) openRoot(root string) {
 	if a.closed {
 		return
 	}
-	a.showBoard = false
+	a.leaveBoard()
 	a.showHome = false
 	for i, t := range a.tabs {
 		if t.path == root {
@@ -354,7 +354,7 @@ func (a *app) goHome() {
 	a.showCompare = false
 	a.showWrite = false
 	a.stopFetch()
-	a.showBoard = false
+	a.leaveBoard()
 	a.showHome = true
 }
 

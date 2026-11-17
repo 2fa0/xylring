@@ -100,3 +100,21 @@ func TestBoardCLIEndToEndWithGitRepo(t *testing.T) {
 		t.Fatalf("unexpected snippet: %q", out.String())
 	}
 }
+
+func TestBoardUpdateCLIRequiresAField(t *testing.T) {
+	withTempBoardConfig(t)
+	if _, _, err := boardAddTask("空更新测试", "", boardTodo, nil); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runBoardUpdateCLI(context.Background(), "", []string{"T-1"}, &out); err == nil {
+		t.Fatalf("expected an error for a no-op update, got %q", out.String())
+	}
+	bf, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bf.Tasks) != 1 || bf.Tasks[0].Title != "空更新测试" {
+		t.Fatalf("board changed by a no-op update: %+v", bf.Tasks)
+	}
+}
