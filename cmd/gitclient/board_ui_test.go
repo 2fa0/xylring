@@ -35,7 +35,7 @@ func TestBoardUIWorkflowAndDrawer(t *testing.T) {
 	}
 
 	// Create task via modal
-	if err := tt.Click("+ 新建任务"); err != nil {
+	if err := tt.Click("新建任务"); err != nil {
 		t.Fatalf("click new task: %v", err)
 	}
 	tt.Frame()
@@ -51,7 +51,7 @@ func TestBoardUIWorkflowAndDrawer(t *testing.T) {
 	if a.board.showNewModal || a.board.selectedID != "T-1" {
 		t.Fatalf("task not created/selected: modal=%v sel=%q", a.board.showNewModal, a.board.selectedID)
 	}
-	if !tt.HasText("任务描述") || !tt.HasText("追加备注") {
+	if !tt.HasText("任务描述") || !tt.HasText("备注") {
 		t.Fatalf("drawer should be open: %q", tt.Texts())
 	}
 
@@ -141,5 +141,180 @@ func TestEnglishBoardUIHasNoChineseApplicationText(t *testing.T) {
 	assertEnglishUITexts(t, tt)
 	if !tt.HasText("In Progress") || !tt.HasText("Notes") {
 		t.Fatalf("expected English board UI labels: %q", tt.Texts())
+	}
+}
+
+func TestBoardUnifiedChromeDrawerAndPreviews(t *testing.T) {
+	withTempBoardConfig(t)
+	updates := make(chan func(), 64)
+	tab := newTab(1, "/tmp/xylring")
+	tab.loaded, tab.branch = true, "main"
+	tab.commits = []commit{{hash: hashN(1), author: "Ada", subject: "Initial commit", when: 1700000000}}
+	tab.graph.add(&tab.commits[0])
+
+	_, t1, err := boardAddTask("重构看板顶部导航与卡片层级", "合并顶栏并减少胶囊边框", boardDoing, []string{"/tmp/xylring"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = boardLinkCommit(t1.ID, boardCommitLink{
+		Repo:    "/tmp/xylring",
+		Hash:    "1111111111111111111111111111111111111111",
+		Subject: "feat(board): unify top chrome toolbar",
+		Agent:   "Antigravity",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddNote(t1.ID, "已完成初版骨架，待检查暗色模式对比度。", "Antigravity", "Gemini 4"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddTask("补充空搜索筛选提示", "", boardTodo, []string{"/tmp/other-repo"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddTask("合并提交跳转定位", "", boardReview, []string{"/tmp/xylring"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddTask("清理旧的文案翻译键", "", boardDone, []string{"/tmp/xylring"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, dark := range []bool{false, true} {
+		a := &app{
+			tabs:            []*repoTab{tab},
+			showBoard:       true,
+			bottomFullWidth: true,
+			dispatch:        func(fn func()) { updates <- fn },
+			board: boardState{
+				commitValid: map[string]bool{
+					boardCommitCacheKey("/tmp/xylring", "1111111111111111111111111111111111111111"): true,
+				},
+			},
+		}
+		a.ensureBoardLoaded()
+		a.selectBoardTask(t1.ID)
+
+		tt := ui.NewTester(a.view, 1280, 820)
+		tt.SetTitleBar(ui.TitleBar{Height: 28, Left: 72, Right: 10})
+		tt.SetDark(dark)
+		tt.Frame()
+		drainUpdates(updates)
+		tt.Frame()
+
+		// Verify top chrome toolbar controls do not overlap the sidebar
+		newBtn, ok := tt.AccessByRole(ui.RoleButton, "新建任务")
+		if !ok {
+			t.Fatalf("missing primary button in chrome: %q", tt.Texts())
+		}
+		if newBtn.Bounds.Y+newBtn.Bounds.H > 46 {
+			t.Fatalf("new task button should be inside top chrome bar, bounds=%+v", newBtn.Bounds)
+		}
+		filterBtn, ok := tt.Find("全部项目")
+		if !ok || filterBtn.X < defaultSidebarWidth {
+			t.Fatalf("repo filter should clear sidebar: ok=%v bounds=%+v", ok, filterBtn)
+		}
+
+		mode := "light"
+		if dark {
+			mode = "dark"
+		}
+		saveLobePreview(t, tt, "board-"+mode)
+
+		if !dark {
+			// Test filter empty banner + clear filter
+			a.board.search = "nonexistent-query-xyz"
+			tt.Frame()
+			if !tt.HasText("没有匹配的任务") {
+				t.Fatalf("expected filter empty banner: %q", tt.Texts())
+			}
+			if err := tt.Click("清除筛选"); err != nil {
+				t.Fatalf("click clear filter: %v", err)
+			}
+			tt.Frame()
+			if a.board.search != "" {
+				t.Fatalf("expected search cleared, got %q", a.board.search)
+			}
+
+			// Test segmented status control in drawer updates task status
+			segItem, ok := tt.AccessByRole(ui.RoleRadio, "待审阅")
+			if !ok {
+				t.Fatalf("missing status radio segment: %q", tt.Texts())
+			}
+			tt.ClickAt(segItem.Bounds.X+segItem.Bounds.W/2, segItem.Bounds.Y+segItem.Bounds.H/2)
+			tt.Frame()
+			bf, err := loadBoardFile()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if idx := findBoardTaskIndex(bf.Tasks, t1.ID); idx < 0 || bf.Tasks[idx].Status != boardReview {
+				t.Fatalf("expected %s status to be review, got %+v", t1.ID, bf.Tasks)
+			}
+
+			// Test Escape closes drawer
+			tt.Key(0, ui.KeyEscape)
+			tt.Frame()
+			if a.board.selectedID != "" {
+				t.Fatalf("expected Escape to close drawer, selectedID=%q", a.board.selectedID)
+			}
+			saveLobePreview(t, tt, "board-overview-light")
+
+			// Verify all 4 columns are visible side-by-side at 1280px when drawer is closed
+			doneHeader, ok := tt.Find("已完成")
+			if !ok || doneHeader.X+doneHeader.W > 1280 {
+				t.Fatalf("expected done column fully inside 1280px window, ok=%v bounds=%+v", ok, doneHeader)
+			}
+		}
+		retireTester(tt)
+	}
+	tab.cancel()
+}
+
+func TestBoardCardDragDropBetweenColumns(t *testing.T) {
+	withTempBoardConfig(t)
+	_, created, err := boardAddTask("可拖拽任务卡片", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{
+		showBoard: true,
+		dispatch:  func(fn func()) { fn() },
+	}
+	a.ensureBoardLoaded()
+
+	tt := ui.NewTester(a.view, 1280, 820)
+	defer retireTester(tt)
+	tt.Frame()
+
+	cardBounds, ok := tt.Find("可拖拽任务卡片")
+	if !ok {
+		t.Fatalf("missing task card: %q", tt.Texts())
+	}
+	doingCol, ok := tt.Find("进行中")
+	if !ok {
+		t.Fatalf("missing doing column: %q", tt.Texts())
+	}
+
+	fromX := cardBounds.X + cardBounds.W/2
+	fromY := cardBounds.Y + cardBounds.H/2
+	toX := doingCol.X + doingCol.W/2
+	toY := doingCol.Y + 140
+
+	tt.Press(fromX, fromY)
+	for k := 1; k <= 4; k++ {
+		f := float32(k) / 4
+		tt.Move(fromX+(toX-fromX)*f, fromY+(toY-fromY)*f)
+	}
+	tt.Release(toX, toY)
+	tt.Frame()
+
+	bf, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := findBoardTaskIndex(bf.Tasks, created.ID)
+	if idx < 0 || bf.Tasks[idx].Status != boardDoing {
+		t.Fatalf("expected %s to move to doing after drag-drop, got %+v", created.ID, bf.Tasks)
+	}
+	if a.board.selectedID != "" {
+		t.Fatalf("dragging card should not open drawer, selectedID=%q", a.board.selectedID)
 	}
 }
