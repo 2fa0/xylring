@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="cmd/gitclient/resources/logo.png" alt="Xylring icon" width="96" height="96" />
+  <img src="cmd/xylring-main/resources/logo.png" alt="Xylring icon" width="96" height="96" />
 </p>
 <h1 align="center">Xylring</h1>
 <h3 align="center">A native Git progress cockpit for AI-driven development.</h3>
@@ -92,10 +92,10 @@ Requirements: **Go 1.27+**, system **Git**, and the Cgo dependencies needed by t
 ```sh
 # Clone the repository, then run from its root
 # Run directly
-go run ./cmd/gitclient /path/to/your/repo
+go run ./cmd/xylring-main /path/to/your/repo
 
 # Or build a native macOS .app
-cd cmd/gitclient
+cd cmd/xylring-main
 go tool mygo build -skip-dmg -skip-notarize
 ```
 
@@ -199,4 +199,4 @@ license also grants an express patent license from contributors. The software is
 provided "as is", without warranty of any kind.
 
 Third-party components retain their own licenses; see the
-[third-party notices](cmd/gitclient/resources/THIRD_PARTY_NOTICES.txt).
+[third-party notices](cmd/xylring-main/resources/THIRD_PARTY_NOTICES.txt).

@@ -48,7 +48,7 @@
 
 **改动**
 
-1. `cmd/gitclient/git.go`：`listWorktrees(ctx, dir string) ([]repoWorktree, error)`
+1. `cmd/xylring-main/git.go`：`listWorktrees(ctx, dir string) ([]repoWorktree, error)`
 
    ```sh
    git worktree list --porcelain -z
@@ -59,7 +59,7 @@
    路径 `filepath.Clean` 成绝对路径，用 `canonicalRepoDir`（模块 B 的 `docs/Git执行计划.md` 第 2 步引入）归一后再比较是否为主工作树。
    如果模块 B 还没落地，第 1 步先在本文件里放一份同名函数，合并时不冲突。
 
-2. `cmd/gitclient/model.go`：
+2. `cmd/xylring-main/model.go`：
 
    ```go
    type repoWorktree struct {
@@ -102,7 +102,7 @@
 - `git worktree lock ../wt`：出现锁图标，tooltip `已锁定`。
 - 在 `../wt` 里 `git checkout --detach`：子行变成 `分离头指针 <短哈希>`。
 - 在 `../wt` 里改一个文件：子行带脏标记。
-- `go test ./cmd/gitclient/ -run 'TestParseWorktreeList'`：普通 / 分离 / 锁定 / prunable / 空输出 / 含空格路径六种快照。
+- `go test ./cmd/xylring-main/ -run 'TestParseWorktreeList'`：普通 / 分离 / 锁定 / prunable / 空输出 / 含空格路径六种快照。
 
 ### 第 2 步：创建与清理（未排期，前置条件写死）
 

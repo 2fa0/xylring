@@ -24,8 +24,8 @@ func TestFileFilterFlatAndTree(t *testing.T) {
 	tab.graph.add(&tab.commits[0])
 	tab.inspecting = hashN(1)
 	tab.compareFiles = []fileChange{
-		{status: "M", path: "cmd/gitclient/main.go"},
-		{status: "M", path: "cmd/gitclient/compare.go"},
+		{status: "M", path: "cmd/xylring-main/main.go"},
+		{status: "M", path: "cmd/xylring-main/compare.go"},
 		{status: "A", path: "docs/readme.md"},
 		{status: "M", path: "README.md"},
 	}

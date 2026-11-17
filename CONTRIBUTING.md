@@ -19,7 +19,7 @@ instead of opening a public issue.
 
 ```sh
 # From the root of the source working copy
-go run ./cmd/gitclient /path/to/some/repo
+go run ./cmd/xylring-main /path/to/some/repo
 ```
 
 ## Build and test
@@ -29,7 +29,7 @@ go run ./cmd/gitclient /path/to/some/repo
 go test ./...
 
 # Build a native app bundle for local development
-cd cmd/gitclient
+cd cmd/xylring-main
 go tool mygo build -skip-dmg -skip-notarize
 ```
 
@@ -41,7 +41,7 @@ tooling that is not part of the test suite.
 
 | Path | Contents |
 | :--- | :--- |
-| `cmd/gitclient/` | The desktop application: UI, Git operations, graph rendering |
+| `cmd/xylring-main/` | The desktop application: UI, Git operations, graph rendering |
 | `internal/crashlog/` | Crash logging helpers |
 | `docs/` | Design notes and requirements documents |
 | `scripts/` | Release helper scripts |

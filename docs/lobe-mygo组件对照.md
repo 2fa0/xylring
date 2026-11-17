@@ -4,7 +4,7 @@
 
 ## 能否直接复制
 
-可以。上游采用 MIT 许可，允许复制、修改和分发，需随代码保留版权和许可声明。本轮适配代码位于 `cmd/gitclient/lobe_widgets.go`，许可原文位于 `third_party/lobe-mygo.LICENSE`。没有添加 `lobe-mygo` 模块依赖，也没有升级 MyGo。
+可以。上游采用 MIT 许可，允许复制、修改和分发，需随代码保留版权和许可声明。本轮适配代码位于 `cmd/xylring-main/lobe_widgets.go`，许可原文位于 `third_party/lobe-mygo.LICENSE`。没有添加 `lobe-mygo` 模块依赖，也没有升级 MyGo。
 
 本地使用 MyGo v0.8.3；此次查看的上游使用 v0.8.4-0.20261108082913-9233663736ca。复制时需逐项核对 API，不能把整个组件目录直接搬入。很多组件依赖上游的 theme、motion、overlay、lucide 和本地化包；只复制单个 Go 文件通常不能编译。
 
@@ -22,7 +22,7 @@
 | `compare.go` 的「没有文件变化」「无匹配文件」、`main.go` 的空历史与无匹配仓库、`image_diff.go` 的「无图片内容」 | `pkg/display/empty.go` | 对方空状态给出图标、标题、说明与行动按钮；本地多为居中一行灰字，用户看不出下一步能做什么。 | 新增 `emptyHint`：图标 + 标题 + 说明 + 可选按钮。文件列表按当前场景说明是工作区干净、提交无改动还是两版本一致；无匹配文件可一键清除筛选，无匹配提交可一键退出筛选。 |
 | 搜索框的 ⌘P 提示、对比横幅的 Esc 键帽 | `pkg/display/hotkey.go` | 对方把快捷键画成键帽；本地两处各画一个方框。 | 抽出 `kbdHint` 键帽，两处共用。 |
 | 提交详情的「复制完整信息」 | `pkg/action/copybutton.go` | 本地复制后弹 Toast，反馈跑到别处。 | 按钮原位显示「已复制」两秒，与错误横幅的复制反馈同一套状态。 |
-| `git.go` 的 `displayPath` 与文件标签头、文件历史头 | `pkg/nav/breadcrumb.go` | 对方的面包屑把路径拆成层级，当前项用正文色、其余用描述色；本地把长路径压成「首段/…/文件名」，留下的恰是最没信息量的顶层目录，且整行只有一种颜色。 | 压缩策略改为保留直接父目录（`…/gitclient/compare.go`）；新增 `pathBreadcrumb`，目录用次要色、文件名加粗，整行仍是一个可截断文本，完整路径保留为 Tooltip。 |
+| `git.go` 的 `displayPath` 与文件标签头、文件历史头 | `pkg/nav/breadcrumb.go` | 对方的面包屑把路径拆成层级，当前项用正文色、其余用描述色；本地把长路径压成「首段/…/文件名」，留下的恰是最没信息量的顶层目录，且整行只有一种颜色。 | 压缩策略改为保留直接父目录（`…/xylring-main/compare.go`）；新增 `pathBreadcrumb`，目录用次要色、文件名加粗，整行仍是一个可截断文本，完整路径保留为 Tooltip。 |
 | `commit_details.go` 的内联完整信息卡片 | `pkg/display/accordion.go` | 对方用 MyGo 的 `CollapsibleBase` 让面板随展开进度裁剪与收缩；本地点「收起信息」后卡片瞬时消失。 | 用 `ui.AccordionBase` 的 `Item`/`Panel`/`Progress` 驱动卡片正文，收起时逐帧裁短再移除；表头、复制与关闭按钮保留原有行为，关闭按钮与折叠状态同向，不会互相打架。 |
 | 全局错误横幅 | `pkg/feedback/alert.go` | 对方的标题/描述分层和状态类型更完整；本地已有复制、仓库归属与关闭逻辑，单一错误横幅并不需要整个通用 Alert API。 | 仅改复制反馈，保留现有错误展示。 |
 | 普通按钮、输入、Checkbox、Select | `pkg/action/button.go`、`pkg/field/input.go` 等 | 本地多使用 MyGo 标准控件；对方提供更多皮肤与尺寸选项。这不构成功能或质量上必然更优的证据。 | 暂不批量替换。 |
@@ -56,5 +56,5 @@
 ```sh
 CGO_ENABLED=0 go test ./...
 go tool mygo vet .
-LOBE_UI_PNG_DIR=/tmp/xylring-lobe-previews CGO_ENABLED=0 go test ./cmd/gitclient -run '^TestLobe' -count=1
+LOBE_UI_PNG_DIR=/tmp/xylring-lobe-previews CGO_ENABLED=0 go test ./cmd/xylring-main -run '^TestLobe' -count=1
 ```

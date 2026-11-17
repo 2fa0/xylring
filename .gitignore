@@ -1,9 +1,10 @@
 /release/
 /release-notes.md
-/cmd/gitclient/build/
-/cmd/gitclient/.mygo/
-/cmd/gitclient/mygo_windows_*.syso
+/cmd/xylring-main/build/
+/cmd/xylring-main/.mygo/
+/cmd/xylring-main/mygo_windows_*.syso
 .DS_Store
+/xylring-main
 /gitclient
 .claude/
 

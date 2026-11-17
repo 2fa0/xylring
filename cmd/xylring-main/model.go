@@ -576,7 +576,7 @@ func writeJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".gitclient-*")
+	f, err := os.CreateTemp(filepath.Dir(path), ".xylring-*")
 	if err != nil {
 		return err
 	}

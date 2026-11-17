@@ -10,24 +10,24 @@ import (
 func TestBuildFileTreeCompact(t *testing.T) {
 	files := []fileChange{
 		{status: "M", path: "LICENSE"},
-		{status: "M", path: "cmd/gitclient/main.go"},
-		{status: "A", path: "cmd/gitclient/compare.go"},
+		{status: "M", path: "cmd/xylring-main/main.go"},
+		{status: "A", path: "cmd/xylring-main/compare.go"},
 		{status: "D", path: "docs/readme.md"},
 		{status: "R", path: "scripts/new.py", oldPath: "scripts/old.py"},
 	}
 	tree := buildFileTree(files)
-	wantRoots := []string{"LICENSE", "cmd/gitclient/", "docs/", "scripts/"}
+	wantRoots := []string{"LICENSE", "cmd/xylring-main/", "docs/", "scripts/"}
 	if !reflect.DeepEqual(tree.roots, wantRoots) {
 		t.Fatalf("roots %q", tree.roots)
 	}
-	if n := tree.nodes["cmd/gitclient/"]; !n.dir || n.name != "cmd/gitclient" {
+	if n := tree.nodes["cmd/xylring-main/"]; !n.dir || n.name != "cmd/xylring-main" {
 		t.Fatalf("compact dir %+v", n)
 	}
-	wantKids := []string{"cmd/gitclient/main.go", "cmd/gitclient/compare.go"}
-	if !reflect.DeepEqual(tree.kids["cmd/gitclient/"], wantKids) {
-		t.Fatalf("cmd kids %q", tree.kids["cmd/gitclient/"])
+	wantKids := []string{"cmd/xylring-main/main.go", "cmd/xylring-main/compare.go"}
+	if !reflect.DeepEqual(tree.kids["cmd/xylring-main/"], wantKids) {
+		t.Fatalf("cmd kids %q", tree.kids["cmd/xylring-main/"])
 	}
-	if n := tree.nodes["cmd/gitclient/compare.go"]; n.dir || n.file != 2 || n.name != "compare.go" {
+	if n := tree.nodes["cmd/xylring-main/compare.go"]; n.dir || n.file != 2 || n.name != "compare.go" {
 		t.Fatalf("file node %+v", n)
 	}
 	if tree.children("LICENSE") != nil {
@@ -39,7 +39,7 @@ func TestBuildFileTreeCompact(t *testing.T) {
 			open.Add(k)
 		}
 	}
-	if row := tree.rowOf("cmd/gitclient/compare.go", &open); row != 3 {
+	if row := tree.rowOf("cmd/xylring-main/compare.go", &open); row != 3 {
 		t.Fatalf("compare.go row %d", row)
 	}
 }
@@ -92,8 +92,8 @@ func TestFileTreeToggle(t *testing.T) {
 	tab.inspecting = hashN(1)
 	tab.compareFiles = []fileChange{
 		{status: "M", path: "LICENSE"},
-		{status: "M", path: "cmd/gitclient/main.go"},
-		{status: "A", path: "cmd/gitclient/compare.go"},
+		{status: "M", path: "cmd/xylring-main/main.go"},
+		{status: "A", path: "cmd/xylring-main/compare.go"},
 	}
 	tab.fileSel = 0
 	tab.fileSplit = 28
@@ -111,7 +111,7 @@ func TestFileTreeToggle(t *testing.T) {
 	if tt.HasText("仓库根目录") {
 		t.Fatalf("树状仍显示列表副标题：%q", tt.Texts())
 	}
-	for _, text := range []string{"cmd/gitclient", "LICENSE", "main.go", "compare.go", "M  LICENSE", "A  cmd/gitclient/compare.go"} {
+	for _, text := range []string{"cmd/xylring-main", "LICENSE", "main.go", "compare.go", "M  LICENSE", "A  cmd/xylring-main/compare.go"} {
 		if !tt.HasText(text) {
 			t.Fatalf("树状缺少 %q，当前文本：%q", text, tt.Texts())
 		}
@@ -145,8 +145,8 @@ func TestFileHoverShowsActionsOnThatRow(t *testing.T) {
 	tab.inspecting = hashN(1)
 	tab.compareFiles = []fileChange{
 		{status: "M", path: "LICENSE", added: 2, deleted: 1, hasStat: true},
-		{status: "M", path: "cmd/gitclient/main.go"},
-		{status: "A", path: "cmd/gitclient/compare.go", added: 381, deleted: 545, hasStat: true},
+		{status: "M", path: "cmd/xylring-main/main.go"},
+		{status: "A", path: "cmd/xylring-main/compare.go", added: 381, deleted: 545, hasStat: true},
 	}
 	tab.fileSel = 0
 	tab.fileSplit = 28
@@ -216,8 +216,8 @@ func TestFileTreeSpacingAndIndentation(t *testing.T) {
 	tab.inspecting = hashN(1)
 	tab.compareFiles = []fileChange{
 		{status: "M", path: "LICENSE"},
-		{status: "M", path: "cmd/gitclient/main.go"},
-		{status: "A", path: "cmd/gitclient/compare.go"},
+		{status: "M", path: "cmd/xylring-main/main.go"},
+		{status: "A", path: "cmd/xylring-main/compare.go"},
 	}
 	tab.fileSel = 0
 	tab.fileSplit = 28
@@ -226,7 +226,7 @@ func TestFileTreeSpacingAndIndentation(t *testing.T) {
 	tt := ui.NewTester(a.view, 1100, 720)
 	tt.Frame()
 
-	rCmd, okCmd := tt.Find("cmd/gitclient")
+	rCmd, okCmd := tt.Find("cmd/xylring-main")
 	rMain, okMain := tt.Find("main.go")
 	rComp, okComp := tt.Find("compare.go")
 	if !okCmd || !okMain || !okComp {

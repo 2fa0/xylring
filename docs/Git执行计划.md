@@ -53,7 +53,7 @@
 
 **改动**
 
-1. 新文件 `cmd/gitclient/gitlog.go`
+1. 新文件 `cmd/xylring-main/gitlog.go`
 
    ```go
    type gitCallOutput struct {
@@ -89,7 +89,7 @@
    不复制整份输出。取消和超时也 `finish`，状态分别记 `cancelled` / `failed`。
    `logGitFailure` 保持原样（应用日志 + crashlog breadcrumb），不改错误文案。
 
-3. 面板：新文件 `cmd/gitclient/gitlog_ui.go`，用 `ui.List` + `listTheme`，顶部一个「清空」。
+3. 面板：新文件 `cmd/xylring-main/gitlog_ui.go`，用 `ui.List` + `listTheme`，顶部一个「清空」。
    展开行显示输出与错误，各带「复制」。菜单项加在 `menu.go` 的「显示」子菜单：
 
    ```go
@@ -99,7 +99,7 @@
 4. 横幅：`setBanner`（`repo.go:27`）的渲染处加一个「查看 Git 日志」按钮，
    只在最近有一条失败时出现，点击打开面板并选中它。
 
-5. `cmd/gitclient/locales/en.json`：`Git 日志…`、`Git 日志`、`命令`、`耗时`、`退出码`、`输出`、
+5. `cmd/xylring-main/locales/en.json`：`Git 日志…`、`Git 日志`、`命令`、`耗时`、`退出码`、`输出`、
    `流式输出不记录`、`清空`、`复制`、`没有记录`、`查看 Git 日志`。
 
 **不做**：不落盘；不进错误文案；不加搜索/过滤（就 200 条）；不记 `streamLog` 的输出内容。
@@ -107,7 +107,7 @@
 **验收**
 - 打开仓库、翻一页历史、切一次分支：面板里出现 `log`、`symbolic-ref`、`checkout` 三类条目，耗时不全为 0。
 - 对没有网络的远程执行 fetch：出现一条失败记录，横幅的「查看 Git 日志」跳到它。
-- `go test ./cmd/gitclient/ -run 'TestGitLog'`：四条脱敏规则、二进制抑制、双上限裁剪（第 201 条丢最老的已结束条目）、
+- `go test ./cmd/xylring-main/ -run 'TestGitLog'`：四条脱敏规则、二进制抑制、双上限裁剪（第 201 条丢最老的已结束条目）、
   取消也留一条 `cancelled`。
 
 ### 第 2 步：每仓库读写分道
@@ -116,7 +116,7 @@
 
 **改动**
 
-1. 新文件 `cmd/gitclient/gitlane.go`
+1. 新文件 `cmd/xylring-main/gitlane.go`
 
    ```go
    type gitWaiter struct {
