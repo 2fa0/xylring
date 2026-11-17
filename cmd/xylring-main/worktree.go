@@ -125,7 +125,15 @@ func (a *app) applyWorktree(t *repoTab, files []fileChange) {
 	t.worktreeFiles = files
 	a.summaryMu.Lock()
 	if a.repoSummaries != nil {
-		a.repoSummaries[t.path] = repoSummary{branch: t.branch, dirty: count > 0, checked: time.Now()}
+		a.repoSummaries[t.path] = repoSummary{
+			branch:      t.branch,
+			dirty:       count > 0,
+			checked:     time.Now(),
+			ahead:       t.ahead,
+			behind:      t.behind,
+			upstream:    t.upstream,
+			hasUpstream: t.hasUpstream,
+		}
 	}
 	a.summaryMu.Unlock()
 	hasRow := t.hasWorktreeRow()
