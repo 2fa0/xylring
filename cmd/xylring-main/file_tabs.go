@@ -241,6 +241,24 @@ func revealInFileManager(path string) error {
 	}
 }
 
+func openFolderInFileManager(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		dir = filepath.Dir(dir)
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", dir).Start()
+	case "windows":
+		return exec.Command("explorer", dir).Start()
+	default:
+		return exec.Command("xdg-open", dir).Start()
+	}
+}
+
 func openInTerminal(dir string) error {
 	info, err := os.Stat(dir)
 	if err != nil {

@@ -239,6 +239,9 @@ func (a *app) view(c *ui.Context) {
 				a.graphScreen(c)
 			})
 		}
+		if a.showBoard && a.board.selectedID != "" {
+			a.boardDetailDrawer(c)
+		}
 		if isDropOver {
 			ui.Box(c.Key("drop-overlay")).Absolute().Fill().
 				Background(t.Background.Alpha(0.92)).
@@ -283,7 +286,7 @@ func (a *app) handleShortcuts(c *ui.Context) {
 			a.toggleSidebar()
 		}
 		if a.showBoard {
-			if !a.board.showNewModal && !a.board.showLinkModal && !a.board.showSnippet && a.board.deleteTaskID == "" {
+			if !a.boardModalOpen() {
 				if c.Shortcut(commandModifier(), ui.KeyF) || c.Shortcut(commandModifier(), ui.KeyP) || c.Shortcut(commandModifier(), ui.KeyK) {
 					a.board.searchInput.Focus(c)
 					return

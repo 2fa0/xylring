@@ -87,7 +87,7 @@ func appModalSized(c *ui.Context, open *bool, title string, width, tall float32,
 			ui.Scroll(c.Key("body")).Grow(1).MinHeight(0).Children(func() {
 				ui.Column(c).FillWidth().Padding(16).Gap(10).Children(content)
 			})
-			ui.Row(c.Key("footer")).Padding(12, 16).Gap(8).Justify(ui.End).Shrink(0).
+			ui.Row(c.Key("footer")).Padding(12, 16).Gap(8).AlignItems(ui.Center).Justify(ui.End).Shrink(0).
 				BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(footer)
 		})
 	})
@@ -241,6 +241,31 @@ func chip(c *ui.Context, key, text string, s chipStyle) ui.Element {
 // chipSoft tints the chip with the color itself, for refs and states.
 func chipSoft(c *ui.Context, key, text string, color ui.Color, bold bool) ui.Element {
 	return chip(c, key, text, chipStyle{Text: color, Background: color.Alpha(0.14), Border: color.Alpha(0.45), Bold: bold})
+}
+
+// dangerButton matches MyGo's Button/PrimaryButton geometry while emphasizing
+// destructive confirmations with the theme's Danger color.
+func dangerButton(c *ui.Context, key, label string) ui.Element {
+	t := c.Theme()
+	b := ui.ButtonBase(c.Key(key)).
+		Label(label).
+		Padding(t.Space(1.5), t.Space(3.5)).
+		Gap(t.Space(1.5)).
+		Radius(t.Radius).
+		Cursor(ui.CursorPointer).
+		Transition(colorMotion())
+	bg := t.Danger
+	switch {
+	case b.Pressed():
+		bg = t.Danger.Alpha(0.82)
+	case b.Hovered():
+		bg = t.Danger.Alpha(0.9)
+	}
+	b.Background(bg).Border(1, bg).TextColor(t.AccentText)
+	b.Children(func() {
+		ui.Text(c, label).SingleLine().TextColor(t.AccentText)
+	})
+	return b
 }
 
 // copyTextButton confirms a labelled copy in place, as copyIconButton does for

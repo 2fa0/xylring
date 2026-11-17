@@ -118,3 +118,137 @@ func TestBoardUpdateCLIRequiresAField(t *testing.T) {
 		t.Fatalf("board changed by a no-op update: %+v", bf.Tasks)
 	}
 }
+
+func TestBoardCLIBackupExportImportAndRestore(t *testing.T) {
+	withTempBoardConfig(t)
+	repoOld, _ := initTestRepo(t)
+	repoNew, _ := initTestRepo(t)
+	ctx := context.Background()
+	var out bytes.Buffer
+
+	if err := runBoardCLI(ctx, repoOld, []string{"add", "CLI备份验证", "--repo", repoOld}, &out); err != nil {
+		t.Fatalf("board add: %v", err)
+	}
+
+	out.Reset()
+	if err := runBoardCLI(ctx, repoOld, []string{"path", "--json"}, &out); err != nil {
+		t.Fatalf("board path: %v", err)
+	}
+	var info boardStorageInfo
+	if err := json.Unmarshal(out.Bytes(), &info); err != nil || info.BoardPath == "" {
+		t.Fatalf("unexpected board path json: %q err=%v", out.String(), err)
+	}
+
+	exportFile := filepath.Join(t.TempDir(), "cli-backup.json")
+	out.Reset()
+	if err := runBoardCLI(ctx, repoOld, []string{"export", exportFile}, &out); err != nil {
+		t.Fatalf("board export: %v", err)
+	}
+	if !strings.Contains(out.String(), "已导出 1 个任务") {
+		t.Fatalf("unexpected export output: %q", out.String())
+	}
+
+	// Delete task -> triggers auto backup
+	out.Reset()
+	if err := runBoardCLI(ctx, repoOld, []string{"delete", "T-1"}, &out); err != nil {
+		t.Fatalf("board delete: %v", err)
+	}
+	out.Reset()
+	if err := runBoardCLI(ctx, repoOld, []string{"backups", "--json"}, &out); err != nil {
+		t.Fatalf("board backups: %v", err)
+	}
+	var backups []boardBackupInfo
+	if err := json.Unmarshal(out.Bytes(), &backups); err != nil || len(backups) != 1 {
+		t.Fatalf("expected 1 backup, got %+v err=%v", backups, err)
+	}
+
+	// Dry-run import
+	out.Reset()
+	if err := runBoardCLI(ctx, repoNew, []string{"import", exportFile, "--dry-run"}, &out); err != nil {
+		t.Fatalf("board import dry-run: %v", err)
+	}
+	if !strings.Contains(out.String(), "预览导入") {
+		t.Fatalf("unexpected dry-run output: %q", out.String())
+	}
+
+	// Actual import with repo remap
+	out.Reset()
+	if err := runBoardCLI(ctx, repoNew, []string{"import", exportFile, "--mode", "merge", "--map-repo", canonicalRepoDir(repoOld) + "=" + repoNew}, &out); err != nil {
+		t.Fatalf("board import: %v", err)
+	}
+	bf, err := loadBoardFile()
+	if err != nil || len(bf.Tasks) != 1 || bf.Tasks[0].Repos[0] != canonicalRepoDir(repoNew) {
+		t.Fatalf("unexpected board after CLI import: %+v err=%v", bf.Tasks, err)
+	}
+
+	// Restore from automatic backup by filename
+	out.Reset()
+	if err := runBoardCLI(ctx, repoOld, []string{"restore", backups[0].Name}, &out); err != nil {
+		t.Fatalf("board restore: %v", err)
+	}
+	bf, err = loadBoardFile()
+	if err != nil || len(bf.Tasks) != 1 || bf.Tasks[0].Repos[0] != canonicalRepoDir(repoOld) {
+		t.Fatalf("unexpected board after CLI restore: %+v err=%v", bf.Tasks, err)
+	}
+}
+
+func TestBoardCLIPriorityAndDueDate(t *testing.T) {
+	withTempBoardConfig(t)
+	ctx := context.Background()
+	var out bytes.Buffer
+
+	if err := runBoardCLI(ctx, "", []string{"add", "修复线上告警", "--priority", "重要且紧急", "--due", "2026-11-20", "--json"}, &out); err != nil {
+		t.Fatalf("board add with priority/due: %v", err)
+	}
+	var created boardTask
+	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal add json: %v", err)
+	}
+	if created.Priority != boardPriorityUrgentImportant || created.DueDate != "2026-11-20" {
+		t.Fatalf("unexpected priority/due on add: %+v", created)
+	}
+
+	out.Reset()
+	if err := runBoardCLI(ctx, "", []string{"show", "T-1"}, &out); err != nil {
+		t.Fatalf("board show: %v", err)
+	}
+	if !strings.Contains(out.String(), "重要且紧急") || !strings.Contains(out.String(), "2026-11-20") {
+		t.Fatalf("show missing priority/due: %q", out.String())
+	}
+
+	out.Reset()
+	if err := runBoardCLI(ctx, "", []string{"list", "--priority", "urgent_important"}, &out); err != nil {
+		t.Fatalf("board list --priority: %v", err)
+	}
+	if !strings.Contains(out.String(), "T-1") || !strings.Contains(out.String(), "截止 2026-11-20") {
+		t.Fatalf("list output missing task/due: %q", out.String())
+	}
+
+	out.Reset()
+	if err := runBoardCLI(ctx, "", []string{"update", "T-1", "--priority", "important", "--due", "2026-11-28", "--json"}, &out); err != nil {
+		t.Fatalf("board update priority/due: %v", err)
+	}
+	var updated boardTask
+	if err := json.Unmarshal(out.Bytes(), &updated); err != nil {
+		t.Fatalf("unmarshal update json: %v", err)
+	}
+	if updated.Priority != boardPriorityImportant || updated.DueDate != "2026-11-28" {
+		t.Fatalf("unexpected updated priority/due: %+v", updated)
+	}
+
+	out.Reset()
+	if err := runBoardCLI(ctx, "", []string{"update", "T-1", "--priority", "none", "--due", "clear", "--json"}, &out); err != nil {
+		t.Fatalf("board clear priority/due: %v", err)
+	}
+	var cleared boardTask
+	if err := json.Unmarshal(out.Bytes(), &cleared); err != nil {
+		t.Fatalf("unmarshal clear json: %v", err)
+	}
+	if cleared.Priority != boardPriorityNone || cleared.DueDate != "" {
+		t.Fatalf("expected cleared priority/due, got %+v", cleared)
+	}
+
+	if err := runBoardCLI(ctx, "", []string{"update", "T-1", "--due", "not-a-date"}, &out); err == nil {
+		t.Fatal("expected error for invalid due date")
+	}
+}

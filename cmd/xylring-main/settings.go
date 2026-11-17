@@ -364,8 +364,61 @@ func (a *app) generalSettings(c *ui.Context) {
 		},
 	)
 	a.editorSettings(c)
-	a.updateSettings(c)
+	a.boardSettings(c)
 	a.gitBinarySettings(c)
+	a.updateSettings(c)
+}
+
+func (a *app) boardSettings(c *ui.Context) {
+	t := c.Theme()
+	info := a.currentBoardStorageInfo()
+	displayDir := homePath(info.ActiveDir)
+	settingsSection(c, "settings-board", "看板",
+		func() {
+			settingsRow(c, "settings-board-dir", func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					settingsName(c, "数据目录")
+					if info.IsCustom {
+						chip(c, "custom", tr("自定义"), chipStyle{Text: t.Accent, Background: t.Accent.Alpha(0.12), FontSize: 10})
+					}
+				})
+				if displayDir != "" {
+					ui.Text(c, displayDir).FontSize(12).TextColor(t.TextMuted).SingleLine().Tooltip(info.ActiveDir)
+				}
+			}, func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					if ui.Button(c.Key("settings-board-open"), tr("打开")).Clicked() {
+						a.openBoardFolder()
+					}
+					if info.IsCustom {
+						if ui.Button(c.Key("settings-board-reset"), tr("恢复默认")).Disabled(info.FromEnv || a.picking).Clicked() {
+							a.beginSwitchBoardDir(info.DefaultDir)
+						}
+					}
+					if ui.Button(c.Key("settings-board-change"), tr("更改…")).Disabled(info.FromEnv || a.picking).Clicked() {
+						a.pickBoardStorageDir()
+					}
+				})
+			})
+		},
+		func() {
+			settingsRow(c, "settings-board-backup", func() {
+				settingsName(c, "备份与导入")
+			}, func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					if ui.Button(c.Key("settings-board-export"), tr("导出…")).Disabled(a.picking).Clicked() {
+						a.startBoardExport()
+					}
+					if ui.Button(c.Key("settings-board-import"), tr("导入…")).Disabled(a.picking).Clicked() {
+						a.startBoardImport()
+					}
+					if ui.Button(c.Key("settings-board-restore"), tr("恢复…")).Clicked() {
+						a.openBoardBackupsModal()
+					}
+				})
+			})
+		},
+	)
 }
 
 // updateSettings 是设置页的「更新」分组：一个后台检查开关，一行版本与手动检查。
