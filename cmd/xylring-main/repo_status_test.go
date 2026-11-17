@@ -514,3 +514,32 @@ func TestSidebarWorktreeFeatures(t *testing.T) {
 		t.Fatalf("全部展开后 pkg/ 目录应处于展开状态")
 	}
 }
+
+func TestApplyWorktreePreservesTrackingSummaryWhenUnfocused(t *testing.T) {
+	tab1 := newTab(1, "/tmp/work/zasrc-fapi")
+	tab1.loaded = true
+	tab1.branch = "master"
+	tab1.ahead = 1
+	tab1.behind = 2
+	tab1.upstream = "origin/master"
+	tab1.hasUpstream = true
+
+	tab2 := newTab(2, "/tmp/work/zasrc-fapi-front")
+	tab2.loaded = true
+	tab2.branch = "master"
+
+	a := &app{
+		tabs:          []*repoTab{tab1, tab2},
+		active:        0,
+		repoSummaries: make(map[string]repoSummary),
+	}
+
+	a.applyWorktree(tab1, nil)
+
+	// Switch focus to tab2 and verify tab1's ahead/behind status is still preserved.
+	a.active = 1
+	branch, dirty, ahead, behind := a.repoStatus(tab1.path)
+	if branch != "master" || dirty || ahead != 1 || behind != 2 {
+		t.Fatalf("失焦后 repoStatus(%q) = (%q, %v, %d, %d), want (\"master\", false, 1, 2)", tab1.path, branch, dirty, ahead, behind)
+	}
+}

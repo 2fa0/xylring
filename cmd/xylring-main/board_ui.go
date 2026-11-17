@@ -707,7 +707,7 @@ func boardDueDatePicker(c *ui.Context, key, current string, doneOrArchived bool,
 		}
 	}
 
-	wrap := ui.Row(c.Key(key+"-wrap")).AlignItems(ui.Center)
+	wrap := ui.Row(c.Key(key + "-wrap")).AlignItems(ui.Center)
 	if fillWidth {
 		wrap.FillWidth()
 	}

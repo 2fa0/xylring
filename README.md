@@ -1,7 +1,7 @@
 <p align="center">
   <img src="cmd/xylring-main/resources/logo.png" alt="Xylring 图标" width="96" height="96" />
 </p>
-<h1 align="center">Xylring</h1>
+<h1 align="center">Xylring · 木年轮</h1>
 <h3 align="center">AI 编程时代的轻量原生 Git 驾驶舱。</h3>
 <p align="center">
   不用打开重型 IDE，一眼看清 AI 提交量、模型/Agent 归属、跨项目看板与尚未清理的 Worktree。
@@ -40,7 +40,7 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 界面交互的灵感最初来自 VS Code 的 Git Graph——图很直观，但只为了看 Git 状态就常驻一个 VS Code，内存开销实在太大；我也试过 Zed，Zed 的内存控制非常优秀，可惜自带的 Git Graph 既不好看也不顺手。
 
-于是我干脆自己动手，用 Go 缝了一个原生轻量的桌面工具出来。Xylring 意为树木的年轮——像年轮一样，把每一次代码演进和 AI 协作的印记清晰地刻在时间线上。
+于是我干脆自己动手，用 Go 缝了一个原生轻量的桌面工具出来。Xylring（木年轮）意为树木的年轮——像年轮一样，把每一次代码演进和 AI 协作的印记清晰地刻在时间线上。
 
 ---
 
