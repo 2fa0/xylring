@@ -1,212 +1,191 @@
 <p align="center">
-  <img src="cmd/xylring-main/resources/logo.png" alt="Xylring icon" width="96" height="96" />
+  <img src="cmd/xylring-main/resources/logo.png" alt="Xylring 图标" width="96" height="96" />
 </p>
 <h1 align="center">Xylring</h1>
-<h3 align="center">A native Git progress cockpit for AI-driven development.</h3>
+<h3 align="center">AI 编程时代的轻量原生 Git 驾驶舱。</h3>
 <p align="center">
-  Track commit volume, AI &amp; agent provenance, and lingering worktrees across parallel projects—without opening a heavy editor.
+  不用打开重型 IDE，一眼看清 AI 提交量、模型/Agent 归属、跨项目看板与尚未清理的 Worktree。
 </p>
 <p align="center">
-  <a href="#-why-xylring">Why Xylring</a> •
-  <a href="#-key-features">Features</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#-cli-usage">CLI Usage</a> •
-  <a href="#-roadmap">Roadmap</a> •
-  <a href="./README_zh.md">简体中文</a>
+  <a href="#-为什么做-xylring">设计初衷</a> •
+  <a href="#-核心特性">核心特性</a> •
+  <a href="#-安装方式">安装方式</a> •
+  <a href="#-命令行用法">命令行用法</a> •
+  <a href="#-路线图">路线图</a> •
+  <a href="./README_en.md">English</a>
 </p>
 <p align="center">
   <img src="https://img.shields.io/badge/Release-v0.9.0-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
+  <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/许可-Apache%202.0-blue.svg?style=flat-square" alt="License" />
 </p>
 <p align="center">
-  <img src="docs/images/screenshot.png" alt="Xylring commit graph with AI provenance and diff view" width="850" />
+  <img src="docs/images/showcase.png" alt="Xylring 展示图 — AI 时代的轻量原生 Git 驾驶舱" width="850" />
 </p>
 
 ---
 
-## 🔍 Why Xylring?
+## 🔍 为什么做 Xylring？
 
-Xylring started from a very specific workflow: building Snapover without writing a single line of code by hand.
+Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码的前提下，靠 AI 完整做出 Snapover。
 
-When AI models and coding agents are writing the code across multiple parallel projects, you don't always want to open an IDE just to answer basic questions:
+当 AI 和多个 Agent 在后台并行推进不同项目时，你往往不想为了看一眼状态而专门打开编辑器，但又迫切需要知道几件事：
 
-- How much progress has actually been made?
-- How many files did that last commit touch?
-- Which AI model and agent authored each commit?
-- Which branch am I on across my parallel repos, and how many `git worktree`s did I forget to delete?
+- 现在整体进度推进到哪了？
+- 刚才那次提交到底改了多少个文件？
+- 每次提交分别是哪个 AI 模型和 Agent 帮我干的活？
+- 同时并行好几个项目时，我现在切在哪个仓库、哪个分支？还有多少个 `git worktree` 忘了删？
 
-The visual inspiration came from VS Code's Git Graph—great for reading history, but VS Code's memory footprint is far too heavy just to check Git state. Zed keeps memory well under control, but its built-in Git Graph felt rough and hard to use.
+界面交互的灵感最初来自 VS Code 的 Git Graph——图很直观，但只为了看 Git 状态就常驻一个 VS Code，内存开销实在太大；我也试过 Zed，Zed 的内存控制非常优秀，可惜自带的 Git Graph 既不好看也不顺手。
 
-So Xylring was stitched together as a lightweight, Go-native desktop companion—named after the growth rings of a tree, recording every code change and AI collaboration step at a glance.
-
----
-
-## ✨ Key Features
-
-- 🗂️ **Cross-Project Board for AI Work**: Track tasks from many repositories in To do, In progress, Review, and Done columns. Drag cards between columns, set priority and due dates, link commits from several repos, and keep a timeline of notes—the same board is readable and writable from the terminal with `xylring board`.
-- 📊 **Commit Nodes Scaled by Change Volume**: The more files and lines a commit touches, the larger its node appears on the graph. One glance at the tree tells big refactors apart from small fixes.
-- 🤖 **AI & Agent Provenance Right Next to the Graph**: See which AI model and agent produced each commit directly to the right of the commit graph (`Co-authored-by`, `AI-Generated-By`, `Prompt-SHA`)—no need to click into individual commits.
-- 🌿 **Lingering Worktree Awareness**: Keep track of active and undeleted `git worktree`s when running parallel agent tasks, so temporary workspaces never pile up unnoticed.
-- 🧭 **Multi-Project Orientation Without an IDE**: Stay oriented across parallel repositories and branches with direct Go-native repository access and smooth custom Bezier commit graph rendering.
-- ✂️ **Hunk & Line Staging**: Review diffs and stage or discard specific lines and hunks directly from the diff view when you want fine-grained control.
-- ⚡ **Omni-Search & CLI Helper**: Filter history by commit message, author, changed files, ref names, or commit hash (including `code:`, `author:`, and `path:` prefixes), and jump straight into any repo from the terminal with `xylring .`.
-- 🖼️ **Full-File Source View & Image Diff**: Read full-file snapshots with syntax highlighting and compare images side by side.
-- ⚖️ **Arbitrary Snapshots & Merge-Base Comparison**: Compare any two commits, branches, or tags—two-dot snapshot diffing or three-dot (`...`) fork-point diffing.
-- 🛡️ **Local Repository Workflows**: Local operations use the system Git installation. Fetch, pull, and push communicate with the configured Git remote.
-- 🎨 **Native Cross-Platform UI**: Runs natively on macOS and Windows with dark, light, and high-contrast themes.
+于是我干脆自己动手，用 Go 缝了一个原生轻量的桌面工具出来。Xylring 意为树木的年轮——像年轮一样，把每一次代码演进和 AI 协作的印记清晰地刻在时间线上。
 
 ---
 
-## 🚀 Installation
+## ✨ 核心特性
+
+- 🗂️ **跨项目 AI 协作看板**：待办、进行中、待审阅、已完成四列视图把多个仓库的任务汇总在一起。卡片可拖拽、可设优先级与截止日期，任务能挂上多个仓库的提交，备注按时间线记录；同一份看板也能用 `xylring board` 从命令行读写。
+- 📊 **提交节点大小映射改动量**：单次提交改动的文件和代码越多，图上的提交点就越大。扫一眼提交树，就能立刻分辨哪些是大重构、哪些是小修补。
+- 🤖 **图右侧直出 AI 与 Agent 归属**：在提交树的右侧直接展示每次提交对应的 AI 与 Agent 信息（解析 `Co-authored-by`、`AI-Generated-By`、`Prompt-SHA` 等 Trailer），不用点进详情就能看清是谁干的活。
+- 🌿 **未删除 Worktree 实时提醒**：多 Agent 并行开发时最容易遗忘清理临时工作区，Xylring 把当前残留的 `git worktree` 数量直接摆在明面上。
+- 🧭 **脱离编辑器的多项目防迷路**：通过 Go 原生接口直接读取仓库状态，配合平滑的贝塞尔曲线提交树，不开 IDE 也能快速切换和定位当前工作进度。
+- ✂️ **行级与 Hunk 级 Diff 审查**：需要人工介入微调时，支持在 Diff 视图中直接暂存或丢弃指定的代码行与代码块（Hunk）。
+- ⚡ **全局快搜与终端联动**：支持按提交信息、作者、改动文件、分支引用或 Commit Hash 秒搜历史（支持 `code:`、`author:`、`path:` 等前缀）；在终端输入 `xylring .` 即可直接打开当前仓库。
+- 🖼️ **全量文件语法高亮与图片 Diff**：支持查看任意历史快照的完整只读文件，支持多格式图片并排对比。
+- ⚖️ **快照与分叉点任意比对**：任意选择两个提交或分支比对，支持两点快照比较或三点（`...` 分叉点起）改动审查。
+- 🛡️ **本地仓库操作**：本地操作调用系统 Git；获取、拉取和推送会连接配置的 Git 远程仓库。
+- 🎨 **原生跨平台界面**：原生运行于 macOS 与 Windows，内置深色、浅色与高对比度主题。
+
+---
+
+## 🚀 安装方式
 
 ### macOS
 
-Download the `.dmg` matching your architecture from [Release v0.9.0](https://github.com/2fa0/xylring/releases):
+根据芯片架构从 [Release v0.9.0](https://github.com/2fa0/xylring/releases) 下载对应的 `.dmg`：
 
-- **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.9.0-arm64.dmg`
-- **Intel x86_64**: `xylring-0.9.0-amd64.dmg`
+- **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.9.0-arm64.dmg`
+- **Intel 芯片 (x86_64)**：`xylring-0.9.0-amd64.dmg`
 
-Or grab the `.app.tar.gz` archive if you prefer to place the app yourself. Open the disk image and drag **Xylring** into your `Applications` folder.
+也可以下载 `.app.tar.gz` 自行放置应用。双击打开 `.dmg`，把 **Xylring** 拖入「应用程序（Applications）」文件夹。
 
 > [!NOTE]
-> **First launch on macOS**: if a build is distributed without Apple notarization, right-click (or Control-click) `Xylring.app` in Finder and choose **Open** the first time. Or run:
+> **macOS 首次打开安全提示**：如果发行版本未经过 Apple 开发者证书公证，初次打开提示“无法验证开发者”时，请在访达（Finder）里按住 **Control** 点按 `Xylring.app` 并选择「打开」，或在终端执行：
 > ```sh
 > xattr -cr /Applications/Xylring.app
 > ```
 
-Once installed, Xylring checks for new versions itself and offers to update in its own window. Versions up to 0.8.2 have no updater yet, so install a build with it once by hand.
+装好之后，Xylring 会自己检查新版本：有新版本时弹出更新窗口，装完重启即可。0.8.2 及更早的版本还没有这项能力，需要手动装一次带自动更新的版本。
 
 ### Windows
 
-Download the `.exe` installer or the standalone `.zip` archive from [Releases](https://github.com/2fa0/xylring/releases):
+从 [Releases](https://github.com/2fa0/xylring/releases) 下载 `.exe` 安装程序或免安装 `.zip` 压缩包：
 
-- **Installer**: run `xylring-setup-0.9.0-amd64.exe` (installs to your user directory, no admin rights required).
-- **Portable**: extract `xylring-0.9.0-windows-x64.zip` and run `Xylring.exe`.
+- **安装版**：运行 `xylring-setup-0.9.0-amd64.exe`（安装到当前用户目录，无需管理员权限）。
+- **便携版**：解压 `xylring-0.9.0-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
 
-### Build from Source
+### 从源码构建
 
-Requirements: **Go 1.27+**, system **Git**, and the Cgo dependencies needed by the Fyne/GLFW GUI bindings.
+环境要求：**Go 1.27+**、系统 **Git**，以及 Fyne/GLFW 图形绑定所需的 Cgo 依赖。
 
 ```sh
-# Clone the repository, then run from its root
-# Run directly
+# 先克隆仓库，再在仓库根目录运行
+# 直接运行
 go run ./cmd/xylring-main /path/to/your/repo
 
-# Or build a native macOS .app
+# 或编译 macOS 原生 .app
 cd cmd/xylring-main
 go tool mygo build -skip-dmg -skip-notarize
 ```
 
 ---
 
-## 💻 CLI Usage
+## 💻 命令行用法
 
-Open the current directory in Xylring, just like `code .`:
+像 VS Code 的 `code .` 一样，在终端随时打开当前目录的仓库：
 
 ```sh
 xylring .
 ```
 
-Open a specific repository path, or several at once:
+也可以打开指定路径的仓库，或一次打开多个：
 
 ```sh
 xylring /path/to/repository
 xylring repoA repoB
 
-# Just focus the running Xylring window
+# 仅激活并聚焦当前运行的 Xylring 窗口
 xylring
 ```
 
-The board also works from the terminal, so an agent can file tasks and their commits as it works:
+看板也能在终端里操作，AI Agent 可以直接把任务连同提交一起登记进去：
 
 ```sh
 xylring board list
-xylring board add "Fix the login timeout" --priority high --due 2026-11-30
+xylring board add "修好登录超时" --priority high --due 2026-11-30
 xylring board link <ID> <COMMIT_HASH>
-xylring board note <ID> "Traced it to the token refresh path"
+xylring board note <ID> "定位到 token 刷新逻辑"
 ```
 
-### Install CLI Helper in PATH
+### 将命令行工具添加到 PATH
 
-- **From the GUI menu**: `File` → `Install 'xylring' Command Line Tool in PATH...`
-- **From the terminal**:
+- **通过界面菜单**：`File` → `Install 'xylring' Command Line Tool in PATH...`
+- **通过终端命令**：
   ```sh
   xylring install-cli
   ```
 
 ---
 
-## 🗺️ Roadmap
+## 🗺️ 路线图
 
-- [x] High-performance commit graph with cubic Bezier lanes
-- [x] Commit node sizing by change volume & inline AI provenance display
-- [x] Omni-search across messages, authors, files, refs, and SHAs
-- [x] Hunk-level staging and interactive patch discard
-- [x] Dual-point and triple-point (`...`) commit comparisons
-- [x] Syntax-highlighted full-file viewer and image diffing
-- [x] CLI `xylring .` terminal integration & macOS/Windows support
-- [ ] Interactive Rebase UI (Squash, Reorder, Drop)
-- [ ] Linux desktop support (X11 / Wayland)
-- [ ] Custom themes (Solarized, Nord, Catppuccin)
-- [ ] Vim-style keyboard navigation
-
----
-
-## 🔒 Privacy and local data
-
-Xylring stores diagnostic logs under `~/Library/Application Support/Xylring/logs/`
-on macOS and `%AppData%\Xylring\logs\` on Windows. The normal log
-(`xylring.log`) and crash log (`crash.log`) can contain local repository paths,
-operation errors, and crash details. They rotate at approximately 1 MiB and are
-cleaned under a seven-day retention policy; active files or cleanup failures may
-remain longer. macOS may also create its own diagnostic reports.
-
-The application stores recent repository paths and session state locally,
-including unsent commit-message drafts, in `recent.json` and `session.json`
-under the same `Xylring` configuration directory. Xylring does not implement
-automatic telemetry or log uploads. Explicit remote Git operations use the
-system Git configuration and communicate with the configured remote. Review
-logs and session files before sharing them.
+- [x] 基于三次贝塞尔曲线的高性能提交树渲染
+- [x] 提交节点按改动量缩放与图右侧 AI 来源展示
+- [x] 覆盖提交信息、作者、文件、分支与 SHA 的全局快搜
+- [x] Hunk 级暂存与交互式补丁丢弃
+- [x] 双点与三点（`...`）提交对比
+- [x] 语法高亮全文件预览与图片 Diff 对比
+- [x] 终端 `xylring .` 联动及 macOS / Windows 双端支持
+- [x] 跨项目协作看板与命令行同步
+- [ ] 交互式 Rebase 界面（Squash、Reorder、Drop）
+- [ ] Linux 桌面端支持（X11 / Wayland）
+- [ ] 更多内置配色主题（Solarized、Nord、Catppuccin）
+- [ ] Vim 风格键盘导航
 
 ---
 
-## 🛡️ Reporting security vulnerabilities
+## 🔒 隐私与本地数据
 
-Please report potential vulnerabilities privately, following the
-[security policy](SECURITY.md), rather than opening a public issue.
+Xylring 会在本地保存诊断日志，macOS 位于 `~/Library/Application Support/Xylring/logs/`，Windows 位于 `%AppData%\Xylring\logs\`。常规日志（`xylring.log`）与崩溃日志（`crash.log`）可能包含本地仓库路径、操作报错及崩溃堆栈信息；单个日志文件约在 1 MiB 时轮转，并按 7 天保留策略自动清理（正在写入或清理失败的文件可能会保留更久）。macOS 系统本身也可能会生成系统级诊断报告。
 
----
-
-## 🤝 Feedback
-
-Bugs, feature ideas and pull requests are welcome in the
-[issue tracker](https://github.com/2fa0/xylring/issues). See
-[CONTRIBUTING.md](CONTRIBUTING.md) for how to build and test a change.
+应用还会在同一配置目录下的 `recent.json` 和 `session.json` 中保存最近打开的仓库路径与会话状态（包括尚未提交的 Commit 草稿）。Xylring 不包含任何自动遥测或日志上传逻辑；主动触发的远程 Git 操作会直接调用系统 Git 配置并与对应远程仓库通信。分享日志或配置文件前请先自行检查内容。
 
 ---
 
-## 🙏 Thanks
+## 🛡️ 报告安全漏洞
 
-Xylring's interface is built with [MyGo](https://github.com/egoist/mygo), a
-native Go desktop UI toolkit that keeps the app small and fast without shipping
-a browser engine. Thanks to [@egoist](https://github.com/egoist) and every MyGo
-contributor—the commit graph, diff viewer, and menus all sit on top of it.
+如发现潜在安全漏洞，请遵循[安全策略](SECURITY.md)私下联系报告，不要直接在公开 Issue 中披露。
 
 ---
 
-## 📄 License
+## 🤝 反馈与贡献
 
-Xylring is released under the [Apache License 2.0](LICENSE).
+欢迎在 [Issue 列表](https://github.com/2fa0/xylring/issues) 反馈 Bug、提出建议或提交 Pull Request。构建与测试方式请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-In short: you may use, copy, modify and distribute this software, for commercial
-or non-commercial purposes, and you may distribute modified versions, as long as
-you keep the copyright and license notices, state which files you changed, and
-include a copy of the [LICENSE](LICENSE) and the [NOTICE](NOTICE) file. The
-license also grants an express patent license from contributors. The software is
-provided "as is", without warranty of any kind.
+---
 
-Third-party components retain their own licenses; see the
-[third-party notices](cmd/xylring-main/resources/THIRD_PARTY_NOTICES.txt).
+## 🙏 致谢
+
+Xylring 的界面基于 [MyGo](https://github.com/egoist/mygo) 构建——它让这个应用不必内置浏览器内核，就能保持原生、轻量、启动即用。感谢 [@egoist](https://github.com/egoist) 与所有 MyGo 贡献者，提交图谱、Diff 视图和菜单都跑在它上面。
+
+---
+
+## 📄 开源协议
+
+Xylring 基于 [Apache License 2.0](LICENSE) 协议开源。
+
+简而言之，你可以自由地将本软件用于商业或非商业用途，也可以修改并分发修改后的版本，但需保留原有的版权与协议声明、注明所修改的文件，并随分发附上 [LICENSE](LICENSE) 与 [NOTICE](NOTICE) 文件。协议同时包含贡献者的明确专利授权；软件按“现状”提供，不附带任何形式的担保。
+
+内置第三方组件各自保留其原有协议，详见[第三方声明文件](cmd/xylring-main/resources/THIRD_PARTY_NOTICES.txt)。
