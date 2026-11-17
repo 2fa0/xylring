@@ -6,53 +6,93 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 )
 
 type boardState struct {
-	loaded          bool
-	file            boardFile
-	loadErr         string
-	lastMod         time.Time
-	lastSize        int64
-	polling         bool
-	repoFilter      string
-	search          string
-	searchInput     ui.Handle
-	showArchived    bool
-	selectedID      string
-	editTaskID      string
-	titleDraft      string
-	titleInput      ui.Handle
-	descDraft       string
-	descInput       ui.Handle
-	noteDraft       string
-	noteInput       ui.Handle
-	noteDrafts      map[string]string
-	drawerStatusIdx int
-	deleteTaskID    string
-	writeGen        int
-	showNewModal    bool
-	newTitle        string
-	newDesc         string
-	newStatus       boardStatus
-	newStatusIdx    int
-	newRepos        []string
-	newErr          string
-	showLinkModal   bool
-	linkRepo        string
-	linkRef         string
-	linkErr         string
-	linkBusy        bool
-	showSnippet     bool
-	commitValid     map[string]bool
-	checkingLinks   map[string]bool
+	loaded             bool
+	file               boardFile
+	loadErr            string
+	lastMod            time.Time
+	lastSize           int64
+	polling            bool
+	repoFilter         string
+	search             string
+	searchInput        ui.Handle
+	showArchived       bool
+	selectedID         string
+	editTaskID         string
+	titleDraft         string
+	titleInput         ui.Handle
+	descDraft          string
+	descInput          ui.Handle
+	noteDraft          string
+	noteInput          ui.Handle
+	noteDrafts         map[string]string
+	editingNoteID      string
+	editingNoteText    string
+	editNoteInput      ui.Handle
+	drawerStatusIdx    int
+	drawerPriorityOpen bool
+	drawerDueOpen      bool
+	drawerDuePicker    time.Time
+	deleteTaskID       string
+	deleteNoteTaskID   string
+	deleteNoteID       string
+	writeGen           int
+	showNewModal       bool
+	newTitle           string
+	newDesc            string
+	newStatus          boardStatus
+	newStatusIdx       int
+	newPriority        boardPriority
+	newPriorityOpen    bool
+	newDueDate         string
+	newDueOpen         bool
+	newDuePicker       time.Time
+	newRepos           []string
+	newErr             string
+	showLinkModal      bool
+	linkRepo           string
+	linkRef            string
+	linkInput          ui.Handle
+	linkErr            string
+	linkBusy           bool
+	showSnippet        bool
+	showImportModal    bool
+	importPlan         boardImportPlan
+	importModeIdx      int
+	importErr          string
+	importBusy         bool
+	showBackupsModal   bool
+	backups            []boardBackupInfo
+	backupsErr         string
+	showStorageModal   bool
+	storageErr         string
+	showSwitchDirModal bool
+	switchTargetDir    string
+	switchTargetCount  int
+	switchDirErr       string
+	storageInfo        boardStorageInfo
+	storageLoaded      bool
+	commitValid        map[string]bool
+	checkingLinks      map[string]bool
+}
+
+func (a *app) boardModalOpen() bool {
+	b := &a.board
+	return b.showNewModal || b.showLinkModal || b.showSnippet ||
+		b.deleteTaskID != "" || b.deleteNoteID != "" ||
+		b.showImportModal || b.showBackupsModal || b.showStorageModal || b.showSwitchDirModal
 }
 
 func (a *app) ensureBoardLoaded() {
@@ -62,7 +102,37 @@ func (a *app) ensureBoardLoaded() {
 	a.reloadBoardSync()
 }
 
+func (a *app) refreshBoardStorageInfo() {
+	if info, err := boardLocationInfo(); err == nil {
+		a.board.storageInfo = info
+		a.board.storageLoaded = true
+	}
+}
+
+func (a *app) currentBoardStorageInfo() boardStorageInfo {
+	if !a.board.storageLoaded {
+		a.refreshBoardStorageInfo()
+	}
+	return a.board.storageInfo
+}
+
+func (a *app) resetBoardAfterReplace() {
+	a.board.selectedID = ""
+	a.board.editTaskID = ""
+	a.board.titleDraft = ""
+	a.board.descDraft = ""
+	a.board.noteDraft = ""
+	a.board.noteDrafts = nil
+	a.board.editingNoteID = ""
+	a.board.editingNoteText = ""
+	a.board.drawerPriorityOpen = false
+	a.board.drawerDueOpen = false
+	a.board.commitValid = nil
+	a.board.checkingLinks = nil
+}
+
 func (a *app) reloadBoardSync() {
+	a.refreshBoardStorageInfo()
 	bf, err := loadBoardFile()
 	if err != nil {
 		a.board.loadErr = err.Error()
@@ -137,6 +207,12 @@ func (a *app) syncBoardDrafts(t boardTask) {
 	if draft, ok := a.board.noteDrafts[t.ID]; ok {
 		a.board.noteDraft = draft
 	}
+	a.board.editingNoteID = ""
+	a.board.editingNoteText = ""
+	a.board.drawerPriorityOpen = false
+	a.board.drawerDueOpen = false
+	a.board.deleteNoteTaskID = ""
+	a.board.deleteNoteID = ""
 }
 
 // stashNoteDraft keeps an unsent note with its task, so closing the drawer or
@@ -179,6 +255,12 @@ func (a *app) closeBoardDrawer() {
 	a.stashNoteDraft()
 	a.board.selectedID = ""
 	a.board.editTaskID = ""
+	a.board.editingNoteID = ""
+	a.board.editingNoteText = ""
+	a.board.drawerPriorityOpen = false
+	a.board.drawerDueOpen = false
+	a.board.deleteNoteTaskID = ""
+	a.board.deleteNoteID = ""
 }
 
 func (a *app) commitBoardDrafts() {
@@ -435,6 +517,678 @@ func boardStatusColor(c *ui.Context, s boardStatus) ui.Color {
 	}
 }
 
+func boardPriorityColor(c *ui.Context, p boardPriority) ui.Color {
+	t := c.Theme()
+	switch p {
+	case boardPriorityUrgentImportant:
+		return t.Danger
+	case boardPriorityImportant:
+		return t.Accent
+	case boardPriorityUrgent:
+		return t.Warning
+	default:
+		return t.TextMuted
+	}
+}
+
+func boardPriorityPill(c *ui.Context, key string, p boardPriority, fontSize float32) ui.Element {
+	col := boardPriorityColor(c, p)
+	pill := ui.Row(c.Key(key)).Padding(2, 7).Gap(5).Radius(4).
+		Background(col.Alpha(0.12)).AlignItems(ui.Center).Shrink(0)
+	pill.Children(func() {
+		ui.Box(c).Size(6, 6).Radius(3).Background(col).Shrink(0)
+		lbl := ui.Text(c, tr(boardPriorityLabel(p))).FontSize(fontSize).TextColor(col).SingleLine()
+		if p == boardPriorityUrgentImportant {
+			lbl.FontWeight(600)
+		} else {
+			lbl.FontWeight(500)
+		}
+	})
+	return pill
+}
+
+func sameBoardDay(a, b time.Time) bool {
+	return a.Year() == b.Year() && a.Month() == b.Month() && a.Day() == b.Day()
+}
+
+func boardCardDueAppearance(c *ui.Context, rawDue string, parsed time.Time, state boardDueState) (text, tip string, fg, bg ui.Color) {
+	t := c.Theme()
+	now := time.Now()
+	if sameBoardDay(parsed, now) {
+		text = tr("今天")
+	} else if parsed.Year() == now.Year() {
+		text = parsed.Format("01-02")
+	} else {
+		text = parsed.Format("2006-01-02")
+	}
+	tip = rawDue
+	switch state {
+	case boardDueOverdue:
+		fg = t.Danger
+		bg = t.Danger.Alpha(0.12)
+		tip = rawDue + " · " + tr("已逾期")
+	case boardDueToday:
+		fg = t.Warning
+		bg = t.Warning.Alpha(0.14)
+		tip = rawDue + " · " + tr("今天截止")
+	default:
+		fg = t.TextMuted
+		bg = t.TextMuted.Alpha(0.10)
+	}
+	return text, tip, fg, bg
+}
+
+func boardPriorityPicker(c *ui.Context, key string, current boardPriority, open *bool, fillWidth bool, onChange func(boardPriority)) {
+	t := c.Theme()
+	label := tr("请选择")
+	if current != boardPriorityNone {
+		label = tr(boardPriorityLabel(current))
+	}
+	btn := ui.ButtonBase(c.Key(key)).
+		Label(label).
+		Height(30).Padding(0, 10).Gap(6).Radius(t.Radius).
+		AlignItems(ui.Center).Cursor(ui.CursorPointer).
+		Transition(colorMotion())
+	if fillWidth {
+		btn.FillWidth()
+	} else {
+		btn.MinWidth(180)
+	}
+	switch {
+	case *open:
+		btn.Background(t.Background).Border(1, t.Accent).Shadow(0, 0, 0, 2, t.Accent.Alpha(0.14))
+	case btn.Pressed():
+		btn.Background(t.SurfacePressed).Border(1, t.Border)
+	case btn.Hovered():
+		btn.Background(t.SurfaceHover).Border(1, t.Border)
+	default:
+		btn.Background(t.Surface.Alpha(0.6)).Border(1, t.Border.Alpha(0.7))
+	}
+	btn.Children(func() {
+		if current != boardPriorityNone {
+			col := boardPriorityColor(c, current)
+			ui.Box(c).Size(7, 7).Radius(3.5).Background(col).Shrink(0)
+			lbl := ui.Text(c, tr(boardPriorityLabel(current))).FontSize(13.5).TextColor(col).FontWeight(500).SingleLine()
+			if current == boardPriorityUrgentImportant {
+				lbl.FontWeight(600)
+			}
+		} else {
+			ui.Icon(c, iconFlag).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
+			ui.Text(c, tr("请选择")).FontSize(13.5).TextColor(t.TextMuted).SingleLine()
+		}
+		ui.Box(c).Grow(1).MinWidth(4)
+		ui.Icon(c, iconChevronDown).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
+	})
+	if btn.Clicked() {
+		*open = !*open
+	}
+	ui.PopoverBase(c, btn, open, func(panel ui.Element) {
+		panel.MinWidth(max(btn.Bounds().W, 180)).Margin(4, 0, 0, 0).Padding(4).Gap(2).
+			Radius(t.Radius+2).Background(t.Background).Border(1, t.Border).
+			Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18))
+		for _, opt := range boardPriorities {
+			p := opt
+			selected := current == p
+			col := boardPriorityColor(c, p)
+			row := ui.ButtonBase(c.Key(key+"-opt-"+string(p))).
+				Label(tr(boardPriorityLabel(p))).
+				FillWidth().Padding(6, 8).Gap(8).Radius(t.Radius).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).
+				Transition(colorMotion())
+			switch {
+			case row.Pressed():
+				row.Background(t.SurfacePressed)
+			case row.Hovered() || selected:
+				row.Background(t.SurfaceHover)
+			}
+			row.Children(func() {
+				pill := boardPriorityPill(c, key+"-opt-pill-"+string(p), p, 13)
+				if selected {
+					pill.Background(col.Alpha(0.18))
+				}
+				ui.Box(c).Grow(1)
+				if selected {
+					ui.Icon(c, iconCheck).Size(13, 13).TextColor(t.Accent).Shrink(0)
+				}
+			})
+			if row.Clicked() {
+				*open = false
+				if current != p {
+					onChange(p)
+				}
+			}
+		}
+		if current != boardPriorityNone {
+			ui.Box(c).FillWidth().Height(1).Margin(2, 0).Background(t.Border.Alpha(0.6))
+			clearBtn := ui.ButtonBase(c.Key(key+"-clear")).
+				Label(tr("清除")).
+				FillWidth().Padding(6, 8).Gap(6).Radius(t.Radius).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).
+				Transition(colorMotion())
+			if clearBtn.Hovered() {
+				clearBtn.Background(t.SurfaceHover)
+			}
+			clearBtn.Children(func() {
+				ui.Icon(c, iconClose).Size(12, 12).TextColor(t.TextMuted).Shrink(0)
+				ui.Text(c, tr("清除")).FontSize(13).TextColor(t.TextMuted).SingleLine()
+			})
+			if clearBtn.Clicked() {
+				*open = false
+				onChange(boardPriorityNone)
+			}
+		}
+	})
+}
+
+const (
+	boardCalModeDate = iota
+	boardCalModeMonth
+	boardCalModeYear
+)
+
+func boardDueDatePicker(c *ui.Context, key, current string, doneOrArchived bool, open *bool, pickerDate *time.Time, fillWidth bool, onChange func(string)) {
+	t := c.Theme()
+	now := time.Now()
+	parsed, dueState, hasDue := boardTaskDueInfo(current, doneOrArchived, now)
+	label := tr("请选择日期")
+	fg := t.TextMuted
+	iconFg := t.TextMuted
+	if hasDue {
+		label = current
+		switch dueState {
+		case boardDueOverdue:
+			fg = t.Danger
+			iconFg = t.Danger
+		case boardDueToday:
+			fg = t.Warning
+			iconFg = t.Warning
+		default:
+			fg = t.Text
+		}
+	}
+
+	wrap := ui.Row(c.Key(key+"-wrap")).AlignItems(ui.Center)
+	if fillWidth {
+		wrap.FillWidth()
+	}
+	wrap.Children(func() {
+		btn := ui.ButtonBase(c.Key(key)).
+			Label(label).
+			Height(30).Padding(0, 10).Gap(6).Radius(t.Radius).
+			AlignItems(ui.Center).Cursor(ui.CursorPointer).
+			Transition(colorMotion())
+		if fillWidth {
+			btn.FillWidth()
+		} else {
+			btn.MinWidth(180)
+		}
+		switch {
+		case *open:
+			btn.Background(t.Background).Border(1, t.Accent).Shadow(0, 0, 0, 2, t.Accent.Alpha(0.14))
+		case btn.Pressed():
+			btn.Background(t.SurfacePressed).Border(1, t.Border)
+		case btn.Hovered():
+			btn.Background(t.SurfaceHover).Border(1, t.Border)
+		case dueState == boardDueOverdue:
+			btn.Background(t.Danger.Alpha(0.06)).Border(1, t.Danger.Alpha(0.36))
+		case dueState == boardDueToday:
+			btn.Background(t.Warning.Alpha(0.07)).Border(1, t.Warning.Alpha(0.38))
+		default:
+			btn.Background(t.Surface.Alpha(0.6)).Border(1, t.Border.Alpha(0.7))
+		}
+		btn.Children(func() {
+			ui.Icon(c, iconCalendar).Size(13, 13).TextColor(iconFg).Shrink(0)
+			lbl := ui.Text(c, label).FontSize(13.5).TextColor(fg).SingleLine()
+			if hasDue {
+				lbl.FontFeatures("tnum")
+				if dueState == boardDueOverdue || dueState == boardDueToday {
+					lbl.FontWeight(600)
+				} else {
+					lbl.FontWeight(500)
+				}
+			}
+			if hasDue && dueState == boardDueToday {
+				boardDueStatusChip(c, tr("今天"), t.Warning)
+			} else if hasDue && dueState == boardDueOverdue {
+				boardDueStatusChip(c, tr("已逾期"), t.Danger)
+			}
+			ui.Box(c).Grow(1).MinWidth(4)
+			if hasDue {
+				// Reserve room for the overlaid inline clear button so text never collides.
+				ui.Box(c).Size(18, 18).Shrink(0)
+			} else {
+				ui.Icon(c, iconChevronDown).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
+			}
+		})
+		if btn.Clicked() {
+			*open = !*open
+			if *open {
+				if hasDue {
+					*pickerDate = parsed
+				} else {
+					*pickerDate = now
+				}
+			}
+		}
+		if hasDue {
+			clearBtn := ui.ButtonBase(c.Key(key+"-clear-inline")).
+				Label(tr("清除截止日期")).Tooltip(tr("清除截止日期")).
+				Absolute().Right(6).Top(5).Size(20, 20).Radius(10).Center().
+				Cursor(ui.CursorPointer).Transition(colorMotion())
+			clearFg := t.TextMuted
+			switch {
+			case clearBtn.Pressed():
+				clearBtn.Background(t.SurfacePressed)
+				clearFg = t.Text
+			case clearBtn.Hovered():
+				clearBtn.Background(t.SurfaceHover)
+				clearFg = t.Text
+			}
+			clearBtn.Children(func() {
+				ui.Icon(c, iconClose).Size(11, 11).TextColor(clearFg)
+			})
+			if clearBtn.Clicked() {
+				*open = false
+				onChange("")
+			}
+		}
+		ui.PopoverBase(c, btn, open, func(panel ui.Element) {
+			boardDueCalendarPopover(c, panel, key, current, parsed, hasDue, now, open, pickerDate, onChange)
+		})
+	})
+}
+
+func boardDueStatusChip(c *ui.Context, text string, col ui.Color) {
+	ui.Row(c).Padding(1, 5).Radius(4).Background(col.Alpha(0.14)).Shrink(0).Children(func() {
+		ui.Text(c, text).FontSize(11).FontWeight(600).TextColor(col).SingleLine()
+	})
+}
+
+func boardDueCalendarPopover(c *ui.Context, panel ui.Element, key, current string, parsed time.Time, hasDue bool, now time.Time, open *bool, pickerDate *time.Time, onChange func(string)) {
+	t := c.Theme()
+	panel.Width(276).Margin(4, 0).Padding(0).Gap(0).
+		Radius(10).Background(t.Background).Border(1, t.Border).Clip().
+		Shadow(0, 8, 24, 0, ui.RGBA(0, 0, 0, 0.20))
+
+	if pickerDate.IsZero() {
+		*pickerDate = now
+	}
+	calMode := ui.Local(panel, "cal-mode", func() int { return boardCalModeDate })
+
+	if *calMode == boardCalModeDate {
+		if panel.Shortcut(0, ui.KeyPageUp) {
+			*pickerDate = time.Date(pickerDate.Year(), pickerDate.Month()-1, 1, 0, 0, 0, 0, time.Local)
+		}
+		if panel.Shortcut(0, ui.KeyPageDown) {
+			*pickerDate = time.Date(pickerDate.Year(), pickerDate.Month()+1, 1, 0, 0, 0, 0, time.Local)
+		}
+	}
+
+	pickDate := func(target time.Time) {
+		*pickerDate = target
+		*open = false
+		next := target.Format("2006-01-02")
+		if next != current {
+			onChange(next)
+		}
+	}
+
+	// Quick preset bar
+	ui.Row(c).FillWidth().Padding(10, 12, 8, 12).Gap(6).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(t.Border.Alpha(0.55)).Children(func() {
+		quickChip := func(id, text string, target time.Time) {
+			active := hasDue && current == target.Format("2006-01-02")
+			b := ui.ButtonBase(c.Key(key+"-"+id)).
+				Label(tr(text)).Height(24).Padding(0, 9).Radius(12).Center().
+				Cursor(ui.CursorPointer).Transition(colorMotion())
+			fg := t.Text
+			switch {
+			case active:
+				b.Background(t.Accent.Alpha(0.14)).Border(1, t.Accent.Alpha(0.45))
+				fg = t.Accent
+			case b.Pressed():
+				b.Background(t.SurfacePressed).Border(1, t.Border)
+			case b.Hovered():
+				b.Background(t.SurfaceHover).Border(1, t.Border)
+			default:
+				b.Background(t.Surface.Alpha(0.8)).Border(1, t.Border.Alpha(0.55))
+			}
+			b.Children(func() {
+				lbl := ui.Text(c, tr(text)).FontSize(12).TextColor(fg).SingleLine()
+				if active {
+					lbl.FontWeight(600)
+				} else {
+					lbl.FontWeight(500)
+				}
+			})
+			if b.Clicked() {
+				pickDate(target)
+			}
+		}
+		quickChip("today", "今天", now)
+		quickChip("tomorrow", "明天", now.AddDate(0, 0, 1))
+		quickChip("nextweek", "下周", now.AddDate(0, 0, 7))
+		ui.Box(c).Grow(1)
+		if hasDue {
+			clr := ui.ButtonBase(c.Key(key+"-clear")).
+				Label(tr("清除")).Height(24).Padding(0, 7).Radius(6).Center().
+				Cursor(ui.CursorPointer).Transition(colorMotion())
+			clrFg := t.TextMuted
+			switch {
+			case clr.Pressed():
+				clr.Background(t.Danger.Alpha(0.14))
+				clrFg = t.Danger
+			case clr.Hovered():
+				clr.Background(t.Danger.Alpha(0.08))
+				clrFg = t.Danger
+			}
+			clr.Children(func() {
+				ui.Text(c, tr("清除")).FontSize(12).FontWeight(500).TextColor(clrFg).SingleLine()
+			})
+			if clr.Clicked() {
+				*open = false
+				onChange("")
+			}
+		}
+	})
+
+	locale, firstWeekday := boardCalendarLocale(c)
+	view := time.Date(pickerDate.Year(), pickerDate.Month(), 1, 0, 0, 0, 0, time.Local)
+
+	boardCalendarHeader(c, key, locale, view, calMode, pickerDate)
+
+	ui.Column(c).FillWidth().Padding(2, 12, 12, 12).Gap(2).Children(func() {
+		switch *calMode {
+		case boardCalModeMonth:
+			boardCalendarMonthGrid(c, key, locale, view, parsed, hasDue, calMode, pickerDate)
+		case boardCalModeYear:
+			boardCalendarYearGrid(c, key, view, parsed, hasDue, calMode, pickerDate)
+		default:
+			boardCalendarDayGrid(c, key, locale, firstWeekday, view, parsed, hasDue, now, pickDate)
+		}
+	})
+}
+
+func boardCalendarLocale(c *ui.Context) (locale string, firstWeekday time.Weekday) {
+	lang := c.Locale()
+	if lang == "" {
+		if englishUI.Load() {
+			lang = "en"
+		} else {
+			lang = "zh-Hans"
+		}
+	}
+	region := c.Region()
+	if region.HourCycle != 12 && region.HourCycle != 24 {
+		region = i18n.RegionFor(lang)
+	}
+	return region.FormatLocale(lang), region.FirstWeekday
+}
+
+func boardCalendarNavButton(c *ui.Context, key, label string, icon *ui.SVG, onClick func()) {
+	t := c.Theme()
+	b := ui.ButtonBase(c.Key(key)).Label(label).Tooltip(label).
+		Size(26, 26).Radius(13).Center().Shrink(0).
+		Cursor(ui.CursorPointer).Transition(colorMotion())
+	fg := t.TextMuted
+	switch {
+	case b.Pressed():
+		b.Background(t.SurfacePressed)
+		fg = t.Text
+	case b.Hovered():
+		b.Background(t.SurfaceHover)
+		fg = t.Text
+	}
+	b.Children(func() {
+		ui.Icon(c, icon).Size(14, 14).TextColor(fg)
+	})
+	if b.Clicked() {
+		onClick()
+	}
+}
+
+func boardCalendarTitleButton(c *ui.Context, key, text, tip string, onClick func()) {
+	t := c.Theme()
+	b := ui.ButtonBase(c.Key(key)).Label(text).Tooltip(tip).
+		Padding(3, 6).Radius(6).Center().
+		Cursor(ui.CursorPointer).Transition(colorMotion())
+	fg := t.Text
+	switch {
+	case b.Pressed():
+		b.Background(t.SurfacePressed)
+		fg = t.Accent
+	case b.Hovered():
+		b.Background(t.SurfaceHover)
+		fg = t.Accent
+	}
+	b.Children(func() {
+		ui.Text(c, text).FontSize(13.5).FontWeight(600).FontFeatures("tnum").TextColor(fg).SingleLine()
+	})
+	if b.Clicked() {
+		onClick()
+	}
+}
+
+func boardCalendarHeader(c *ui.Context, key, locale string, view time.Time, calMode *int, pickerDate *time.Time) {
+	t := c.Theme()
+	prevTip, nextTip := tr("上个月"), tr("下个月")
+	step := func(delta int) {
+		switch *calMode {
+		case boardCalModeMonth:
+			*pickerDate = view.AddDate(delta, 0, 0)
+		case boardCalModeYear:
+			*pickerDate = view.AddDate(delta*10, 0, 0)
+		default:
+			*pickerDate = view.AddDate(0, delta, 0)
+		}
+	}
+	switch *calMode {
+	case boardCalModeMonth:
+		prevTip, nextTip = tr("上一年"), tr("下一年")
+	case boardCalModeYear:
+		prevTip, nextTip = tr("上一年代"), tr("下一年代")
+	}
+
+	ui.Row(c).FillWidth().Padding(10, 12, 4, 12).Gap(4).AlignItems(ui.Center).Children(func() {
+		boardCalendarNavButton(c, key+"-prev", prevTip, iconChevronLeft, func() { step(-1) })
+
+		ui.Row(c).Grow(1).MinWidth(0).Gap(2).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+			yearLabel := strconv.Itoa(view.Year())
+			if !englishUI.Load() {
+				yearLabel = fmt.Sprintf("%d年", view.Year())
+			}
+			monthWidth := i18n.Abbreviated
+			if englishUI.Load() {
+				monthWidth = i18n.Wide
+			}
+			monthNames := i18n.Months(locale, monthWidth, true)
+			monthLabel := monthNames[view.Month()-1]
+
+			switch *calMode {
+			case boardCalModeDate:
+				if englishUI.Load() {
+					boardCalendarTitleButton(c, key+"-mode-month", monthLabel, tr("选择月份"), func() { *calMode = boardCalModeMonth })
+					boardCalendarTitleButton(c, key+"-mode-year", yearLabel, tr("选择年份"), func() { *calMode = boardCalModeYear })
+				} else {
+					boardCalendarTitleButton(c, key+"-mode-year", yearLabel, tr("选择年份"), func() { *calMode = boardCalModeYear })
+					boardCalendarTitleButton(c, key+"-mode-month", monthLabel, tr("选择月份"), func() { *calMode = boardCalModeMonth })
+				}
+			case boardCalModeMonth:
+				boardCalendarTitleButton(c, key+"-mode-year", yearLabel, tr("选择年份"), func() { *calMode = boardCalModeYear })
+			case boardCalModeYear:
+				decadeStart := (view.Year() / 10) * 10
+				ui.Text(c, fmt.Sprintf("%d - %d", decadeStart, decadeStart+9)).
+					FontSize(13.5).FontWeight(600).FontFeatures("tnum").TextColor(t.Text).Padding(3, 6).SingleLine()
+			}
+		})
+
+		boardCalendarNavButton(c, key+"-next", nextTip, iconChevronRight, func() { step(1) })
+	})
+}
+
+func boardCalendarDayGrid(c *ui.Context, key, locale string, firstWeekday time.Weekday, view, parsed time.Time, hasDue bool, now time.Time, pickDate func(time.Time)) {
+	t := c.Theme()
+	weekdays := i18n.Weekdays(locale, i18n.Short, true)
+	ui.Row(c).FillWidth().Children(func() {
+		for i := range 7 {
+			name := weekdays[(int(firstWeekday)+i)%7]
+			ui.Text(c, name).Width(36).Height(24).TextAlign(ui.Center).
+				FontSize(11.5).FontWeight(500).TextColor(t.TextMuted.Alpha(0.78)).
+				LineHeight(24.0 / 11.5).SingleLine()
+		}
+	})
+
+	startOffset := (int(view.Weekday()) - int(firstWeekday) + 7) % 7
+	gridStart := view.AddDate(0, 0, -startOffset)
+	for w := range 6 {
+		ui.Row(c.Key(fmt.Sprintf("%s-w-%d", key, w))).FillWidth().Children(func() {
+			for d := range 7 {
+				day := gridStart.AddDate(0, 0, w*7+d)
+				inMonth := day.Month() == view.Month() && day.Year() == view.Year()
+				isToday := sameBoardDay(day, now)
+				isSelected := hasDue && sameBoardDay(day, parsed)
+
+				dayLabel := i18n.FormatDate(locale, day, i18n.DateOptions{Skeleton: "yMMMMd"})
+				ui.Box(c).Size(36, 32).Center().Children(func() {
+					cell := ui.ButtonBase(c.Key(fmt.Sprintf("%s-d-%d-%d", key, w, d))).
+						Label(dayLabel).
+						Size(30, 30).Radius(15).Center().
+						Cursor(ui.CursorPointer).Transition(colorMotion())
+
+					fg := t.Text
+					weight := 400
+					switch {
+					case isSelected:
+						fg = t.AccentText
+						weight = 600
+						if cell.Pressed() && t.AccentPressed != ui.Transparent {
+							cell.Background(t.AccentPressed)
+						} else if cell.Hovered() && t.AccentHover != ui.Transparent {
+							cell.Background(t.AccentHover)
+						} else {
+							cell.Background(t.Accent)
+						}
+					case isToday:
+						fg = t.Accent
+						weight = 600
+						switch {
+						case cell.Pressed():
+							cell.Background(t.Accent.Alpha(0.22))
+						case cell.Hovered():
+							cell.Background(t.Accent.Alpha(0.16))
+						default:
+							cell.Background(t.Accent.Alpha(0.10))
+						}
+					case inMonth:
+						switch {
+						case cell.Pressed():
+							cell.Background(t.SurfacePressed)
+						case cell.Hovered():
+							cell.Background(t.SurfaceHover)
+						}
+					default:
+						fg = t.TextMuted.Alpha(0.38)
+						switch {
+						case cell.Pressed():
+							cell.Background(t.SurfacePressed.Alpha(0.6))
+							fg = t.TextMuted
+						case cell.Hovered():
+							cell.Background(t.SurfaceHover.Alpha(0.6))
+							fg = t.TextMuted
+						}
+					}
+
+					cell.Children(func() {
+						ui.Text(c, strconv.Itoa(day.Day())).
+							FontSize(12.5).FontWeight(weight).FontFeatures("tnum").
+							TextColor(fg).SingleLine()
+						if isToday && !isSelected {
+							ui.Box(c).Absolute().Bottom(3).Size(3, 3).Radius(1.5).Background(t.Accent)
+						}
+					})
+					if cell.Clicked() {
+						pickDate(day)
+					}
+				})
+			}
+		})
+	}
+}
+
+func boardCalendarSubGrid(c *ui.Context, key string, count int, cellAt func(i int) (label string, inScope, selected bool, onPick func())) {
+	t := c.Theme()
+	for r := range (count + 2) / 3 {
+		ui.Row(c.Key(fmt.Sprintf("%s-r-%d", key, r))).FillWidth().Children(func() {
+			for col := range 3 {
+				i := r*3 + col
+				if i >= count {
+					break
+				}
+				label, inScope, selected, onPick := cellAt(i)
+				ui.Box(c).Size(84, 42).Center().Children(func() {
+					b := ui.ButtonBase(c.Key(fmt.Sprintf("%s-c-%d", key, i))).
+						Label(label).Size(76, 32).Radius(16).Center().
+						Cursor(ui.CursorPointer).Transition(colorMotion())
+					fg := t.Text
+					weight := 400
+					if !inScope {
+						fg = t.TextMuted.Alpha(0.45)
+					}
+					switch {
+					case selected:
+						fg = t.AccentText
+						weight = 600
+						if b.Hovered() && t.AccentHover != ui.Transparent {
+							b.Background(t.AccentHover)
+						} else {
+							b.Background(t.Accent)
+						}
+					case b.Pressed():
+						b.Background(t.SurfacePressed)
+					case b.Hovered():
+						b.Background(t.SurfaceHover)
+						if !inScope {
+							fg = t.TextMuted
+						}
+					}
+					b.Children(func() {
+						ui.Text(c, label).FontSize(13).FontWeight(weight).FontFeatures("tnum").TextColor(fg).SingleLine()
+					})
+					if b.Clicked() {
+						onPick()
+					}
+				})
+			}
+		})
+	}
+}
+
+func boardCalendarMonthGrid(c *ui.Context, key, locale string, view, parsed time.Time, hasDue bool, calMode *int, pickerDate *time.Time) {
+	months := i18n.Months(locale, i18n.Abbreviated, true)
+	boardCalendarSubGrid(c, key+"-months", 12, func(i int) (string, bool, bool, func()) {
+		m := time.Month(i + 1)
+		selected := (hasDue && parsed.Year() == view.Year() && parsed.Month() == m) ||
+			(!hasDue && view.Month() == m)
+		return months[i], true, selected, func() {
+			*pickerDate = time.Date(view.Year(), m, 1, 0, 0, 0, 0, time.Local)
+			*calMode = boardCalModeDate
+		}
+	})
+}
+
+func boardCalendarYearGrid(c *ui.Context, key string, view, parsed time.Time, hasDue bool, calMode *int, pickerDate *time.Time) {
+	start := (view.Year()/10)*10 - 1
+	boardCalendarSubGrid(c, key+"-years", 12, func(i int) (string, bool, bool, func()) {
+		y := start + i
+		inDecade := i > 0 && i < 11
+		selected := (hasDue && parsed.Year() == y) || (!hasDue && view.Year() == y)
+		return strconv.Itoa(y), inDecade, selected, func() {
+			*pickerDate = time.Date(y, view.Month(), 1, 0, 0, 0, 0, time.Local)
+			*calMode = boardCalModeDate
+		}
+	})
+}
+
 func boardRepoColor(c *ui.Context, repo string) ui.Color {
 	t := c.Theme()
 	palette := []ui.Color{
@@ -472,12 +1226,12 @@ func (a *app) openNewBoardTaskModal(status boardStatus) {
 	a.board.newDesc = ""
 	a.board.newStatus = status
 	a.board.newStatusIdx = boardStatusIndex(status)
+	a.board.newPriority = boardPriorityNone
+	a.board.newPriorityOpen = false
+	a.board.newDueDate = ""
+	a.board.newDueOpen = false
+	a.board.newDuePicker = time.Now()
 	a.board.newRepos = nil
-	if a.board.repoFilter != "" {
-		a.board.newRepos = []string{a.board.repoFilter}
-	} else if tab := a.activeTab(); tab != nil {
-		a.board.newRepos = []string{tab.path}
-	}
 	a.board.newErr = ""
 	a.board.showNewModal = true
 }
@@ -560,6 +1314,25 @@ func (a *app) sidebarBoardRow(c *ui.Context) {
 type boardCardDrag struct {
 	taskID string
 	status boardStatus
+	index  int
+}
+
+type boardNoteDrag struct {
+	taskID string
+	noteID string
+	index  int
+}
+
+type boardNoteMatch struct{ id string }
+
+func boardNoteMotion(id string) ui.ElementTransition {
+	return ui.ElementTransition{
+		Duration: motionColor,
+		Ease:     ui.EaseOut,
+		Position: true,
+		Colors:   true,
+		Match:    boardNoteMatch{id: id},
+	}
 }
 
 type boardCardMatch struct{ id string }
@@ -616,7 +1389,7 @@ func boardAgentTag(c *ui.Context, key, agent string) ui.Element {
 	return tag
 }
 
-func boardStatusSegmented(c *ui.Context, key string, selected *int) ui.SegmentedParts {
+func boardStatusSegmented(c *ui.Context, key string, selected *int, fontSize float32) ui.SegmentedParts {
 	t := c.Theme()
 	seg := ui.SegmentedBase(c.Key(key), selected, len(boardStatuses))
 	seg.Track.FillWidth().AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(t.Radius).
@@ -656,7 +1429,7 @@ func boardStatusSegmented(c *ui.Context, key string, selected *int) ui.Segmented
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(5).ZIndex(1).Children(func() {
 					boardStatusDot(c, st, 7)
-					lbl := ui.Text(c, tr(boardStatusLabel(st))).FontSize(12.5).SingleLine()
+					lbl := ui.Text(c, tr(boardStatusLabel(st))).FontSize(fontSize).SingleLine()
 					if active {
 						lbl.FontWeight(600)
 						if st == boardTodo {
@@ -702,8 +1475,15 @@ func (a *app) boardScreen(c *ui.Context) {
 			BorderWidth(1, 0, 0, 0).BorderColor(t.Border.Alpha(0.65)).
 			Transition(workspaceMainMotion()).Children(func() {
 			if a.board.loadErr != "" {
-				ui.Row(c.Key("board-error-banner")).FillWidth().Padding(6, 16).Background(t.Danger.Alpha(0.12)).Children(func() {
-					ui.Text(c, trMessage(a.board.loadErr)).FontSize(12.5).TextColor(t.Danger)
+				ui.Row(c.Key("board-error-banner")).FillWidth().Padding(6, 16).Gap(8).AlignItems(ui.Center).
+					Background(t.Danger.Alpha(0.12)).Children(func() {
+					ui.Text(c, trMessage(a.board.loadErr)).FontSize(12.5).TextColor(t.Danger).Grow(1).MinWidth(0)
+					if ui.Button(c.Key("board-err-restore"), tr("恢复备份…")).Padding(2, 8).FontSize(12).Clicked() {
+						a.openBoardBackupsModal()
+					}
+					if ui.Button(c.Key("board-err-dir"), tr("数据目录…")).Padding(2, 8).FontSize(12).Clicked() {
+						a.openBoardStorageModal()
+					}
 				})
 			}
 			if hasFilter && total == 0 {
@@ -719,9 +1499,6 @@ func (a *app) boardScreen(c *ui.Context) {
 			}
 			ui.Box(c.Key("board-body")).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 				a.boardColumns(c, cols)
-				if a.board.selectedID != "" {
-					a.boardDetailDrawer(c)
-				}
 			})
 		})
 	}
@@ -861,6 +1638,27 @@ func (a *app) boardChromeToolbar(c *ui.Context, padR, rightPadL, rightW float32)
 			a.board.showSnippet = true
 		}
 
+		moreBtn := ui.ButtonBase(c.Key("board-more-menu")).Label(tr("更多操作")).Tooltip(tr("更多操作"))
+		styleActionIcon(c, moreBtn, iconMore, 30, 15, t.TextMuted, false)
+		moreBtn.Menu(func(m *ui.Menu) {
+			if m.Item(tr("导出备份…")).Disabled(a.picking).Chosen() {
+				a.startBoardExport()
+			}
+			if m.Item(tr("导入备份…")).Disabled(a.picking).Chosen() {
+				a.startBoardImport()
+			}
+			if m.Item(tr("从自动备份恢复…")).Chosen() {
+				a.openBoardBackupsModal()
+			}
+			m.Separator()
+			if m.Item(tr("数据目录…")).Chosen() {
+				a.openBoardStorageModal()
+			}
+			if m.Item(tr("打开数据目录")).Chosen() {
+				a.openBoardFolder()
+			}
+		})
+
 		newBtn := ui.PrimaryButton(c.Key("board-new-task"), "").Label(tr("新建任务")).
 			Height(30).Padding(0, 12).Radius(t.Radius).Shrink(0)
 		newBtn.Children(func() {
@@ -901,10 +1699,7 @@ func (a *app) boardColumns(c *ui.Context, cols [][]boardTask) {
 					Ease:     ui.EaseOut,
 					Colors:   true,
 				})
-			if dragged, over := ui.DragOver[boardCardDrag](col); over && dragged.status != st {
-				col.Background(boardStatusColor(c, st).Alpha(0.10)).
-					Border(1, boardStatusColor(c, st).Alpha(0.55))
-			}
+			colCrossHover := false
 			col.Children(func() {
 				ui.Row(c.Key("board-col-head-"+string(st))).FillWidth().Padding(2, 4).Gap(7).AlignItems(ui.Center).Shrink(0).Children(func() {
 					boardStatusDot(c, st, 9)
@@ -931,25 +1726,118 @@ func (a *app) boardColumns(c *ui.Context, cols [][]boardTask) {
 						})
 					}
 				})
-				ui.Scroll(c.Key("board-col-scroll-" + string(st))).Grow(1).MinHeight(0).FillWidth().Children(func() {
+				scroll := ui.Scroll(c.Key("board-col-scroll-" + string(st))).Grow(1).MinHeight(0).FillWidth()
+				scrollDrag, scrollOver := ui.DragOver[boardCardDrag](scroll)
+				showEndLine := scrollOver && len(tasks) > 0 && (scrollDrag.status != st || scrollDrag.index < len(tasks)-1)
+				if scrollOver && scrollDrag.status != st {
+					colCrossHover = true
+				}
+				scroll.Children(func() {
 					if len(tasks) == 0 {
 						return
 					}
-					ui.Column(c).FillWidth().Gap(9).Padding(2, 1, 4, 1).Children(func() {
-						for _, task := range tasks {
-							a.boardCard(c, task)
+					listCol := ui.Column(c).FillWidth().Gap(0).Padding(2, 0, 4, 0)
+					listCol.Children(func() {
+						for taskIdx, task := range tasks {
+							a.boardCardSlot(c, st, taskIdx, task, &colCrossHover)
 						}
 					})
+					if showEndLine {
+						listCol.DrawOver(func(p *ui.Painter, r ui.Rect) {
+							drawBoardDropLine(p, r, true, t.Accent)
+						})
+					}
 				})
+				if dropped, ok := ui.Drop[boardCardDrag](scroll); ok {
+					if len(tasks) > 0 {
+						if dropped.status != st || dropped.index < len(tasks)-1 {
+							a.applyBoardTaskMove(dropped.taskID, c, st, tasks[len(tasks)-1].ID, true)
+						}
+					} else if dropped.status != st {
+						a.applyBoardTaskMove(dropped.taskID, c, st, "", false)
+					}
+				}
 			})
+			if dragged, over := ui.DragOver[boardCardDrag](col); over && dragged.status != st {
+				colCrossHover = true
+			}
+			if colCrossHover {
+				col.Background(boardStatusColor(c, st).Alpha(0.10)).
+					Border(1, boardStatusColor(c, st).Alpha(0.55))
+			}
 			if dropped, ok := ui.Drop[boardCardDrag](col); ok && dropped.status != st {
-				a.applyBoardTaskPatch(dropped.taskID, c, boardTaskPatch{Status: &st})
+				anchorID := ""
+				if len(tasks) > 0 {
+					anchorID = tasks[0].ID
+				}
+				a.applyBoardTaskMove(dropped.taskID, c, st, anchorID, false)
 			}
 		}
 	})
 }
 
-func (a *app) boardCard(c *ui.Context, task boardTask) {
+func drawBoardDropLine(p *ui.Painter, r ui.Rect, after bool, accent ui.Color) {
+	y := r.Y + 2
+	if after {
+		y = r.Y + r.H - 2
+	}
+	p.Fill(ui.Rect{X: r.X, Y: y - 4, W: 8, H: 8}, accent, 4)
+	p.Fill(ui.Rect{X: r.X + 4, Y: y - 1, W: r.W - 4, H: 2}, accent, 1)
+}
+
+func (a *app) boardCardSlot(c *ui.Context, st boardStatus, idx int, task boardTask, colCrossHover *bool) {
+	t := c.Theme()
+	slot := ui.Column(c.Key("board-card-slot-"+task.ID)).FillWidth().Padding(4, 1, 5, 1)
+
+	computeInsert := func(dragged boardCardDrag) (insertAfter bool, valid bool) {
+		if dragged.taskID == task.ID {
+			return false, false
+		}
+		if dragged.status == st {
+			if idx == dragged.index+1 {
+				return true, true
+			}
+			if idx == dragged.index-1 {
+				return false, true
+			}
+		}
+		if b := slot.Bounds(); b.H > 0 {
+			_, py, _ := slot.PointerPosition()
+			return py > b.H/2, true
+		}
+		return dragged.status == st && dragged.index < idx, true
+	}
+
+	var dropOver *boardCardDrag
+	var dropInsertAfter bool
+	if dragged, over := ui.DragOver[boardCardDrag](slot); over {
+		if after, ok := computeInsert(dragged); ok {
+			dropOver = &dragged
+			dropInsertAfter = after
+			if dragged.status != st && colCrossHover != nil {
+				*colCrossHover = true
+			}
+		}
+	}
+
+	slot.Children(func() {
+		a.boardCard(c, idx, task, dropOver != nil)
+	})
+
+	if dropOver != nil {
+		slot.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			drawBoardDropLine(p, r, dropInsertAfter, t.Accent)
+		})
+	}
+
+	if dropped, ok := ui.Drop[boardCardDrag](slot); ok {
+		if after, valid := computeInsert(dropped); valid {
+			a.applyBoardTaskMove(dropped.taskID, c, st, task.ID, after)
+		}
+	}
+}
+
+func (a *app) boardCard(c *ui.Context, idx int, task boardTask, suppressHover bool) {
 	t := c.Theme()
 	selected := a.board.selectedID == task.ID
 	cardBg := t.Background
@@ -965,13 +1853,13 @@ func (a *app) boardCard(c *ui.Context, task boardTask) {
 		Radius(8).
 		Background(cardBg).
 		Cursor(ui.CursorPointer).
-		Drag(boardCardDrag{taskID: task.ID, status: task.Status}).
+		Drag(boardCardDrag{taskID: task.ID, status: task.Status, index: idx}).
 		Transition(boardCardMotion(task.ID))
 
 	if card.Dragging() {
-		card.Opacity(0.4)
+		card.Opacity(0.4).Cursor(ui.CursorGrabbing)
 	}
-	hovered := card.Hovered()
+	hovered := card.Hovered() && !suppressHover
 	switch {
 	case selected:
 		selBg := t.Accent.Alpha(0.06)
@@ -1073,6 +1961,29 @@ func (a *app) boardCard(c *ui.Context, task boardTask) {
 				titleEl.TextColor(t.Text)
 			}
 
+			dueParsed, dueState, hasDue := boardTaskDueInfo(task.DueDate, task.Status == boardDone || task.Archived, time.Now())
+			if task.Priority != boardPriorityNone || hasDue {
+				ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+					if task.Priority != boardPriorityNone {
+						boardPriorityPill(c, "board-card-prio-"+task.ID, task.Priority, 11.5)
+					}
+					if hasDue {
+						dueText, dueTip, dueFg, dueBg := boardCardDueAppearance(c, task.DueDate, dueParsed, dueState)
+						dueChip := ui.Row(c.Key("board-card-due-"+task.ID)).Padding(2, 7).Gap(4).Radius(4).
+							Background(dueBg).AlignItems(ui.Center).Shrink(0).Tooltip(dueTip)
+						dueChip.Children(func() {
+							ui.Icon(c, iconCalendar).Size(11, 11).TextColor(dueFg).Shrink(0)
+							lbl := ui.Text(c, dueText).FontSize(11.5).TextColor(dueFg).FontFeatures("tnum").SingleLine()
+							if dueState == boardDueOverdue || dueState == boardDueToday {
+								lbl.FontWeight(600)
+							} else {
+								lbl.FontWeight(500)
+							}
+						})
+					}
+				})
+			}
+
 			if len(task.Commits) > 0 || len(task.Notes) > 0 || prov != "" || task.Archived {
 				ui.Row(c).FillWidth().Gap(9).AlignItems(ui.Center).Children(func() {
 					if len(task.Commits) > 0 {
@@ -1127,14 +2038,26 @@ func (a *app) boardCard(c *ui.Context, task boardTask) {
 
 // applyBoardTaskPatch flushes the open drawer first: its typed title or
 // description must not be replaced by the snapshot this change returns.
-func (a *app) applyBoardTaskPatch(id string, c *ui.Context, patch boardTaskPatch) {
+func (a *app) applyBoardTaskPatch(id string, c *ui.Context, patch boardTaskPatch) bool {
 	a.commitBoardDrafts()
 	bf, _, err := boardUpdateTask(id, patch)
 	if err != nil {
 		a.setBanner(err.Error(), "")
-		return
+		return false
 	}
 	a.applyBoardFile(bf, c)
+	return true
+}
+
+func (a *app) applyBoardTaskMove(id string, c *ui.Context, status boardStatus, anchorID string, insertAfter bool) bool {
+	a.commitBoardDrafts()
+	bf, _, err := boardMoveTask(id, status, anchorID, insertAfter)
+	if err != nil {
+		a.setBanner(err.Error(), "")
+		return false
+	}
+	a.applyBoardFile(bf, c)
+	return true
 }
 
 func (a *app) boardDetailDrawer(c *ui.Context) {
@@ -1155,7 +2078,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 		drawerShadow = ui.RGBA(0, 0, 0, 0.45)
 	}
 	ui.Column(c.Key("board-detail-drawer")).
-		Absolute().Top(12).Bottom(12).Right(12).Width(450).ZIndex(20).
+		Absolute().Top(12).Bottom(12).Right(12).WidthPercent(50).ZIndex(20).
 		Radius(12).Background(t.Background).Border(1, t.Border).
 		Shadow(0, 12, 32, 0, drawerShadow).
 		Transition(boardDrawerMotion()).Children(func() {
@@ -1163,21 +2086,37 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 		ui.Row(c.Key("board-drawer-header")).FillWidth().Padding(10, 16).Gap(6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(t.Border.Alpha(0.65)).Shrink(0).Children(func() {
 			ui.Row(c.Key("board-drawer-id")).Padding(3, 8).Radius(5).Background(t.Surface).AlignItems(ui.Center).Shrink(0).Children(func() {
-				ui.Text(c, task.ID).Font("monospace").FontSize(12.5).FontWeight(600).TextColor(t.TextMuted).SingleLine()
+				ui.Text(c, task.ID).Font("monospace").FontSize(14).FontWeight(600).TextColor(t.TextMuted).SingleLine()
 			})
 			copyIconButton(c, "board-drawer-copy-id", tr("复制任务编号"), task.ID)
-			ui.Box(c).Grow(1)
-			archTip := tr("归档任务")
 			if task.Archived {
-				archTip = tr("取消归档")
+				ui.Row(c.Key("board-drawer-archived-badge")).Padding(3, 8).Radius(5).Background(t.Surface).AlignItems(ui.Center).Shrink(0).Children(func() {
+					ui.Text(c, tr("已归档")).FontSize(12).TextColor(t.TextMuted).SingleLine()
+				})
 			}
-			if paneToggleIconButton(c, "board-drawer-archive", archTip, archTip, iconArchive, task.Archived).Clicked() {
-				next := !task.Archived
-				a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &next})
-			}
-			if paneIconButton(c, "board-drawer-delete", tr("删除任务"), iconTrash2).Clicked() {
-				a.board.deleteTaskID = task.ID
-			}
+			ui.Box(c).Grow(1)
+			moreBtn := paneIconButton(c, "board-drawer-more", tr("任务操作"), iconMore)
+			moreBtn.Menu(func(m *ui.Menu) {
+				if task.Archived {
+					if m.Item(tr("取消归档")).Chosen() {
+						next := false
+						if a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &next}) {
+							c.Toast(tr("已取消归档"))
+						}
+					}
+				} else {
+					if m.Item(tr("归档任务")).Chosen() {
+						next := true
+						if a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &next}) {
+							c.Toast(tr("已归档"))
+						}
+					}
+				}
+				m.Separator()
+				if m.Item(tr("删除任务")).Chosen() {
+					a.board.deleteTaskID = task.ID
+				}
+			})
 			if closeIconButton(c, "board-drawer-close", tr("关闭详情")).Clicked() {
 				a.closeBoardDrawer()
 				return
@@ -1192,7 +2131,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 					Label(tr("标题")).
 					Placeholder(tr("输入任务标题")).
 					Bind(&a.board.titleInput).
-					FontSize(18).FontWeight(600).
+					FontSize(19.5).FontWeight(600).
 					Padding(5, 7).Radius(6).FillWidth().FocusRing(false).
 					Transition(colorMotion())
 				switch {
@@ -1209,9 +2148,9 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 				ui.Column(c.Key("board-drawer-meta")).FillWidth().Gap(10).Children(func() {
 					// Status segmented control
 					ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, tr("状态")).Width(72).FontSize(13).TextColor(t.TextMuted).Shrink(0)
+						ui.Text(c, tr("状态")).Width(72).FontSize(14.5).TextColor(t.TextMuted).Shrink(0)
 						ui.Box(c).Grow(1).MinWidth(0).Children(func() {
-							seg := boardStatusSegmented(c, "board-drawer-status-seg", &a.board.drawerStatusIdx)
+							seg := boardStatusSegmented(c, "board-drawer-status-seg", &a.board.drawerStatusIdx, 14)
 							if seg.Track.Changed() {
 								target := boardStatuses[a.board.drawerStatusIdx]
 								if target != task.Status {
@@ -1221,9 +2160,25 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 						})
 					})
 
+					// Priority row
+					ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, tr("重要紧急")).Width(72).FontSize(14.5).TextColor(t.TextMuted).Shrink(0)
+						boardPriorityPicker(c, "board-drawer-priority", task.Priority, &a.board.drawerPriorityOpen, false, func(next boardPriority) {
+							a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Priority: &next})
+						})
+					})
+
+					// Due date row
+					ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, tr("截止日期")).Width(72).FontSize(14.5).TextColor(t.TextMuted).Shrink(0)
+						boardDueDatePicker(c, "board-drawer-due", task.DueDate, task.Status == boardDone || task.Archived, &a.board.drawerDueOpen, &a.board.drawerDuePicker, false, func(next string) {
+							a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{DueDate: &next})
+						})
+					})
+
 					// Repos row
 					ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
-						ui.Text(c, tr("关联项目")).Width(72).FontSize(13).TextColor(t.TextMuted).Shrink(0).Padding(4, 0, 0, 0)
+						ui.Text(c, tr("关联项目")).Width(72).FontSize(14.5).TextColor(t.TextMuted).Shrink(0).Padding(4, 0, 0, 0)
 						ui.Row(c).Grow(1).MinWidth(0).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 							repos := boardTaskAllRepos(task)
 							removeRepo := ""
@@ -1248,7 +2203,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 									filterBtn.Children(func() {
 										ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 											boardRepoDot(c, repoPath, 7)
-											lbl := ui.Text(c, repoTitle(repoPath)).FontSize(12.5).SingleLine()
+											lbl := ui.Text(c, repoTitle(repoPath)).FontSize(14).SingleLine()
 											if filtered {
 												lbl.TextColor(t.Accent).FontWeight(500)
 											} else {
@@ -1289,7 +2244,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 								a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Repos: &next})
 							}
 
-							addRepoBtn := ui.Button(c.Key("board-drawer-add-repo"), tr("+ 项目")).Padding(3, 9).FontSize(12.5)
+							addRepoBtn := ui.Button(c.Key("board-drawer-add-repo"), tr("+ 项目")).Padding(3, 9).FontSize(14)
 							addRepoBtn.Menu(func(m *ui.Menu) {
 								known := a.boardKnownRepos()
 								if len(known) == 0 {
@@ -1312,13 +2267,13 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 
 				// Description
 				ui.Column(c.Key("board-drawer-desc-sec")).FillWidth().Gap(6).Children(func() {
-					ui.Text(c, tr("任务描述")).FontSize(13).FontWeight(600).TextColor(t.TextMuted)
+					ui.Text(c, tr("任务描述")).FontSize(14.5).FontWeight(600).TextColor(t.TextMuted)
 					descEl := ui.TextAreaBase(c.Key("board-drawer-desc"), &a.board.descDraft).
 						Label(tr("任务描述")).
 						Placeholder(tr("补充任务背景、目标或验收标准…")).
 						Bind(&a.board.descInput).
 						Height(96).FillWidth().Padding(9, 11).Radius(8).
-						FontSize(13.5).LineHeight(1.4).FocusRing(false).Transition(colorMotion())
+						FontSize(15).LineHeight(1.4).FocusRing(false).Transition(colorMotion())
 					switch {
 					case a.board.descInput.Focused(c):
 						descEl.Background(t.Background).Border(1, t.Accent).Shadow(0, 0, 0, 2, t.Accent.Alpha(0.14))
@@ -1338,9 +2293,9 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 				ui.Column(c.Key("board-drawer-commits-sec")).FillWidth().Gap(8).Children(func() {
 					ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 						ui.Icon(c, iconGitCommit).Size(15, 15).TextColor(t.TextMuted).Shrink(0)
-						ui.Text(c, tr("关联提交")).FontSize(13).FontWeight(600).TextColor(t.TextMuted)
+						ui.Text(c, tr("关联提交")).FontSize(14.5).FontWeight(600).TextColor(t.TextMuted)
 						if len(task.Commits) > 0 {
-							ui.Text(c, fmt.Sprintf("%d", len(task.Commits))).FontSize(12.5).TextColor(t.TextMuted)
+							ui.Text(c, fmt.Sprintf("%d", len(task.Commits))).FontSize(14).TextColor(t.TextMuted)
 						}
 						ui.Box(c).Grow(1)
 						if paneIconButton(c, "board-drawer-link-commit", tr("关联提交到任务"), iconPlus).Clicked() {
@@ -1358,33 +2313,16 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 				ui.Column(c.Key("board-drawer-notes-sec")).FillWidth().Gap(8).Children(func() {
 					ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 						ui.Icon(c, iconMessage).Size(15, 15).TextColor(t.TextMuted).Shrink(0)
-						ui.Text(c, tr("备注")).FontSize(13).FontWeight(600).TextColor(t.TextMuted)
+						ui.Text(c, tr("备注")).FontSize(14.5).FontWeight(600).TextColor(t.TextMuted)
 						if len(task.Notes) > 0 {
-							ui.Text(c, fmt.Sprintf("%d", len(task.Notes))).FontSize(12.5).TextColor(t.TextMuted)
+							ui.Text(c, fmt.Sprintf("%d", len(task.Notes))).FontSize(14).TextColor(t.TextMuted)
 						}
 					})
-					for _, n := range task.Notes {
-						isHuman := strings.EqualFold(n.Author, "human") || n.Author == ""
-						who := n.Author
-						if isHuman {
-							who = tr("人工")
-						}
-						ui.Column(c.Key("board-note-"+n.ID)).FillWidth().Padding(9, 11).Gap(4).
-							Radius(8).Background(t.Surface.Alpha(0.6)).Children(func() {
-							ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-								if !isHuman {
-									ui.Icon(c, iconBot).Size(13, 13).TextColor(t.Accent).Shrink(0)
-									ui.Text(c, who).FontSize(12.5).FontWeight(600).TextColor(t.Accent).SingleLine()
-								} else {
-									ui.Text(c, who).FontSize(12.5).FontWeight(600).TextColor(t.Text).SingleLine()
-								}
-								if n.Model != "" {
-									ui.Text(c, n.Model).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
-								}
-								ui.Box(c).Grow(1)
-								ui.Text(c, n.CreatedAt.Local().Format("01-02 15:04")).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
-							})
-							ui.Text(c, n.Text).FontSize(13.5).LineHeight(1.4).TextColor(t.Text)
+					if len(task.Notes) > 0 {
+						ui.Column(c.Key("board-drawer-notes-list")).FillWidth().Gap(0).Children(func() {
+							for idx, n := range task.Notes {
+								a.boardNoteCard(c, task, idx, n)
+							}
 						})
 					}
 
@@ -1417,7 +2355,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 							Label(tr("备注")).
 							Placeholder(tr("记录进展或给 Agent 留备注…")).
 							Bind(&a.board.noteInput).
-							Height(60).FillWidth().FontSize(13.5).LineHeight(1.4).FocusRing(false)
+							Height(60).FillWidth().FontSize(15).LineHeight(1.4).FocusRing(false)
 						ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Justify(ui.End).Children(func() {
 							shortcut := "Ctrl+↩"
 							if runtime.GOOS == "darwin" {
@@ -1426,7 +2364,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 							kbdHint(c, "board-drawer-note-key", shortcut)
 							canSend := strings.TrimSpace(a.board.noteDraft) != ""
 							if ui.PrimaryButton(c.Key("board-drawer-note-add"), tr("添加备注")).
-								Padding(4, 12).FontSize(13).Disabled(!canSend).Clicked() {
+								Padding(4, 12).FontSize(14.5).Disabled(!canSend).Clicked() {
 								submitNote()
 							}
 						})
@@ -1435,6 +2373,149 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 			})
 		})
 	})
+}
+
+func (a *app) boardNoteCard(c *ui.Context, task boardTask, idx int, n boardNote) {
+	t := c.Theme()
+	editing := a.board.editingNoteID == n.ID
+	isHuman := strings.EqualFold(n.Author, "human") || n.Author == ""
+	who := n.Author
+	if isHuman {
+		who = tr("人工")
+	}
+
+	saveEdit := func() {
+		if strings.TrimSpace(a.board.editingNoteText) == "" {
+			return
+		}
+		bf, _, err := boardUpdateNote(task.ID, n.ID, a.board.editingNoteText)
+		if err != nil {
+			a.setBanner(err.Error(), "")
+			return
+		}
+		a.board.editingNoteID = ""
+		a.board.editingNoteText = ""
+		a.applyBoardFile(bf, c)
+	}
+	cancelEdit := func() {
+		a.board.editingNoteID = ""
+		a.board.editingNoteText = ""
+	}
+
+	slot := ui.Column(c.Key("board-note-slot-"+n.ID)).FillWidth().Padding(4, 0)
+	var dropOver *boardNoteDrag
+	if !editing && len(task.Notes) > 1 {
+		if dragged, over := ui.DragOver[boardNoteDrag](slot); over && dragged.taskID == task.ID && dragged.noteID != n.ID {
+			dropOver = &dragged
+		}
+	}
+
+	slot.Children(func() {
+		card := ui.Column(c.Key("board-note-"+n.ID)).FillWidth().Padding(9, 11).Gap(5).
+			Radius(8).Transition(boardNoteMotion(n.ID))
+
+		switch {
+		case editing:
+			card.Background(t.Background).Border(1, t.Accent).Shadow(0, 0, 0, 2, t.Accent.Alpha(0.14)).
+				OnShortcut(commandModifier(), ui.KeyEnter, saveEdit).
+				OnShortcut(0, ui.KeyEscape, cancelEdit)
+		default:
+			if len(task.Notes) > 1 {
+				card.Drag(boardNoteDrag{taskID: task.ID, noteID: n.ID, index: idx})
+				if card.Dragging() {
+					card.Opacity(0.4).Cursor(ui.CursorGrabbing)
+				} else {
+					card.Cursor(ui.CursorGrab)
+				}
+			}
+			switch {
+			case card.Hovered() && dropOver == nil:
+				card.Background(t.Surface.Alpha(0.75)).Border(1, t.Border.Alpha(0.85))
+			default:
+				card.Background(t.Surface.Alpha(0.6)).Border(1, t.Border.Alpha(0.45))
+			}
+		}
+
+		card.Children(func() {
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				if !editing && len(task.Notes) > 1 {
+					ui.Icon(c, iconGripVertical).Size(13, 13).TextColor(t.TextMuted.Alpha(0.55)).Shrink(0)
+				}
+				if !isHuman {
+					ui.Icon(c, iconBot).Size(13, 13).TextColor(t.Accent).Shrink(0)
+					ui.Text(c, who).FontSize(14).FontWeight(600).TextColor(t.Accent).SingleLine()
+				} else {
+					ui.Text(c, who).FontSize(14).FontWeight(600).TextColor(t.Text).SingleLine()
+				}
+				if n.Model != "" {
+					ui.Text(c, n.Model).FontSize(13.5).TextColor(t.TextMuted).SingleLine().MinWidth(0)
+				}
+				ui.Box(c).Grow(1)
+				timeEl := ui.Text(c, n.displayTime().Local().Format("01-02 15:04")).FontSize(13.5).TextColor(t.TextMuted).SingleLine().Shrink(0)
+				if !n.UpdatedAt.IsZero() && n.UpdatedAt.After(n.CreatedAt) {
+					timeEl.Tooltip(fmt.Sprintf(tr("创建于 %s · 编辑于 %s"), n.CreatedAt.Local().Format("01-02 15:04"), n.UpdatedAt.Local().Format("01-02 15:04")))
+				}
+				if !editing {
+					editBtn := ui.ButtonBase(c.Key("board-note-edit-" + n.ID)).Label(tr("编辑备注")).Tooltip(tr("编辑备注"))
+					if styleActionIcon(c, editBtn, iconPencil, 22, 13, t.TextMuted, false).Clicked() {
+						a.board.editingNoteID = n.ID
+						a.board.editingNoteText = n.Text
+						a.board.editNoteInput.Focus(c)
+					}
+					delBtn := ui.ButtonBase(c.Key("board-note-del-" + n.ID)).Label(tr("删除备注")).Tooltip(tr("删除备注"))
+					delFg := t.TextMuted
+					if delBtn.Hovered() || delBtn.Pressed() {
+						delFg = t.Danger
+					}
+					if styleActionIcon(c, delBtn, iconTrash2, 22, 13, delFg, false).Clicked() {
+						a.board.deleteNoteTaskID = task.ID
+						a.board.deleteNoteID = n.ID
+					}
+				}
+			})
+			if editing {
+				ui.TextAreaBase(c.Key("board-note-edit-input-"+n.ID), &a.board.editingNoteText).
+					Label(tr("编辑备注")).
+					Bind(&a.board.editNoteInput).
+					Height(64).FillWidth().FontSize(15).LineHeight(1.4).FocusRing(false).AutoFocus()
+				ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Justify(ui.End).Children(func() {
+					shortcut := "Ctrl+↩"
+					if runtime.GOOS == "darwin" {
+						shortcut = "⌘↩"
+					}
+					kbdHint(c, "board-note-edit-key-"+n.ID, shortcut)
+					if ui.Button(c.Key("board-note-edit-cancel-"+n.ID), tr("取消")).Padding(3, 10).FontSize(13.5).Clicked() {
+						cancelEdit()
+					}
+					canSave := strings.TrimSpace(a.board.editingNoteText) != ""
+					if ui.PrimaryButton(c.Key("board-note-edit-save-"+n.ID), tr("保存")).
+						Padding(3, 10).FontSize(13.5).Disabled(!canSave).Clicked() {
+						saveEdit()
+					}
+				})
+			} else {
+				ui.Text(c, n.Text).FontSize(15).LineHeight(1.4).TextColor(t.Text)
+			}
+		})
+	})
+
+	if dropOver != nil {
+		insertAfter := dropOver.index < idx
+		slot.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			drawBoardDropLine(p, r, insertAfter, t.Accent)
+		})
+	}
+
+	if !editing && len(task.Notes) > 1 {
+		if dropped, ok := ui.Drop[boardNoteDrag](slot); ok && dropped.taskID == task.ID && dropped.noteID != n.ID {
+			bf, _, err := boardMoveNote(task.ID, dropped.noteID, idx)
+			if err != nil {
+				a.setBanner(err.Error(), "")
+			} else {
+				a.applyBoardFile(bf, c)
+			}
+		}
+	}
 }
 
 func (a *app) boardCommitChipRow(c *ui.Context, task boardTask, link boardCommitLink) {
@@ -1469,8 +2550,8 @@ func (a *app) boardCommitChipRow(c *ui.Context, task boardTask, link boardCommit
 			ui.Column(c).FillWidth().Gap(4).Children(func() {
 				ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 					boardRepoDot(c, link.Repo, 7)
-					ui.Text(c, repoTitle(link.Repo)).FontSize(12.5).FontWeight(600).TextColor(t.Text).SingleLine().Shrink(0)
-					ui.Text(c, short).Font("monospace").FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
+					ui.Text(c, repoTitle(link.Repo)).FontSize(14).FontWeight(600).TextColor(t.Text).SingleLine().Shrink(0)
+					ui.Text(c, short).Font("monospace").FontSize(13.5).TextColor(t.TextMuted).SingleLine().Shrink(0)
 					ui.Box(c).Grow(1)
 					if link.Agent != "" {
 						boardAgentTag(c, "board-commit-agent-"+link.Hash, link.Agent)
@@ -1480,7 +2561,7 @@ func (a *app) boardCommitChipRow(c *ui.Context, task boardTask, link boardCommit
 					}
 				})
 				if link.Subject != "" {
-					sub := ui.Text(c, link.Subject).FontSize(13).SingleLine().MinWidth(0)
+					sub := ui.Text(c, link.Subject).FontSize(14.5).SingleLine().MinWidth(0)
 					if stale {
 						sub.TextColor(t.TextMuted)
 					} else {
@@ -1509,6 +2590,11 @@ func (a *app) boardModals(c *ui.Context) {
 	a.linkBoardCommitModal(c)
 	a.boardSnippetModal(c)
 	a.boardDeleteTaskModal(c)
+	a.boardDeleteNoteModal(c)
+	a.boardImportModal(c)
+	a.boardBackupRestoreModal(c)
+	a.boardStorageModal(c)
+	a.boardSwitchDirModal(c)
 }
 
 func (a *app) newBoardTaskModal(c *ui.Context) {
@@ -1522,9 +2608,24 @@ func (a *app) newBoardTaskModal(c *ui.Context) {
 				FillWidth().AutoFocus()
 
 			ui.Text(c, tr("状态")).FontSize(13).TextColor(t.TextMuted)
-			if boardStatusSegmented(c, "board-new-status-seg", &a.board.newStatusIdx).Track.Changed() {
+			if boardStatusSegmented(c, "board-new-status-seg", &a.board.newStatusIdx, 12.5).Track.Changed() {
 				a.board.newStatus = boardStatuses[a.board.newStatusIdx]
 			}
+
+			ui.Row(c).FillWidth().Gap(12).Children(func() {
+				ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
+					ui.Text(c, tr("重要紧急")).FontSize(13).TextColor(t.TextMuted)
+					boardPriorityPicker(c, "board-new-priority", a.board.newPriority, &a.board.newPriorityOpen, true, func(p boardPriority) {
+						a.board.newPriority = p
+					})
+				})
+				ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
+					ui.Text(c, tr("截止日期")).FontSize(13).TextColor(t.TextMuted)
+					boardDueDatePicker(c, "board-new-due", a.board.newDueDate, false, &a.board.newDueOpen, &a.board.newDuePicker, true, func(d string) {
+						a.board.newDueDate = d
+					})
+				})
+			})
 
 			if known := a.boardKnownRepos(); len(known) > 0 {
 				ui.Text(c, tr("关联项目（可选）")).FontSize(13).TextColor(t.TextMuted)
@@ -1584,85 +2685,41 @@ func (a *app) newBoardTaskModal(c *ui.Context) {
 }
 
 func (a *app) submitNewBoardTask() {
-	bf, created, err := boardAddTask(a.board.newTitle, a.board.newDesc, a.board.newStatus, a.board.newRepos)
+	bf, _, err := boardAddTaskWithOptions(boardAddTaskOptions{
+		Title:       a.board.newTitle,
+		Description: a.board.newDesc,
+		Status:      a.board.newStatus,
+		Priority:    a.board.newPriority,
+		DueDate:     a.board.newDueDate,
+		Repos:       a.board.newRepos,
+	})
 	if err != nil {
 		a.board.newErr = err.Error()
 		return
 	}
 	a.board.showNewModal = false
+	a.board.newPriorityOpen = false
+	a.board.newDueOpen = false
 	a.applyBoardFile(bf, nil)
-	a.selectBoardTask(created.ID)
 }
 
 func (a *app) linkBoardCommitModal(c *ui.Context) {
 	t := c.Theme()
-	appModal(c.Key("board-link-commit-modal"), &a.board.showLinkModal, tr("关联提交到任务"), 520, a.board.linkBusy, func() {
-		ui.Column(c).FillWidth().Gap(10).Children(func() {
-			known := a.boardKnownRepos()
-			ui.Text(c, tr("选择仓库")).FontSize(12).TextColor(t.TextMuted)
-			if len(known) > 0 {
-				repoBtn := ui.Button(c.Key("board-link-repo-btn"), func() string {
-					if a.board.linkRepo == "" {
-						return tr("选择仓库")
-					}
-					return repoTitle(a.board.linkRepo) + " (" + homePath(a.board.linkRepo) + ")"
-				}()).FillWidth()
-				repoBtn.Menu(func(m *ui.Menu) {
-					for _, rp := range known {
-						repoPath := rp
-						if m.Item(repoTitle(repoPath) + " (" + homePath(repoPath) + ")").Checked(a.board.linkRepo == repoPath).Chosen() {
-							a.board.linkRepo = repoPath
-						}
-					}
-				})
-			} else {
-				ui.Text(c, tr("请先打开至少一个 Git 仓库")).FontSize(12).TextColor(t.TextMuted)
-			}
-
-			ui.Text(c, tr("输入提交哈希或引用")).FontSize(12).TextColor(t.TextMuted)
-			refEl := ui.TextInput(c.Key("board-link-ref"), &a.board.linkRef).
-				Placeholder(tr("例如 HEAD、main 或提交哈希前缀")).
-				Disabled(a.board.linkBusy).FillWidth().AutoFocus()
-
-			// Quick pick from already-loaded commits in that tab
-			for _, tab := range a.tabs {
-				if normalizeBoardRepo(tab.path) == normalizeBoardRepo(a.board.linkRepo) && len(tab.commits) > 0 {
-					ui.Text(c, tr("或从近期提交选择")).FontSize(12).TextColor(t.TextMuted)
-					ui.Column(c).FillWidth().Gap(4).Children(func() {
-						shown := 0
-						for _, cm := range tab.commits {
-							if cm.hash == worktreeHash || cm.hash == zeroHash {
-								continue
-							}
-							hexStr := hashHex(cm.hash)
-							short := hexStr[:7]
-							row := ui.ButtonBase(c.Key("board-link-pick-"+hexStr)).
-								Label(short+" "+cm.subject).
-								FillWidth().Padding(6, 8).Radius(4).Justify(ui.Start).Cursor(ui.CursorPointer)
-							if row.Hovered() {
-								row.Background(t.SurfaceHover)
-							}
-							row.Children(func() {
-								ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-									ui.Text(c, short).Font("monospace").FontSize(11).TextColor(t.Accent).Shrink(0)
-									ui.Text(c, cm.subject).FontSize(12).SingleLine().Grow(1).MinWidth(0)
-								})
-							})
-							if row.Clicked() {
-								a.board.linkRef = hexStr
-							}
-							shown++
-							if shown >= 6 {
-								break
-							}
-						}
-					})
-					break
-				}
-			}
+	appModal(c.Key("board-link-commit-modal"), &a.board.showLinkModal, tr("关联提交到任务"), 540, a.board.linkBusy, func() {
+		ui.Column(c).FillWidth().Gap(14).Children(func() {
+			a.linkCommitRepoField(c)
+			refEl := a.linkCommitRefField(c)
+			a.linkCommitRecentPicker(c)
 
 			if a.board.linkErr != "" {
-				ui.Text(c, trMessage(a.board.linkErr)).FontSize(12).TextColor(t.Danger)
+				ui.Row(c.Key("board-link-err")).FillWidth().Padding(8, 10).Gap(6).AlignItems(ui.Center).
+					Radius(t.Radius).Background(t.Danger.Alpha(0.08)).Border(1, t.Danger.Alpha(0.3)).Children(func() {
+					ui.Icon(c, iconAlertCircle).Size(14, 14).TextColor(t.Danger).Shrink(0)
+					ui.Text(c, trMessage(a.board.linkErr)).FontSize(12).TextColor(t.Danger).Grow(1).MinWidth(0)
+				})
+			}
+			if a.board.linkBusy {
+				busyRow(c, "board-link-busy", tr("正在读取提交信息…"), "")
 			}
 			if refEl.Submitted() && !a.board.linkBusy {
 				a.submitBoardLinkCommit()
@@ -1676,6 +2733,238 @@ func (a *app) linkBoardCommitModal(c *ui.Context) {
 		if ui.PrimaryButton(c.Key("board-link-submit"), tr("关联")).Disabled(!canSubmit).Clicked() {
 			a.submitBoardLinkCommit()
 		}
+	})
+}
+
+func (a *app) linkCommitRepoField(c *ui.Context) {
+	t := c.Theme()
+	known := a.boardKnownRepos()
+	ui.Column(c.Key("board-link-repo-sec")).FillWidth().Gap(6).Children(func() {
+		ui.Text(c, tr("选择仓库")).FontSize(12.5).FontWeight(500).TextColor(t.TextMuted)
+		if len(known) == 0 {
+			ui.Row(c).FillWidth().Padding(8, 10).Gap(8).AlignItems(ui.Center).
+				Radius(t.Radius).Background(t.Surface.Alpha(0.5)).Border(1, t.Border.Alpha(0.6)).Children(func() {
+				ui.Icon(c, iconFolderGit).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+				ui.Text(c, tr("请先打开至少一个 Git 仓库")).FontSize(12.5).TextColor(t.TextMuted)
+			})
+			return
+		}
+		repoLabel := tr("选择仓库")
+		if a.board.linkRepo != "" {
+			repoLabel = repoTitle(a.board.linkRepo) + " (" + homePath(a.board.linkRepo) + ")"
+		}
+		repoBtn := ui.ButtonBase(c.Key("board-link-repo-btn")).
+			Label(repoLabel).
+			FillWidth().Padding(8, 10).Radius(t.Radius).AlignItems(ui.Center).
+			Cursor(ui.CursorPointer).Transition(colorMotion()).Disabled(a.board.linkBusy)
+		if a.board.linkRepo != "" {
+			repoBtn.Tooltip(homePath(a.board.linkRepo))
+		}
+		bg := t.Surface
+		border := t.Border
+		switch {
+		case repoBtn.Pressed():
+			bg = t.SurfacePressed
+		case repoBtn.Hovered():
+			bg = t.SurfaceHover
+			border = t.TextMuted.Alpha(0.55)
+		}
+		repoBtn.Background(bg).Border(1, border)
+		repoBtn.Children(func() {
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				if a.board.linkRepo != "" {
+					boardRepoDot(c, a.board.linkRepo, 8)
+					ui.Text(c, repoTitle(a.board.linkRepo)).FontSize(13).FontWeight(500).TextColor(t.Text).SingleLine().Shrink(0)
+					ui.Text(c, homePath(a.board.linkRepo)).FontSize(12).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
+				} else {
+					ui.Icon(c, iconFolderGit).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+					ui.Text(c, tr("选择仓库")).FontSize(13).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
+				}
+				ui.Icon(c, iconChevronDown).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+			})
+		})
+		repoBtn.Menu(func(m *ui.Menu) {
+			for _, rp := range known {
+				repoPath := rp
+				if m.Item(repoTitle(repoPath) + " (" + homePath(repoPath) + ")").Checked(a.board.linkRepo == repoPath).Chosen() {
+					a.board.linkRepo = repoPath
+					a.board.linkErr = ""
+				}
+			}
+		})
+	})
+}
+
+func (a *app) linkCommitRefField(c *ui.Context) ui.Element {
+	t := c.Theme()
+	var refEl ui.Element
+	ui.Column(c.Key("board-link-ref-sec")).FillWidth().Gap(6).Children(func() {
+		ui.Text(c, tr("输入提交哈希或引用")).FontSize(12.5).FontWeight(500).TextColor(t.TextMuted)
+		box := ui.Row(c.Key("board-link-ref-box")).FillWidth().Height(34).Padding(0, 6, 0, 10).Gap(6).
+			AlignItems(ui.Center).Radius(t.Radius).Background(t.Background).Transition(colorMotion())
+		box.Children(func() {
+			ui.Icon(c, iconGitCommit).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+			refEl = ui.TextInputBase(c.Key("board-link-ref"), &a.board.linkRef).
+				Label(tr("输入提交哈希或引用")).
+				Placeholder(tr("例如 HEAD、main 或提交哈希前缀")).
+				Bind(&a.board.linkInput).
+				FontSize(13).
+				Disabled(a.board.linkBusy).
+				Grow(1).MinWidth(0).FocusRing(false).AutoFocus()
+			if refEl.Changed() {
+				a.board.linkErr = ""
+			}
+			if a.board.linkRef != "" && !a.board.linkBusy {
+				if closeIconButton(c, "board-link-ref-clear", tr("清空")).Clicked() {
+					a.board.linkRef = ""
+					a.board.linkErr = ""
+					refEl.Focus()
+				}
+			}
+		})
+		border := t.Border
+		switch {
+		case a.board.linkErr != "":
+			border = t.Danger
+		case refEl.Focused():
+			border = t.Accent
+			box.Shadow(0, 0, 0, 2, t.Accent.Alpha(0.15))
+		case box.Hovered():
+			border = t.TextMuted.Alpha(0.6)
+		}
+		box.Border(1, border)
+	})
+	return refEl
+}
+
+func (a *app) linkCommitRecentPicker(c *ui.Context) {
+	t := c.Theme()
+	var matchedTab *repoTab
+	for _, tab := range a.tabs {
+		if normalizeBoardRepo(tab.path) == normalizeBoardRepo(a.board.linkRepo) {
+			matchedTab = tab
+			break
+		}
+	}
+	if matchedTab == nil {
+		return
+	}
+
+	var recent []commit
+	for _, cm := range matchedTab.commits {
+		if cm.hash == worktreeHash || cm.hash == zeroHash {
+			continue
+		}
+		recent = append(recent, cm)
+		if len(recent) >= 6 {
+			break
+		}
+	}
+	if len(recent) == 0 {
+		return
+	}
+
+	linkedHashes := map[string]bool{}
+	if idx := findBoardTaskIndex(a.board.file.Tasks, a.board.selectedID); idx >= 0 {
+		for _, l := range a.board.file.Tasks[idx].Commits {
+			if normalizeBoardRepo(l.Repo) == normalizeBoardRepo(a.board.linkRepo) {
+				linkedHashes[strings.ToLower(l.Hash)] = true
+			}
+		}
+	}
+	trimmedRef := strings.ToLower(strings.TrimSpace(a.board.linkRef))
+
+	ui.Column(c.Key("board-link-recent-sec")).FillWidth().Gap(6).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, tr("或从近期提交选择")).FontSize(12.5).FontWeight(500).TextColor(t.TextMuted)
+			ui.Box(c).Grow(1)
+			if matchedTab.branch != "" {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
+					ui.Icon(c, iconGitBranch).Size(12, 12).TextColor(t.TextMuted).Shrink(0)
+					ui.Text(c, matchedTab.branch).FontSize(11.5).TextColor(t.TextMuted).SingleLine()
+				})
+			}
+		})
+
+		ui.Column(c.Key("board-link-recent-list")).FillWidth().Padding(4).Gap(2).
+			Radius(8).Background(t.Surface.Alpha(0.45)).Border(1, t.Border).Children(func() {
+			for _, cm := range recent {
+				hexStr := hashHex(cm.hash)
+				short := hexStr[:7]
+				selected := trimmedRef != "" && (strings.EqualFold(trimmedRef, hexStr) || (len(trimmedRef) >= 6 && strings.HasPrefix(hexStr, trimmedRef)))
+				alreadyLinked := linkedHashes[hexStr]
+				subj := cm.subject
+				if subj == "" {
+					subj = tr("（无说明）")
+				}
+
+				tipParts := []string{short}
+				if cm.author != "" {
+					tipParts = append(tipParts, cm.author)
+				}
+				if when := cm.whenText(); when != "" {
+					tipParts = append(tipParts, when)
+				}
+				tip := strings.Join(tipParts, " · ") + "\n" + subj
+				if alreadyLinked {
+					tip += "\n" + tr("已关联到此任务")
+				}
+
+				row := ui.ButtonBase(c.Key("board-link-pick-"+hexStr)).
+					Label(short+" "+subj).
+					Tooltip(tip).
+					FillWidth().Padding(6, 8).Radius(6).Justify(ui.Start).
+					Cursor(ui.CursorPointer).Transition(colorMotion()).Disabled(a.board.linkBusy)
+				switch {
+				case selected:
+					row.Background(t.Accent.Alpha(0.12)).Border(1, t.Accent.Alpha(0.4))
+				case row.Pressed():
+					row.Background(t.SurfacePressed).Border(1, ui.Transparent)
+				case row.Hovered():
+					row.Background(t.SurfaceHover).Border(1, ui.Transparent)
+				default:
+					row.Border(1, ui.Transparent)
+				}
+
+				row.Children(func() {
+					ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+						hashBg := t.SurfaceHover
+						hashFg := t.TextMuted
+						if selected {
+							hashBg = t.Accent.Alpha(0.16)
+							hashFg = t.Accent
+						}
+						ui.Row(c).Padding(1, 6).Radius(4).Background(hashBg).Shrink(0).Children(func() {
+							ht := ui.Text(c, short).Font("monospace").FontSize(11.5).TextColor(hashFg).SingleLine()
+							if selected {
+								ht.FontWeight(600)
+							}
+						})
+						subEl := ui.Text(c, subj).FontSize(12.5).SingleLine().Grow(1).MinWidth(0)
+						switch {
+						case selected:
+							subEl.FontWeight(500).TextColor(t.Text)
+						case alreadyLinked:
+							subEl.TextColor(t.TextMuted)
+						default:
+							subEl.TextColor(t.Text)
+						}
+						switch {
+						case selected:
+							ui.Icon(c, iconCheck).Size(14, 14).TextColor(t.Accent).Shrink(0)
+						case alreadyLinked:
+							ui.Icon(c, iconLink).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
+						case cm.when > 0:
+							ui.Text(c, time.Unix(cm.when, 0).Local().Format("01-02")).FontSize(11.5).TextColor(t.TextMuted).SingleLine().Shrink(0)
+						}
+					})
+				})
+				if row.Clicked() {
+					a.board.linkRef = hexStr
+					a.board.linkErr = ""
+				}
+			}
+		})
 	})
 }
 
@@ -1753,7 +3042,7 @@ func (a *app) boardDeleteTaskModal(c *ui.Context) {
 		if ui.Button(c.Key("board-delete-cancel"), tr("取消")).Clicked() {
 			open = false
 		}
-		if ui.Button(c.Key("board-delete-confirm"), tr("确认删除")).Padding(2, 12).Clicked() {
+		if dangerButton(c, "board-delete-confirm", tr("确认删除")).Clicked() {
 			bf, err := boardDeleteTask(id)
 			if err != nil {
 				a.setBanner(err.Error(), "")
@@ -1771,6 +3060,69 @@ func (a *app) boardDeleteTaskModal(c *ui.Context) {
 	})
 	if !open {
 		a.board.deleteTaskID = ""
+	}
+}
+
+// boardDeleteNoteModal asks before removing a note from a task; notes have no
+// undo, so clicking the trash icon opens a confirmation dialog first.
+func (a *app) boardDeleteNoteModal(c *ui.Context) {
+	open := a.board.deleteNoteTaskID != "" && a.board.deleteNoteID != ""
+	if !open {
+		return
+	}
+	taskID := a.board.deleteNoteTaskID
+	noteID := a.board.deleteNoteID
+	task, ok := boardTaskByID(a.board.file.Tasks, taskID)
+	var note boardNote
+	found := false
+	if ok {
+		for _, n := range task.Notes {
+			if n.ID == noteID {
+				note = n
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		a.board.deleteNoteTaskID = ""
+		a.board.deleteNoteID = ""
+		return
+	}
+	t := c.Theme()
+	preview := strings.Join(strings.Fields(note.Text), " ")
+	if runes := []rune(preview); len(runes) > 120 {
+		preview = string(runes[:120]) + "…"
+	}
+	appModal(c.Key("board-delete-note-modal"), &open, tr("删除备注"), 420, false, func() {
+		ui.Column(c).FillWidth().Gap(6).Children(func() {
+			if preview != "" {
+				ui.Text(c, preview).FontSize(13).FontWeight(500).TextColor(t.Text)
+			}
+			ui.Text(c, tr("备注删除后无法恢复。")).FontSize(12.5).TextColor(t.TextMuted)
+		})
+	}, func() {
+		if ui.Button(c.Key("board-delete-note-cancel"), tr("取消")).Clicked() {
+			open = false
+		}
+		if dangerButton(c, "board-delete-note-confirm", tr("确认删除")).Clicked() {
+			bf, _, err := boardDeleteNote(taskID, noteID)
+			if err != nil {
+				a.setBanner(err.Error(), "")
+				open = false
+			} else {
+				if a.board.editingNoteID == noteID {
+					a.board.editingNoteID = ""
+					a.board.editingNoteText = ""
+				}
+				a.applyBoardFile(bf, c)
+				open = false
+			}
+		}
+	})
+	if !open {
+		a.board.deleteNoteTaskID = ""
+		a.board.deleteNoteID = ""
 	}
 }
 
@@ -1817,4 +3169,450 @@ func (a *app) createBoardTaskWithCommit(tab *repoTab, cm commit) {
 	}
 	a.applyBoardFile(bf, nil)
 	a.linkCommitToBoardTask(tab, cm, created.ID)
+}
+
+func boardBackupReasonLabel(reason string) string {
+	switch reason {
+	case "delete":
+		return tr("删除前")
+	case "archive":
+		return tr("归档前")
+	case "import":
+		return tr("导入前")
+	case "restore":
+		return tr("恢复前")
+	case "switch-merge", "switch-overwrite":
+		return tr("切换目录前")
+	default:
+		return tr("自动快照")
+	}
+}
+
+func (a *app) startBoardExport() {
+	if a.picking || a.win == nil {
+		return
+	}
+	a.picking = true
+	win := a.win
+	defaultName := fmt.Sprintf("xylring-board-%s.json", time.Now().Format("20060102"))
+	go func() {
+		outPath, err := saveBoardExportDialog(win, defaultName)
+		if err != nil || strings.TrimSpace(outPath) == "" {
+			a.post(func() {
+				a.picking = false
+				if err != nil {
+					a.setBanner(trimMsg(err.Error()), "")
+				}
+			})
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		bundle, expErr := boardExport(ctx, boardExportOptions{IncludeArchived: true})
+		if expErr == nil {
+			expErr = writeBoardExportFile(outPath, bundle)
+		}
+		a.post(func() {
+			a.picking = false
+			if expErr != nil {
+				a.setBanner(trimMsg(expErr.Error()), "")
+				return
+			}
+			a.pendingToast = fmt.Sprintf("已导出 %d 个任务", len(bundle.Tasks))
+		})
+	}()
+}
+
+func (a *app) startBoardImport() {
+	if a.picking || a.win == nil {
+		return
+	}
+	a.picking = true
+	win := a.win
+	known := a.boardKnownRepos()
+	go func() {
+		paths, err := openBoardImportDialog(win)
+		if err != nil || len(paths) == 0 {
+			a.post(func() {
+				a.picking = false
+				if err != nil {
+					a.setBanner(trimMsg(err.Error()), "")
+				}
+			})
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		plan, planErr := buildBoardImportPlan(ctx, paths[0], known)
+		a.post(func() {
+			a.picking = false
+			if planErr != nil {
+				a.setBanner(trimMsg(planErr.Error()), "")
+				return
+			}
+			a.board.importPlan = plan
+			a.board.importModeIdx = 0
+			a.board.importErr = ""
+			a.board.importBusy = false
+			a.board.showImportModal = true
+		})
+	}()
+}
+
+func (a *app) executeBoardImport() {
+	if a.board.importBusy {
+		return
+	}
+	mode := boardImportMerge
+	if a.board.importModeIdx == 1 {
+		mode = boardImportReplace
+	}
+	repoMap := map[string]string{}
+	for _, m := range a.board.importPlan.RepoMappings {
+		if strings.TrimSpace(m.ChosenPath) != "" && normalizeBoardRepo(m.ChosenPath) != normalizeBoardRepo(m.OldPath) {
+			repoMap[m.OldPath] = m.ChosenPath
+		}
+	}
+	a.board.importBusy = true
+	a.board.importErr = ""
+	srcPath := a.board.importPlan.SourcePath
+	bf, res, err := boardImport(srcPath, boardImportOptions{
+		Mode:    mode,
+		RepoMap: repoMap,
+	})
+	a.board.importBusy = false
+	if err != nil {
+		a.board.importErr = err.Error()
+		return
+	}
+	a.resetBoardAfterReplace()
+	a.applyBoardFile(bf, nil)
+	a.board.loaded = true
+	a.board.showImportModal = false
+	a.pendingToast = fmt.Sprintf("已导入 %d 个任务", res.ImportedTasks)
+}
+
+func (a *app) pickRemapRepoDir(idx int) {
+	if a.picking || a.win == nil || idx < 0 || idx >= len(a.board.importPlan.RepoMappings) {
+		return
+	}
+	a.picking = true
+	win := a.win
+	defDir := a.board.importPlan.RepoMappings[idx].ChosenPath
+	go func() {
+		paths, err := openBoardDirDialog(win, defDir)
+		a.post(func() {
+			a.picking = false
+			if err != nil {
+				a.board.importErr = trimMsg(err.Error())
+				return
+			}
+			if len(paths) == 0 || idx >= len(a.board.importPlan.RepoMappings) {
+				return
+			}
+			chosen := normalizeBoardRepo(paths[0])
+			if !isBoardRepoAvailable(chosen) {
+				a.board.importErr = "所选目录不是有效的 Git 仓库"
+				return
+			}
+			a.board.importErr = ""
+			a.board.importPlan.RepoMappings[idx].ChosenPath = chosen
+			a.board.importPlan.RepoMappings[idx].Status = "matched"
+		})
+	}()
+}
+
+func (a *app) openBoardBackupsModal() {
+	items, err := listBoardBackups()
+	if err != nil {
+		a.board.backups = nil
+		a.board.backupsErr = err.Error()
+	} else {
+		a.board.backups = items
+		a.board.backupsErr = ""
+	}
+	a.board.showBackupsModal = true
+}
+
+func (a *app) restoreBoardFromBackup(backupPath string) {
+	bf, err := boardRestoreBackup(backupPath)
+	if err != nil {
+		a.board.backupsErr = err.Error()
+		return
+	}
+	a.resetBoardAfterReplace()
+	a.applyBoardFile(bf, nil)
+	a.board.loaded = true
+	a.board.showBackupsModal = false
+	a.pendingToast = fmt.Sprintf("已恢复 %d 个任务", len(bf.Tasks))
+}
+
+func (a *app) openBoardStorageModal() {
+	a.refreshBoardStorageInfo()
+	a.board.storageErr = ""
+	a.board.showStorageModal = true
+}
+
+func (a *app) openBoardFolder() {
+	info := a.currentBoardStorageInfo()
+	if info.ActiveDir == "" {
+		return
+	}
+	_ = os.MkdirAll(info.ActiveDir, 0o755)
+	if err := openFolderInFileManager(info.ActiveDir); err != nil {
+		a.setBanner(trimMsg(err.Error()), "")
+	}
+}
+
+func (a *app) pickBoardStorageDir() {
+	if a.picking || a.win == nil {
+		return
+	}
+	a.picking = true
+	win := a.win
+	info := a.currentBoardStorageInfo()
+	go func() {
+		paths, err := openBoardDirDialog(win, info.ActiveDir)
+		a.post(func() {
+			a.picking = false
+			if err != nil {
+				a.board.storageErr = trimMsg(err.Error())
+				return
+			}
+			if len(paths) == 0 {
+				return
+			}
+			a.beginSwitchBoardDir(paths[0])
+		})
+	}()
+}
+
+func (a *app) beginSwitchBoardDir(targetDir string) {
+	clean := filepath.Clean(strings.TrimSpace(targetDir))
+	info := a.currentBoardStorageInfo()
+	if clean == "" || clean == filepath.Clean(info.ActiveDir) {
+		return
+	}
+	hasBoard, count, err := boardProbeDir(clean)
+	if err != nil {
+		a.board.storageErr = err.Error()
+		return
+	}
+	if hasBoard {
+		a.board.switchTargetDir = clean
+		a.board.switchTargetCount = count
+		a.board.switchDirErr = ""
+		a.board.showSwitchDirModal = true
+		return
+	}
+	a.applySwitchBoardDir(clean, boardSwitchAuto)
+}
+
+func (a *app) applySwitchBoardDir(targetDir string, strategy boardDirSwitchStrategy) {
+	bf, err := boardSwitchStorageDir(targetDir, strategy)
+	if err != nil {
+		a.board.switchDirErr = err.Error()
+		a.board.storageErr = err.Error()
+		return
+	}
+	a.board.showSwitchDirModal = false
+	a.board.showStorageModal = false
+	a.board.storageErr = ""
+	a.board.switchDirErr = ""
+	a.refreshBoardStorageInfo()
+	a.resetBoardAfterReplace()
+	a.applyBoardFile(bf, nil)
+	a.board.loaded = true
+	a.pendingToast = "已切换看板数据目录"
+}
+
+func (a *app) boardImportModal(c *ui.Context) {
+	if !a.board.showImportModal {
+		return
+	}
+	t := c.Theme()
+	plan := &a.board.importPlan
+	appModal(c.Key("board-import-modal"), &a.board.showImportModal, tr("导入看板备份"), 520, a.board.importBusy, func() {
+		ui.Column(c).FillWidth().Gap(10).Children(func() {
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, iconFileText).Size(15, 15).TextColor(t.TextMuted).Shrink(0)
+				ui.Text(c, filepath.Base(plan.SourcePath)).FontSize(13).FontWeight(500).TextColor(t.Text).
+					SingleLine().Grow(1).MinWidth(0).Tooltip(plan.SourcePath)
+				ui.Text(c, fmt.Sprintf(tr("%d 个任务"), plan.TotalTasks)).FontSize(12.5).TextColor(t.TextMuted).Shrink(0)
+			})
+			ui.Segmented(c.Key("board-import-mode"), &a.board.importModeIdx, tr("合并到现有看板"), tr("覆盖现有看板")).FillWidth()
+			if a.board.importModeIdx == 0 && len(plan.ConflictIDs) > 0 {
+				ui.Text(c, fmt.Sprintf(tr("%d 个任务编号冲突，导入时将自动重新编号。"), len(plan.ConflictIDs))).
+					FontSize(12.5).TextColor(t.TextMuted)
+			}
+			if a.board.importModeIdx == 1 {
+				ui.Text(c, tr("覆盖将替换当前所有任务，操作前会自动备份。")).FontSize(12.5).TextColor(t.Danger)
+			}
+			hasUnmatched := false
+			for _, m := range plan.RepoMappings {
+				if m.Status != "matched" {
+					hasUnmatched = true
+					break
+				}
+			}
+			if hasUnmatched {
+				ui.Divider(c)
+				ui.Text(c, tr("仓库路径映射")).FontSize(12.5).FontWeight(500).TextColor(t.Text)
+				for i := range plan.RepoMappings {
+					idx := i
+					m := plan.RepoMappings[idx]
+					if m.Status == "matched" {
+						continue
+					}
+					ui.Row(c.Key(fmt.Sprintf("remap-repo-%d", idx))).FillWidth().Padding(8, 10).Gap(8).
+						AlignItems(ui.Center).Radius(t.Radius).Background(t.Surface).Border(1, t.Border).Children(func() {
+						ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+							ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+								ui.Text(c, repoTitle(m.OldPath)).FontSize(12.5).FontWeight(500).TextColor(t.Text).SingleLine()
+								if m.Status == "suggested" {
+									chip(c, "suggested", tr("已自动匹配"), chipStyle{Text: t.Accent, Background: t.Accent.Alpha(0.12), FontSize: 10})
+								} else {
+									chip(c, "missing", tr("未在本机找到"), chipStyle{Text: t.Warning, Background: t.Warning.Alpha(0.12), FontSize: 10})
+								}
+							})
+							sub := m.OldPath
+							if m.ChosenPath != "" {
+								sub = homePath(m.ChosenPath)
+							}
+							ui.Text(c, sub).FontSize(11.5).TextColor(t.TextMuted).SingleLine().Tooltip(sub)
+						})
+						if ui.Button(c.Key(fmt.Sprintf("remap-pick-%d", idx)), tr("选择目录…")).Padding(3, 8).FontSize(12).Disabled(a.picking).Clicked() {
+							a.pickRemapRepoDir(idx)
+						}
+					})
+				}
+			}
+			if a.board.importErr != "" {
+				ui.Text(c, trMessage(a.board.importErr)).FontSize(12).TextColor(t.Danger)
+			}
+		})
+	}, func() {
+		if ui.Button(c.Key("board-import-cancel"), tr("取消")).Disabled(a.board.importBusy).Clicked() {
+			a.board.showImportModal = false
+		}
+		if a.board.importModeIdx == 1 {
+			if dangerButton(c, "board-import-confirm", tr("确认覆盖")).Disabled(a.board.importBusy).Clicked() {
+				a.executeBoardImport()
+			}
+		} else {
+			if ui.PrimaryButton(c.Key("board-import-confirm"), tr("确认导入")).Disabled(a.board.importBusy).Clicked() {
+				a.executeBoardImport()
+			}
+		}
+	})
+}
+
+func (a *app) boardBackupRestoreModal(c *ui.Context) {
+	if !a.board.showBackupsModal {
+		return
+	}
+	t := c.Theme()
+	appModal(c.Key("board-backups-modal"), &a.board.showBackupsModal, tr("恢复自动备份"), 500, false, func() {
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			if a.board.backupsErr != "" {
+				ui.Text(c, trMessage(a.board.backupsErr)).FontSize(12).TextColor(t.Danger)
+			}
+			if len(a.board.backups) == 0 {
+				ui.Column(c).FillWidth().Padding(18).Center().Children(func() {
+					ui.Text(c, tr("暂无自动备份")).FontSize(13).TextColor(t.TextMuted)
+				})
+				return
+			}
+			for i, b := range a.board.backups {
+				backup := b
+				ui.Row(c.Key(fmt.Sprintf("backup-item-%d", i))).FillWidth().Padding(9, 12).Gap(10).
+					AlignItems(ui.Center).Radius(t.Radius).Background(t.Surface).Border(1, t.Border).Children(func() {
+					ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, backup.CreatedAt.Local().Format("2006-01-02 15:04:05")).FontSize(13).FontWeight(500).TextColor(t.Text)
+							chip(c, "reason", boardBackupReasonLabel(backup.Reason), chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10})
+						})
+						ui.Text(c, fmt.Sprintf(tr("%d 个任务"), backup.TaskCount)).FontSize(12).TextColor(t.TextMuted)
+					})
+					if ui.Button(c.Key(fmt.Sprintf("backup-restore-%d", i)), tr("恢复")).Padding(4, 10).FontSize(12).Clicked() {
+						a.restoreBoardFromBackup(backup.Path)
+					}
+				})
+			}
+		})
+	}, func() {
+		if ui.Button(c.Key("board-backups-close"), tr("完成")).Clicked() {
+			a.board.showBackupsModal = false
+		}
+	})
+}
+
+func (a *app) boardStorageModal(c *ui.Context) {
+	if !a.board.showStorageModal {
+		return
+	}
+	t := c.Theme()
+	info := a.currentBoardStorageInfo()
+	appModal(c.Key("board-storage-modal"), &a.board.showStorageModal, tr("看板数据目录"), 480, false, func() {
+		ui.Column(c).FillWidth().Gap(10).Children(func() {
+			ui.Row(c).FillWidth().Padding(10, 12).Gap(8).AlignItems(ui.Center).
+				Radius(t.Radius).Background(t.Surface).Border(1, t.Border).Children(func() {
+				ui.Icon(c, iconFolder).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+				ui.Text(c, homePath(info.ActiveDir)).FontSize(12.5).TextColor(t.Text).
+					SingleLine().Grow(1).MinWidth(0).Tooltip(info.ActiveDir)
+				if info.IsCustom {
+					chip(c, "custom", tr("自定义"), chipStyle{Text: t.Accent, Background: t.Accent.Alpha(0.12), FontSize: 10})
+				}
+			})
+			if info.FromEnv {
+				ui.Text(c, tr("当前通过环境变量 XYLRING_BOARD_DIR 指定目录。")).FontSize(12).TextColor(t.TextMuted)
+			}
+			if a.board.storageErr != "" {
+				ui.Text(c, trMessage(a.board.storageErr)).FontSize(12).TextColor(t.Danger)
+			}
+		})
+	}, func() {
+		if ui.Button(c.Key("board-storage-open"), tr("打开目录")).Clicked() {
+			a.openBoardFolder()
+		}
+		if info.IsCustom {
+			if ui.Button(c.Key("board-storage-reset"), tr("恢复默认")).Disabled(info.FromEnv || a.picking).Clicked() {
+				a.beginSwitchBoardDir(info.DefaultDir)
+			}
+		}
+		if ui.PrimaryButton(c.Key("board-storage-change"), tr("更改目录…")).Disabled(info.FromEnv || a.picking).Clicked() {
+			a.pickBoardStorageDir()
+		}
+	})
+}
+
+func (a *app) boardSwitchDirModal(c *ui.Context) {
+	if !a.board.showSwitchDirModal {
+		return
+	}
+	t := c.Theme()
+	appModal(c.Key("board-switch-dir-modal"), &a.board.showSwitchDirModal, tr("目标目录已有看板数据"), 480, false, func() {
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			ui.Text(c, homePath(a.board.switchTargetDir)).FontSize(12.5).FontWeight(500).TextColor(t.Text).
+				SingleLine().Tooltip(a.board.switchTargetDir)
+			ui.Text(c, fmt.Sprintf(tr("该目录中已有 %d 个任务，请选择处理方式。"), a.board.switchTargetCount)).
+				FontSize(12.5).TextColor(t.TextMuted)
+			if a.board.switchDirErr != "" {
+				ui.Text(c, trMessage(a.board.switchDirErr)).FontSize(12).TextColor(t.Danger)
+			}
+		})
+	}, func() {
+		if ui.Button(c.Key("board-switch-cancel"), tr("取消")).Clicked() {
+			a.board.showSwitchDirModal = false
+		}
+		if dangerButton(c, "board-switch-overwrite", tr("覆盖目标")).Clicked() {
+			a.applySwitchBoardDir(a.board.switchTargetDir, boardSwitchOverwriteTarget)
+		}
+		if ui.Button(c.Key("board-switch-merge"), tr("合并过去")).Clicked() {
+			a.applySwitchBoardDir(a.board.switchTargetDir, boardSwitchMergeTarget)
+		}
+		if ui.PrimaryButton(c.Key("board-switch-use"), tr("使用目标数据")).Clicked() {
+			a.applySwitchBoardDir(a.board.switchTargetDir, boardSwitchUseTarget)
+		}
+	})
 }

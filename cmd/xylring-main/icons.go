@@ -58,6 +58,12 @@ var (
 	iconCircle       = lucide.Circle()
 	iconCheckCircle2 = lucide.CheckCircle2()
 	iconFolderGit    = lucide.FolderGit2()
+	iconPencil       = lucide.Pencil()
+	iconGripVertical = lucide.GripVertical()
+	iconCalendar     = lucide.Calendar()
+	iconChevronLeft  = lucide.ChevronLeft()
+	iconChevronRight = lucide.ChevronRight()
+	iconFlag         = lucide.Flag()
 )
 
 var (

@@ -112,7 +112,7 @@ func printCLIHelp() {
   xylring stamp --show|--clear
   xylring ring install|uninstall|status|snippet|script
   xylring ring strict install|uninstall|status|script
-  xylring board list|show|add|update|link|unlink|note|delete|snippet
+  xylring board list|show|add|update|link|unlink|note|delete|path|export|import|backups|restore|snippet
   旧版启动器用户请重新执行 install-cli。
   xylring [选项] [路径...]
 
