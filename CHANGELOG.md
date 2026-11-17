@@ -1,3 +1,31 @@
+## 0.9.0 - 2026-11-17
+
+### 更新内容
+
+- 新增跨项目 AI 协作看板：待办 / 进行中 / 待审阅 / 已完成四列主视图，卡片可跨列拖拽、圆形勾选完成，并在一行里显示所属项目、关联提交数、备注数与 Agent 来源。
+- 看板顶栏并入项目筛选、搜索、已归档开关、Agent 规则与新建任务，看板不再单独占一行工具栏；支持 `Esc` 关闭与 `⌘F` 聚焦搜索。
+- 任务支持优先级与截止日期（日历选择），详情以右侧浮层抽屉展示：文档式标题与描述、分段控件切换状态、`⌘↩` 直接提交备注。
+- 任务可关联多仓库的多个提交，既能在看板里选仓库与近期提交，也能在提交图谱右键把提交挂到任务上，并支持跳转到其他仓库的提交。
+- 备注按时间线排列，可拖拽排序、编辑和删除；抽屉里的草稿按任务暂存，切换任务、关闭抽屉或外部同步都不会丢掉正在输入的内容。
+- 看板数据目录可以自定义，并提供自动备份快照、从快照恢复、JSON 导入导出（合并或替换、按需重映射仓库路径、支持试运行）。
+- 删除任务、清空标题等破坏性操作改为先确认，说明关联提交与备注会一并删除。
+- 新增 `xylring board` 命令行：`list`、`show`、`add`、`update`、`link`、`unlink`、`note`、`delete`、`export`、`import`、`backups`、`restore`、`snippet`，多端同时读写走同一套文件锁。
+- 通用设置新增「看板」分组，可直接打开数据目录、切换目录、导出导入与恢复快照。
+- 源码目录 `cmd/gitclient` 改名为 `cmd/xylring-main`，构建脚本、文档与测试路径同步更新。
+
+### Changes
+
+- Add a cross-project AI collaboration board with To do, In progress, Review, and Done columns. Cards drag between columns, complete from a round check, and show project, linked commits, notes, and agent source in one line.
+- Fold the board's project filter, search, archived toggle, agent rules, and new-task action into the top toolbar, and support `Esc` to close and `⌘F` to focus search.
+- Tasks take a priority and a due date picked from a calendar. Details open in a right-side floating drawer with document-style title and description, a segmented status control, and `⌘↩` to post a note.
+- Link a task to several commits across repositories, either from the board's repository and recent-commit pickers or from the commit graph's context menu, and jump to a commit in another repository.
+- Notes are a timeline that can be reordered by dragging, edited, and deleted. Drafts are kept per task, so switching tasks, closing the drawer, or an external sync no longer drops what you were typing.
+- The board data directory is configurable, with automatic backup snapshots, restore from a snapshot, and JSON export/import (merge or replace, optional repository path remapping, dry run).
+- Deleting a task and clearing a title now confirm first and spell out that linked commits and notes go with it.
+- Add a `xylring board` command line with `list`, `show`, `add`, `update`, `link`, `unlink`, `note`, `delete`, `export`, `import`, `backups`, `restore`, and `snippet`, sharing one file lock across processes.
+- Add a Board section to General settings for opening the data directory, switching it, exporting, importing, and restoring snapshots.
+- Rename the source directory `cmd/gitclient` to `cmd/xylring-main`, updating build scripts, docs, and test paths.
+
 ## 0.8.5 - 2026-11-16
 
 ### 更新内容
