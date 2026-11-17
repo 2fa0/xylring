@@ -15,7 +15,7 @@
   <a href="./README_zh.md">简体中文</a>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.5-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.9.0-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
@@ -46,6 +46,7 @@ So Xylring was stitched together as a lightweight, Go-native desktop companion�
 
 ## ✨ Key Features
 
+- 🗂️ **Cross-Project Board for AI Work**: Track tasks from many repositories in To do, In progress, Review, and Done columns. Drag cards between columns, set priority and due dates, link commits from several repos, and keep a timeline of notes—the same board is readable and writable from the terminal with `xylring board`.
 - 📊 **Commit Nodes Scaled by Change Volume**: The more files and lines a commit touches, the larger its node appears on the graph. One glance at the tree tells big refactors apart from small fixes.
 - 🤖 **AI & Agent Provenance Right Next to the Graph**: See which AI model and agent produced each commit directly to the right of the commit graph (`Co-authored-by`, `AI-Generated-By`, `Prompt-SHA`)—no need to click into individual commits.
 - 🌿 **Lingering Worktree Awareness**: Keep track of active and undeleted `git worktree`s when running parallel agent tasks, so temporary workspaces never pile up unnoticed.
@@ -63,10 +64,10 @@ So Xylring was stitched together as a lightweight, Go-native desktop companion�
 
 ### macOS
 
-Download the `.dmg` matching your architecture from [Release v0.8.5](https://github.com/2fa0/xylring/releases):
+Download the `.dmg` matching your architecture from [Release v0.9.0](https://github.com/2fa0/xylring/releases):
 
-- **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.8.5-arm64.dmg`
-- **Intel x86_64**: `xylring-0.8.5-amd64.dmg`
+- **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.9.0-arm64.dmg`
+- **Intel x86_64**: `xylring-0.9.0-amd64.dmg`
 
 Or grab the `.app.tar.gz` archive if you prefer to place the app yourself. Open the disk image and drag **Xylring** into your `Applications` folder.
 
@@ -82,8 +83,8 @@ Once installed, Xylring checks for new versions itself and offers to update in i
 
 Download the `.exe` installer or the standalone `.zip` archive from [Releases](https://github.com/2fa0/xylring/releases):
 
-- **Installer**: run `xylring-setup-0.8.5-amd64.exe` (installs to your user directory, no admin rights required).
-- **Portable**: extract `xylring-0.8.5-windows-x64.zip` and run `Xylring.exe`.
+- **Installer**: run `xylring-setup-0.9.0-amd64.exe` (installs to your user directory, no admin rights required).
+- **Portable**: extract `xylring-0.9.0-windows-x64.zip` and run `Xylring.exe`.
 
 ### Build from Source
 
@@ -117,6 +118,15 @@ xylring repoA repoB
 
 # Just focus the running Xylring window
 xylring
+```
+
+The board also works from the terminal, so an agent can file tasks and their commits as it works:
+
+```sh
+xylring board list
+xylring board add "Fix the login timeout" --priority high --due 2026-11-30
+xylring board link <ID> <COMMIT_HASH>
+xylring board note <ID> "Traced it to the token refresh path"
 ```
 
 ### Install CLI Helper in PATH

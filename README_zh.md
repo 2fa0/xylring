@@ -15,7 +15,7 @@
   <a href="./README.md">English</a>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.8.5-blue.svg?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/Release-v0.9.0-blue.svg?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
@@ -46,6 +46,7 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 ## ✨ 核心特性
 
+- 🗂️ **跨项目 AI 协作看板**：待办、进行中、待审阅、已完成四列视图把多个仓库的任务汇总在一起。卡片可拖拽、可设优先级与截止日期，任务能挂上多个仓库的提交，备注按时间线记录；同一份看板也能用 `xylring board` 从命令行读写。
 - 📊 **提交节点大小映射改动量**：单次提交改动的文件和代码越多，图上的提交点就越大。扫一眼提交树，就能立刻分辨哪些是大重构、哪些是小修补。
 - 🤖 **图右侧直出 AI 与 Agent 归属**：在提交树的右侧直接展示每次提交对应的 AI 与 Agent 信息（解析 `Co-authored-by`、`AI-Generated-By`、`Prompt-SHA` 等 Trailer），不用点进详情就能看清是谁干的活。
 - 🌿 **未删除 Worktree 实时提醒**：多 Agent 并行开发时最容易遗忘清理临时工作区，Xylring 把当前残留的 `git worktree` 数量直接摆在明面上。
@@ -63,10 +64,10 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 ### macOS
 
-根据芯片架构从 [Release v0.8.5](https://github.com/2fa0/xylring/releases) 下载对应的 `.dmg`：
+根据芯片架构从 [Release v0.9.0](https://github.com/2fa0/xylring/releases) 下载对应的 `.dmg`：
 
-- **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.8.5-arm64.dmg`
-- **Intel 芯片 (x86_64)**：`xylring-0.8.5-amd64.dmg`
+- **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.9.0-arm64.dmg`
+- **Intel 芯片 (x86_64)**：`xylring-0.9.0-amd64.dmg`
 
 也可以下载 `.app.tar.gz` 自行放置应用。双击打开 `.dmg`，把 **Xylring** 拖入「应用程序（Applications）」文件夹。
 
@@ -82,8 +83,8 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 从 [Releases](https://github.com/2fa0/xylring/releases) 下载 `.exe` 安装程序或免安装 `.zip` 压缩包：
 
-- **安装版**：运行 `xylring-setup-0.8.5-amd64.exe`（安装到当前用户目录，无需管理员权限）。
-- **便携版**：解压 `xylring-0.8.5-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
+- **安装版**：运行 `xylring-setup-0.9.0-amd64.exe`（安装到当前用户目录，无需管理员权限）。
+- **便携版**：解压 `xylring-0.9.0-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
 
 ### 从源码构建
 
@@ -119,6 +120,15 @@ xylring repoA repoB
 xylring
 ```
 
+看板也能在终端里操作，AI Agent 可以直接把任务连同提交一起登记进去：
+
+```sh
+xylring board list
+xylring board add "修好登录超时" --priority high --due 2026-11-30
+xylring board link <ID> <COMMIT_HASH>
+xylring board note <ID> "定位到 token 刷新逻辑"
+```
+
 ### 将命令行工具添加到 PATH
 
 - **通过界面菜单**：`File` → `Install 'xylring' Command Line Tool in PATH...`
@@ -138,6 +148,7 @@ xylring
 - [x] 双点与三点（`...`）提交对比
 - [x] 语法高亮全文件预览与图片 Diff 对比
 - [x] 终端 `xylring .` 联动及 macOS / Windows 双端支持
+- [x] 跨项目协作看板与命令行同步
 - [ ] 交互式 Rebase 界面（Squash、Reorder、Drop）
 - [ ] Linux 桌面端支持（X11 / Wayland）
 - [ ] 更多内置配色主题（Solarized、Nord、Catppuccin）
