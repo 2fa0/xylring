@@ -227,7 +227,7 @@ func (a *app) view(c *ui.Context) {
 	root.Children(func() {
 		a.chrome(c)
 		if a.showBoard {
-			ui.Column(c.Key("page-board")).Grow(1).MinWidth(0).MinHeight(0).Transition(fadeEnter()).Children(func() {
+			ui.Column(c.Key("page-board")).Grow(1).MinWidth(0).MinHeight(0).Transition(boardPageMotion()).Children(func() {
 				a.boardScreen(c)
 			})
 		} else if a.showHome || (a.activeTab() == nil && len(a.found) <= 1) {
@@ -279,8 +279,24 @@ func (a *app) handleShortcuts(c *ui.Context) {
 		if c.Shortcut(commandModifier(), ui.KeyO) {
 			a.pickRepo()
 		}
-		if !empty && c.Shortcut(commandModifier(), ui.KeyB) {
+		if (!empty || a.showBoard) && c.Shortcut(commandModifier(), ui.KeyB) {
 			a.toggleSidebar()
+		}
+		if a.showBoard {
+			if !a.board.showNewModal && !a.board.showLinkModal && !a.board.showSnippet {
+				if c.Shortcut(commandModifier(), ui.KeyF) || c.Shortcut(commandModifier(), ui.KeyP) || c.Shortcut(commandModifier(), ui.KeyK) {
+					a.board.searchInput.Focus(c)
+					return
+				}
+				if c.Shortcut(0, ui.KeyEscape) {
+					if a.board.search != "" {
+						a.board.search = ""
+					} else if a.board.selectedID != "" {
+						a.closeBoardDrawer()
+					}
+				}
+			}
+			return
 		}
 		if tab != nil && !empty {
 			if c.Shortcut(commandModifier(), ui.KeyR) {
@@ -585,7 +601,14 @@ func (a *app) chrome(c *ui.Context) {
 				a.openSettings()
 			}
 		}
-		if empty || tab == nil || a.showBoard {
+		if empty {
+			return
+		}
+		if a.showBoard {
+			a.boardChromeToolbar(c, padR, rightPadL, rightW)
+			return
+		}
+		if tab == nil {
 			return
 		}
 		ui.Row(c).Fill().Padding(0, padR, 0, rightPadL).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -876,14 +899,18 @@ func (a *app) repoItems() []string {
 }
 
 func (a *app) repoList(c *ui.Context) {
-	ui.Themed(c, listTheme(c)).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Padding(6, 8, 8, 8).Children(func() {
+	t := c.Theme()
+	ui.Column(c).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Padding(6, 8, 8, 8).Children(func() {
 		a.sidebarBoardRow(c)
-		a.sidebarRepoSection(c)
-		if !a.showBoard {
-			if tab := a.activeTab(); tab != nil && !tab.unavailable {
-				a.ringStatusControl(c, tab, "sidebar-ring-settings")
+		ui.Box(c).FillWidth().Height(1).Background(t.Border.Alpha(0.55)).Margin(2, 2, 8, 2).Shrink(0)
+		ui.Themed(c, listTheme(c)).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
+			a.sidebarRepoSection(c)
+			if !a.showBoard {
+				if tab := a.activeTab(); tab != nil && !tab.unavailable {
+					a.ringStatusControl(c, tab, "sidebar-ring-settings")
+				}
 			}
-		}
+		})
 	})
 }
 
