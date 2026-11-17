@@ -34,7 +34,10 @@ type boardState struct {
 	descInput       ui.Handle
 	noteDraft       string
 	noteInput       ui.Handle
+	noteDrafts      map[string]string
 	drawerStatusIdx int
+	deleteTaskID    string
+	writeGen        int
 	showNewModal    bool
 	newTitle        string
 	newDesc         string
@@ -78,6 +81,8 @@ func (a *app) reloadBoardSync() {
 }
 
 func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
+	a.board.writeGen++
+	prev := a.board.file
 	a.board.file = bf
 	a.board.loadErr = ""
 	if a.board.selectedID == "" {
@@ -94,13 +99,25 @@ func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
 		a.syncBoardDrafts(t)
 		return
 	}
-	if c == nil || !a.board.titleInput.Focused(c) {
+	prevTask, hasPrev := boardTaskByID(prev.Tasks, t.ID)
+	// A snapshot can arrive from another process while the drawer is open. Keep
+	// anything the user typed but has not saved yet; refresh the rest.
+	titleDirty := a.board.titleDraft != "" && (!hasPrev || a.board.titleDraft != prevTask.Title)
+	if !titleDirty && (c == nil || !a.board.titleInput.Focused(c)) {
 		a.board.titleDraft = t.Title
 	}
-	if c == nil || !a.board.descInput.Focused(c) {
+	descDirty := !hasPrev || a.board.descDraft != prevTask.Description
+	if !descDirty && (c == nil || !a.board.descInput.Focused(c)) {
 		a.board.descDraft = t.Description
 	}
 	a.board.drawerStatusIdx = boardStatusIndex(t.Status)
+}
+
+func boardTaskByID(tasks []boardTask, id string) (boardTask, bool) {
+	if idx := findBoardTaskIndex(tasks, id); idx >= 0 {
+		return tasks[idx], true
+	}
+	return boardTask{}, false
 }
 
 func boardStatusIndex(s boardStatus) int {
@@ -111,11 +128,39 @@ func boardStatusIndex(s boardStatus) int {
 }
 
 func (a *app) syncBoardDrafts(t boardTask) {
+	a.stashNoteDraft()
 	a.board.editTaskID = t.ID
 	a.board.titleDraft = t.Title
 	a.board.descDraft = t.Description
-	a.board.noteDraft = ""
 	a.board.drawerStatusIdx = boardStatusIndex(t.Status)
+	a.board.noteDraft = ""
+	if draft, ok := a.board.noteDrafts[t.ID]; ok {
+		a.board.noteDraft = draft
+	}
+}
+
+// stashNoteDraft keeps an unsent note with its task, so closing the drawer or
+// committing another field does not throw the text away.
+func (a *app) stashNoteDraft() {
+	id := a.board.editTaskID
+	if id == "" {
+		return
+	}
+	if strings.TrimSpace(a.board.noteDraft) == "" {
+		delete(a.board.noteDrafts, id)
+		return
+	}
+	if a.board.noteDrafts == nil {
+		a.board.noteDrafts = map[string]string{}
+	}
+	a.board.noteDrafts[id] = a.board.noteDraft
+}
+
+func (a *app) forgetBoardTaskDraft(id string) {
+	delete(a.board.noteDrafts, id)
+	if a.board.editTaskID == id {
+		a.board.noteDraft = ""
+	}
 }
 
 func (a *app) selectBoardTask(id string) {
@@ -131,6 +176,7 @@ func (a *app) selectBoardTask(id string) {
 
 func (a *app) closeBoardDrawer() {
 	a.commitBoardDrafts()
+	a.stashNoteDraft()
 	a.board.selectedID = ""
 	a.board.editTaskID = ""
 }
@@ -147,7 +193,12 @@ func (a *app) commitBoardDrafts() {
 	var patch boardTaskPatch
 	changed := false
 	trimmedTitle := strings.TrimSpace(a.board.titleDraft)
-	if trimmedTitle != "" && trimmedTitle != cur.Title {
+	switch {
+	case trimmedTitle == "":
+		// An emptied title cannot be saved; say so instead of dropping it silently.
+		a.setBanner(tr("任务标题不能为空"), "")
+		a.board.titleDraft = cur.Title
+	case trimmedTitle != cur.Title:
 		patch.Title = &trimmedTitle
 		changed = true
 	}
@@ -168,6 +219,15 @@ func (a *app) commitBoardDrafts() {
 	a.syncBoardDrafts(updated)
 }
 
+// leaveBoard saves the open drawer before the board page goes away, so text
+// typed there is not left only in memory.
+func (a *app) leaveBoard() {
+	if a.showBoard {
+		a.commitBoardDrafts()
+	}
+	a.showBoard = false
+}
+
 func (a *app) openBoard() {
 	a.ensureBoardLoaded()
 	a.showHome = false
@@ -182,6 +242,7 @@ func (a *app) pollBoardFile() {
 	lastMod := a.board.lastMod
 	lastSize := a.board.lastSize
 	loaded := a.board.loaded
+	gen := a.board.writeGen
 	a.board.polling = true
 	go func() {
 		defer a.post(func() {
@@ -212,6 +273,11 @@ func (a *app) pollBoardFile() {
 		mod := info.ModTime()
 		size := info.Size()
 		a.post(func() {
+			// A local change landed while this read was in flight; applying the
+			// older snapshot would show it reverting.
+			if gen != a.board.writeGen {
+				return
+			}
 			a.board.lastMod = mod
 			a.board.lastSize = size
 			a.board.loaded = true
@@ -288,8 +354,7 @@ func (a *app) openBoardCommit(link boardCommitLink) {
 				a.pendingToast = "该提交已不存在，可能已被变基或修改"
 				return
 			}
-			a.commitBoardDrafts()
-			a.showBoard = false
+			a.leaveBoard()
 			a.openRoot(root)
 			if tab := a.activeTab(); tab != nil {
 				if tab.query.term != "" || tab.query.filePath != "" || tab.query.ref != "" || tab.query.hideRemote {
@@ -878,15 +943,7 @@ func (a *app) boardColumns(c *ui.Context, cols [][]boardTask) {
 				})
 			})
 			if dropped, ok := ui.Drop[boardCardDrag](col); ok && dropped.status != st {
-				bf, updated, err := boardUpdateTask(dropped.taskID, boardTaskPatch{Status: &st})
-				if err != nil {
-					a.setBanner(err.Error(), "")
-				} else {
-					a.applyBoardFile(bf, c)
-					if a.board.selectedID == updated.ID {
-						a.syncBoardDrafts(updated)
-					}
-				}
+				a.applyBoardTaskPatch(dropped.taskID, c, boardTaskPatch{Status: &st})
 			}
 		}
 	})
@@ -1047,51 +1104,37 @@ func (a *app) boardCard(c *ui.Context, task boardTask) {
 		if task.Status == boardDone {
 			next = boardTodo
 		}
-		bf, updated, err := boardUpdateTask(task.ID, boardTaskPatch{Status: &next})
-		if err != nil {
-			a.setBanner(err.Error(), "")
-		} else {
-			a.applyBoardFile(bf, c)
-			if a.board.selectedID == updated.ID {
-				a.syncBoardDrafts(updated)
-			}
-		}
+		a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Status: &next})
 		return
 	}
 	if hasMove {
-		bf, updated, err := boardUpdateTask(task.ID, boardTaskPatch{Status: &moveStatus})
-		if err != nil {
-			a.setBanner(err.Error(), "")
-		} else {
-			a.applyBoardFile(bf, c)
-			if a.board.selectedID == updated.ID {
-				a.syncBoardDrafts(updated)
-			}
-		}
+		a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Status: &moveStatus})
 		return
 	}
 	if doArchive || doUnarchive {
 		v := doArchive
-		bf, _, err := boardUpdateTask(task.ID, boardTaskPatch{Archived: &v})
-		if err != nil {
-			a.setBanner(err.Error(), "")
-		} else {
-			a.applyBoardFile(bf, c)
-		}
+		a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &v})
 		return
 	}
 	if doDelete {
-		bf, err := boardDeleteTask(task.ID)
-		if err != nil {
-			a.setBanner(err.Error(), "")
-		} else {
-			a.applyBoardFile(bf, c)
-		}
+		a.board.deleteTaskID = task.ID
 		return
 	}
 	if card.Clicked() {
 		a.selectBoardTask(task.ID)
 	}
+}
+
+// applyBoardTaskPatch flushes the open drawer first: its typed title or
+// description must not be replaced by the snapshot this change returns.
+func (a *app) applyBoardTaskPatch(id string, c *ui.Context, patch boardTaskPatch) {
+	a.commitBoardDrafts()
+	bf, _, err := boardUpdateTask(id, patch)
+	if err != nil {
+		a.setBanner(err.Error(), "")
+		return
+	}
+	a.applyBoardFile(bf, c)
 }
 
 func (a *app) boardDetailDrawer(c *ui.Context) {
@@ -1130,24 +1173,10 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 			}
 			if paneToggleIconButton(c, "board-drawer-archive", archTip, archTip, iconArchive, task.Archived).Clicked() {
 				next := !task.Archived
-				bf, updated, err := boardUpdateTask(task.ID, boardTaskPatch{Archived: &next})
-				if err != nil {
-					a.setBanner(err.Error(), "")
-				} else {
-					a.applyBoardFile(bf, c)
-					a.syncBoardDrafts(updated)
-				}
+				a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &next})
 			}
 			if paneIconButton(c, "board-drawer-delete", tr("删除任务"), iconTrash2).Clicked() {
-				bf, err := boardDeleteTask(task.ID)
-				if err != nil {
-					a.setBanner(err.Error(), "")
-				} else {
-					a.board.selectedID = ""
-					a.board.editTaskID = ""
-					a.applyBoardFile(bf, c)
-				}
-				return
+				a.board.deleteTaskID = task.ID
 			}
 			if closeIconButton(c, "board-drawer-close", tr("关闭详情")).Clicked() {
 				a.closeBoardDrawer()
@@ -1186,13 +1215,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 							if seg.Track.Changed() {
 								target := boardStatuses[a.board.drawerStatusIdx]
 								if target != task.Status {
-									bf, updated, err := boardUpdateTask(task.ID, boardTaskPatch{Status: &target})
-									if err != nil {
-										a.setBanner(err.Error(), "")
-									} else {
-										a.applyBoardFile(bf, c)
-										a.syncBoardDrafts(updated)
-									}
+									a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Status: &target})
 								}
 							}
 						})
@@ -1263,13 +1286,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 										next = append(next, r)
 									}
 								}
-								bf, updated, err := boardUpdateTask(task.ID, boardTaskPatch{Repos: &next})
-								if err != nil {
-									a.setBanner(err.Error(), "")
-								} else {
-									a.applyBoardFile(bf, c)
-									a.syncBoardDrafts(updated)
-								}
+								a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Repos: &next})
 							}
 
 							addRepoBtn := ui.Button(c.Key("board-drawer-add-repo"), tr("+ 项目")).Padding(3, 9).FontSize(12.5)
@@ -1283,13 +1300,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 									repoPath := rp
 									already := slices.Contains(repos, repoPath)
 									if m.Item(repoTitle(repoPath) + " (" + homePath(repoPath) + ")").Checked(already).Disabled(already).Chosen() {
-										bf, updated, err := boardUpdateTask(task.ID, boardTaskPatch{AddRepos: []string{repoPath}})
-										if err != nil {
-											a.setBanner(err.Error(), "")
-										} else {
-											a.applyBoardFile(bf, c)
-											a.syncBoardDrafts(updated)
-										}
+										a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{AddRepos: []string{repoPath}})
 									}
 								}
 							})
@@ -1381,14 +1392,13 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 						if strings.TrimSpace(a.board.noteDraft) == "" {
 							return
 						}
-						bf, updated, err := boardAddNote(task.ID, a.board.noteDraft, "human", "")
+						bf, _, err := boardAddNote(task.ID, a.board.noteDraft, "human", "")
 						if err != nil {
 							a.setBanner(err.Error(), "")
 							return
 						}
-						a.board.noteDraft = ""
+						a.forgetBoardTaskDraft(task.ID)
 						a.applyBoardFile(bf, c)
-						a.syncBoardDrafts(updated)
 					}
 					composer := ui.Column(c.Key("board-drawer-note-box")).FillWidth().Padding(9, 11).Gap(6).
 						Radius(8).Transition(colorMotion()).
@@ -1483,12 +1493,12 @@ func (a *app) boardCommitChipRow(c *ui.Context, task boardTask, link boardCommit
 			a.openBoardCommit(link)
 		}
 		if paneIconButton(c, "board-commit-unlink-"+link.Repo+"-"+link.Hash, tr("移除关联"), iconClose).Clicked() {
-			bf, updated, err := boardUnlinkCommit(task.ID, link.Repo, link.Hash)
+			a.commitBoardDrafts()
+			bf, _, err := boardUnlinkCommit(task.ID, link.Repo, link.Hash)
 			if err != nil {
 				a.setBanner(err.Error(), "")
 			} else {
 				a.applyBoardFile(bf, c)
-				a.syncBoardDrafts(updated)
 			}
 		}
 	})
@@ -1498,6 +1508,7 @@ func (a *app) boardModals(c *ui.Context) {
 	a.newBoardTaskModal(c)
 	a.linkBoardCommitModal(c)
 	a.boardSnippetModal(c)
+	a.boardDeleteTaskModal(c)
 }
 
 func (a *app) newBoardTaskModal(c *ui.Context) {
@@ -1688,7 +1699,7 @@ func (a *app) submitBoardLinkCommit() {
 			})
 			return
 		}
-		bf, updated, err := boardLinkCommit(taskID, link)
+		bf, _, err := boardLinkCommit(taskID, link)
 		a.post(func() {
 			a.board.linkBusy = false
 			if err != nil {
@@ -1701,9 +1712,6 @@ func (a *app) submitBoardLinkCommit() {
 			a.board.commitValid[boardCommitCacheKey(link.Repo, link.Hash)] = true
 			a.board.showLinkModal = false
 			a.applyBoardFile(bf, nil)
-			if a.board.selectedID == updated.ID {
-				a.syncBoardDrafts(updated)
-			}
 		})
 	}()
 }
@@ -1720,6 +1728,50 @@ func (a *app) boardSnippetModal(c *ui.Context) {
 			a.board.showSnippet = false
 		}
 	})
+}
+
+// boardDeleteTaskModal asks before a task and everything linked to it disappears;
+// there is no undo, so one click in the card menu or drawer must not be enough.
+func (a *app) boardDeleteTaskModal(c *ui.Context) {
+	open := a.board.deleteTaskID != ""
+	if !open {
+		return
+	}
+	id := a.board.deleteTaskID
+	t := c.Theme()
+	task, ok := boardTaskByID(a.board.file.Tasks, id)
+	label := id
+	if ok {
+		label = task.ID + " " + task.Title
+	}
+	appModal(c.Key("board-delete-task-modal"), &open, tr("删除看板任务"), 420, false, func() {
+		ui.Column(c).FillWidth().Gap(6).Children(func() {
+			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(t.Text)
+			ui.Text(c, tr("任务和它的关联提交、备注会一起删除，无法恢复。")).FontSize(12.5).TextColor(t.TextMuted)
+		})
+	}, func() {
+		if ui.Button(c.Key("board-delete-cancel"), tr("取消")).Clicked() {
+			open = false
+		}
+		if ui.Button(c.Key("board-delete-confirm"), tr("确认删除")).Padding(2, 12).Clicked() {
+			bf, err := boardDeleteTask(id)
+			if err != nil {
+				a.setBanner(err.Error(), "")
+				open = false
+			} else {
+				a.forgetBoardTaskDraft(id)
+				if a.board.selectedID == id {
+					a.board.selectedID = ""
+					a.board.editTaskID = ""
+				}
+				a.applyBoardFile(bf, c)
+				open = false
+			}
+		}
+	})
+	if !open {
+		a.board.deleteTaskID = ""
+	}
 }
 
 func (a *app) linkCommitToBoardTask(tab *repoTab, cm commit, taskID string) {

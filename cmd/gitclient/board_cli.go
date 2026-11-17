@@ -374,6 +374,9 @@ func runBoardUpdateCLI(ctx context.Context, dir string, args []string, out io.Wr
 			}
 		}
 	}
+	if patch.Title == nil && patch.Description == nil && patch.Status == nil && patch.Archived == nil && patch.Repos == nil && len(patch.AddRepos) == 0 {
+		return errors.New("没有要更新的字段；用 --title、--desc、--status、--done、--archive 或 --repo 指定")
+	}
 	_, task, err := boardUpdateTask(parsed.positional[0], patch)
 	if err != nil {
 		return err

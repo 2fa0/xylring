@@ -318,3 +318,155 @@ func TestBoardCardDragDropBetweenColumns(t *testing.T) {
 		t.Fatalf("dragging card should not open drawer, selectedID=%q", a.board.selectedID)
 	}
 }
+
+func TestBoardExternalSyncKeepsUnsavedDrafts(t *testing.T) {
+	withTempBoardConfig(t)
+	a := &app{showBoard: true, dispatch: func(func()) {}}
+	a.ensureBoardLoaded()
+	bf, created, err := boardAddTask("外部同步测试", "原始描述", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.applyBoardFile(bf, nil)
+	a.selectBoardTask(created.ID)
+
+	a.board.titleDraft = "正在输入的标题"
+	a.board.descDraft = "正在输入的描述"
+
+	// Another process (CLI or a second window) rewrites the file underneath us.
+	external, _, err := boardAddNote(created.ID, "另一个进程的备注", "Antigravity", "Gemini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.applyBoardFile(external, nil)
+
+	if a.board.titleDraft != "正在输入的标题" || a.board.descDraft != "正在输入的描述" {
+		t.Fatalf("external sync dropped unsaved drafts: title=%q desc=%q", a.board.titleDraft, a.board.descDraft)
+	}
+
+	a.commitBoardDrafts()
+	stored, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := findBoardTaskIndex(stored.Tasks, created.ID)
+	if idx < 0 || stored.Tasks[idx].Title != "正在输入的标题" || stored.Tasks[idx].Description != "正在输入的描述" {
+		t.Fatalf("typed drafts were not saved: %+v", stored.Tasks)
+	}
+}
+
+func TestBoardNoteDraftIsKeptPerTask(t *testing.T) {
+	withTempBoardConfig(t)
+	a := &app{showBoard: true, dispatch: func(func()) {}}
+	a.ensureBoardLoaded()
+	bf, first, err := boardAddTask("第一个任务", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bf, second, err := boardAddTask("第二个任务", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.applyBoardFile(bf, nil)
+
+	a.selectBoardTask(first.ID)
+	a.board.noteDraft = "第一个任务的备注草稿"
+	a.closeBoardDrawer()
+	a.selectBoardTask(first.ID)
+	if a.board.noteDraft != "第一个任务的备注草稿" {
+		t.Fatalf("closing the drawer dropped the note draft: %q", a.board.noteDraft)
+	}
+
+	a.selectBoardTask(second.ID)
+	if a.board.noteDraft != "" {
+		t.Fatalf("another task should start with an empty note, got %q", a.board.noteDraft)
+	}
+	a.board.noteDraft = "第二个任务的备注草稿"
+	a.selectBoardTask(first.ID)
+	if a.board.noteDraft != "第一个任务的备注草稿" {
+		t.Fatalf("note draft not restored per task: %q", a.board.noteDraft)
+	}
+	a.selectBoardTask(second.ID)
+	if a.board.noteDraft != "第二个任务的备注草稿" {
+		t.Fatalf("note draft not restored per task: %q", a.board.noteDraft)
+	}
+}
+
+func TestBoardEmptyTitleDraftReverts(t *testing.T) {
+	withTempBoardConfig(t)
+	a := &app{showBoard: true, dispatch: func(func()) {}}
+	a.ensureBoardLoaded()
+	bf, created, err := boardAddTask("标题不能清空", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.applyBoardFile(bf, nil)
+	a.selectBoardTask(created.ID)
+
+	a.board.titleDraft = "   "
+	a.commitBoardDrafts()
+	if a.board.titleDraft != "标题不能清空" {
+		t.Fatalf("cleared title should fall back to the stored one, got %q", a.board.titleDraft)
+	}
+	if a.banner != tr("任务标题不能为空") {
+		t.Fatalf("expected a banner about the empty title, got %q", a.banner)
+	}
+}
+
+func TestBoardDeleteAsksBeforeRemoving(t *testing.T) {
+	withTempBoardConfig(t)
+	a := &app{showBoard: true, dispatch: func(func()) {}}
+	a.ensureBoardLoaded()
+	_, created, err := boardAddTask("等待确认删除", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.reloadBoardSync()
+	a.selectBoardTask(created.ID)
+
+	tt := ui.NewTester(a.view, 1280, 820)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if err := tt.Click("删除任务"); err != nil {
+		t.Fatalf("click delete: %v", err)
+	}
+	tt.Frame()
+	if a.board.deleteTaskID != created.ID {
+		t.Fatalf("expected a confirmation step, deleteTaskID=%q", a.board.deleteTaskID)
+	}
+	if bf, err := loadBoardFile(); err != nil || findBoardTaskIndex(bf.Tasks, created.ID) < 0 {
+		t.Fatalf("task must survive until confirmed: %+v err=%v", bf.Tasks, err)
+	}
+	saveLobePreview(t, tt, "board-delete-confirm")
+
+	if err := tt.Click("取消"); err != nil {
+		t.Fatalf("click cancel: %v", err)
+	}
+	tt.Frame()
+	if a.board.deleteTaskID != "" {
+		t.Fatalf("cancel should close the confirmation, deleteTaskID=%q", a.board.deleteTaskID)
+	}
+	if bf, err := loadBoardFile(); err != nil || findBoardTaskIndex(bf.Tasks, created.ID) < 0 {
+		t.Fatalf("cancel must keep the task: %+v err=%v", bf.Tasks, err)
+	}
+
+	if err := tt.Click("删除任务"); err != nil {
+		t.Fatalf("click delete again: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("确认删除"); err != nil {
+		t.Fatalf("click confirm: %v", err)
+	}
+	tt.Frame()
+	bf, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findBoardTaskIndex(bf.Tasks, created.ID) >= 0 {
+		t.Fatalf("task should be deleted after confirming: %+v", bf.Tasks)
+	}
+	if a.board.selectedID != "" || a.board.deleteTaskID != "" {
+		t.Fatalf("delete should close drawer and dialog: sel=%q del=%q", a.board.selectedID, a.board.deleteTaskID)
+	}
+}
