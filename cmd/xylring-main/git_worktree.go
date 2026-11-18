@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -22,30 +23,75 @@ func worktreeStatus(ctx context.Context, dir string) ([]fileChange, error) {
 
 func enrichWorktreeStatus(ctx context.Context, dir string, files []fileChange) ([]fileChange, error) {
 	applyWorktreeNumStat(ctx, dir, files)
+	if len(files) == 0 {
+		return files, nil
+	}
+	scratch := make([]byte, 64<<10)
 	for i := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// Hash the bounded preview content so edits with unchanged status or timestamps are noticed.
-		data, note, err := readWorktreeFile(dir, files[i].path)
-		h := sha256.New()
-		h.Write(data)
-		h.Write([]byte{0})
-		h.Write([]byte(note))
-		if err != nil {
-			h.Write([]byte{0})
-			h.Write([]byte(err.Error()))
-		}
-		files[i].worktreeVersion = fmt.Sprintf("%x", h.Sum(nil))
-		if !files[i].hasStat && files[i].extra == "未跟踪" && err == nil {
-			if isImageFile(files[i].path) || strings.HasPrefix(note, "二进制文件") {
-				files[i].binary, files[i].hasStat = true, true
+		f := &files[i]
+		countLines := !f.hasStat && f.extra == "未跟踪"
+		stamp, note, lines, err := fingerprintWorktreeFile(dir, f.path, scratch, countLines)
+		f.worktreeVersion = stamp
+		if countLines && err == nil {
+			if isImageFile(f.path) || strings.HasPrefix(note, "二进制文件") {
+				f.binary, f.hasStat = true, true
 			} else if note == "" {
-				files[i].added, files[i].hasStat = countTextLines(data), true
+				f.added, f.hasStat = lines, true
 			}
 		}
 	}
 	return files, nil
+}
+
+func fingerprintWorktreeFile(dir, path string, scratch []byte, countLines bool) (stamp, note string, lines int, err error) {
+	f, limit, note, err := openWorktreeFile(dir, path)
+	h := sha256.New()
+	if f != nil {
+		defer f.Close()
+		r := io.LimitedReader{R: f, N: limit + 1}
+		var binary bool
+		var readErr error
+		last := byte('\n')
+		isImage := isImageFile(path)
+		for r.N > 0 && readErr == nil {
+			var n int
+			n, readErr = r.Read(scratch)
+			chunk := scratch[:n]
+			h.Write(chunk)
+			binary = binary || (!isImage && bytes.IndexByte(chunk, 0) >= 0)
+			if n > 0 && countLines && !binary && !isImage {
+				lines += bytes.Count(chunk, []byte{'\n'})
+				last = chunk[n-1]
+			}
+		}
+		switch {
+		case r.N == 0:
+			note = "文件在读取时变大，未载入"
+		case readErr != io.EOF:
+			if !os.IsNotExist(readErr) {
+				err = readErr
+			}
+		case binary:
+			note = fmt.Sprintf("二进制文件（%d 字节）", limit+1-r.N)
+		}
+		if r.N == 0 || readErr != io.EOF || binary {
+			h.Reset()
+			lines = 0
+		} else if last != '\n' {
+			lines++
+		}
+	}
+	h.Write([]byte{0})
+	h.Write([]byte(note))
+	if err != nil {
+		h.Write([]byte{0})
+		h.Write([]byte(err.Error()))
+	}
+	var digest [sha256.Size]byte
+	return hex.EncodeToString(h.Sum(digest[:0])), note, lines, err
 }
 
 func applyWorktreeNumStat(ctx context.Context, dir string, files []fileChange) {
@@ -60,25 +106,6 @@ func applyWorktreeNumStat(ctx context.Context, dir string, files []fileChange) {
 		applyNumStat(files, parseNumStatZ(statOut))
 	}
 
-}
-
-func countTextLines(data []byte) int {
-	if len(data) == 0 {
-		return 0
-	}
-	n := bytes.Count(data, []byte{'\n'})
-	if data[len(data)-1] != '\n' {
-		n++
-	}
-	return n
-}
-
-func worktreeKey(files []fileChange) string {
-	parts := make([]string, 0, len(files))
-	for _, f := range files {
-		parts = append(parts, fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%t\x00%t\x00%d\x00%d", f.status, f.extra, f.oldPath, f.path, f.worktreeVersion, f.added, f.deleted, f.binary, f.hasStat, f.indexStatus, f.workStatus))
-	}
-	return strings.Join(parts, "\x00")
 }
 
 // parsePorcelainZ 解析 git status --porcelain=v1 -z。
@@ -154,45 +181,53 @@ func porcelainState(x, y byte) (string, string) {
 	return "M", "已修改"
 }
 
-func readWorktreeFile(dir, rel string) ([]byte, string, error) {
+func openWorktreeFile(dir, rel string) (*os.File, int64, string, error) {
 	if rel == "" {
-		return nil, "", nil
+		return nil, 0, "", nil
 	}
 	full := filepath.Join(dir, filepath.FromSlash(rel))
 	base, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, "", err
+		return nil, 0, "", err
 	}
 	abs, err := filepath.Abs(full)
 	if err != nil {
-		return nil, "", err
+		return nil, 0, "", err
 	}
 	if relPath, err := filepath.Rel(base, abs); err != nil || strings.HasPrefix(relPath, "..") {
-		return nil, "", errors.New("路径超出仓库")
+		return nil, 0, "", errors.New("路径超出仓库")
 	}
 	info, err := os.Lstat(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, "", nil
+			return nil, 0, "", nil
 		}
-		return nil, "", err
+		return nil, 0, "", err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, "符号链接，未载入", nil
+		return nil, 0, "符号链接，未载入", nil
 	}
 	if !info.Mode().IsRegular() {
-		return nil, "不是普通文件", nil
+		return nil, 0, "不是普通文件", nil
 	}
 	limit := int64(maxDiffBytes)
 	if isImageFile(rel) {
 		limit = 32 << 20
 	}
 	if info.Size() > limit {
-		return nil, fmt.Sprintf("文件过大（%d 字节），未载入", info.Size()), nil
+		return nil, 0, fmt.Sprintf("文件过大（%d 字节），未载入", info.Size()), nil
 	}
 	f, err := os.Open(abs)
 	if err != nil {
-		return nil, "", err
+		return nil, 0, "", err
+	}
+	return f, limit, "", nil
+}
+
+func readWorktreeFile(dir, rel string) ([]byte, string, error) {
+	f, limit, note, err := openWorktreeFile(dir, rel)
+	if f == nil {
+		return nil, note, err
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))

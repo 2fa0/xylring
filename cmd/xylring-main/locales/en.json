@@ -255,6 +255,7 @@
   "命令行": "Command line",
   "哈希": "Hash",
   "固定展开提交面板": "Pin commit panel open",
+  "图片分辨率超出预览上限": "Image resolution exceeds the preview limit",
   "图片数据为空": "Image data is empty",
   "图片文件为空": "Image file is empty",
   "图片解码失败：%v": "Failed to decode image: %v",

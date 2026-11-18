@@ -79,13 +79,13 @@ func (a *app) queueSession() {
 	bw := a.bottomFullWidth
 	s := savedSession{
 		Preferences:     &prefs,
-		RepoAutoFetch:   maps.Clone(a.repoAutoFetch),
+		RepoAutoFetch:   a.repoAutoFetch,
 		ThemeMode:       a.themeMode,
 		RingSkipNotice:  a.ringSkipNotice,
 		Repos:           make([]savedRepo, 0, len(a.tabs)),
 		BottomFullWidth: &bw,
 		RepoOrder:       a.repoOrder,
-		Found:           slices.Clone(a.found),
+		Found:           a.found,
 		FoundFrom:       a.foundFrom,
 	}
 	for _, p := range a.recentProvenance {
@@ -142,6 +142,9 @@ func (a *app) queueSession() {
 			writeSessionQueue(ch, results, func(s savedSession) error { return writeJSON(p, s) })
 		}()
 	}
+	s.RepoAutoFetch = maps.Clone(s.RepoAutoFetch)
+	s.RepoOrder = slices.Clone(s.RepoOrder)
+	s.Found = slices.Clone(s.Found)
 	a.lastSession = &s
 	select {
 	case <-a.sessionWrites:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -49,7 +50,9 @@ func (a *app) startAutoRefresh() {
 				a.onMain(func() {
 					a.recheckGit()
 					if a.win == nil || a.win.IsFocused() && !a.win.IsMinimized() {
-						a.checkActiveRepo()
+						if t := a.activeTab(); t != nil && !time.Now().Before(t.nextRepoCheck) {
+							a.checkActiveRepo()
+						}
 						a.maybeAutoFetch()
 						if a.showBoard || refreshSummaries {
 							a.pollBoardFile()
@@ -74,6 +77,7 @@ func (a *app) checkActiveRepo() {
 		return
 	}
 	t.checking = true
+	t.worktreeRefreshGen++
 	gen, path := t.generation, t.path
 	watch, lastCheck := t.refWatch, t.refsChecked
 	unavailable := t.unavailable
@@ -97,7 +101,6 @@ func (a *app) checkActiveRepo() {
 		if err == nil {
 			dirty, cachedStatus, err = pollWorktreeStatus(ctx, path, cachedStatus)
 		}
-		dirtyKey := worktreeKey(dirty)
 		a.onMain(func() {
 			changed := false
 			defer func() {
@@ -126,6 +129,13 @@ func (a *app) checkActiveRepo() {
 				changed = true
 				return
 			}
+			dirtyChanged := !slices.Equal(t.worktreeFiles, dirty)
+			if dirtyChanged {
+				t.repoCheckDelay = 2 * time.Second
+			} else {
+				t.repoCheckDelay = min(16*time.Second, max(2*time.Second, 2*t.repoCheckDelay))
+			}
+			t.nextRepoCheck = time.Now().Add(t.repoCheckDelay)
 			t.worktreeCache = cachedStatus
 			if strings.HasPrefix(t.err, "检查仓库更新失败：") {
 				t.err = ""
@@ -139,7 +149,7 @@ func (a *app) checkActiveRepo() {
 				changed = true
 				return
 			}
-			if dirtyKey != t.worktreeKey {
+			if dirtyChanged {
 				a.applyWorktree(t, dirty)
 				changed = true
 			}
@@ -150,6 +160,7 @@ func (a *app) checkActiveRepo() {
 func (a *app) focusRepo() {
 	if t := a.activeTab(); t != nil {
 		t.refsChecked = time.Time{}
+		t.nextRepoCheck, t.repoCheckDelay = time.Time{}, 0
 	}
 	a.checkActiveRepo()
 	a.maybeAutoFetch()

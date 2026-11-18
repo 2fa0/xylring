@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/gob"
+	"encoding/binary"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui/editor"
@@ -33,7 +35,7 @@ func writeFileTabSnapshot(snapshot fileTabSnapshot) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	err = gob.NewEncoder(f).Encode(snapshot)
+	err = snapshot.writeTo(f)
 	closeErr := f.Close()
 	if err == nil {
 		err = closeErr
@@ -43,6 +45,67 @@ func writeFileTabSnapshot(snapshot fileTabSnapshot) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// Snapshot files are private to this process. Each field is written directly
+// so large blobs don't need a second, serialized copy in memory.
+func (s fileTabSnapshot) writeTo(f *os.File) error {
+	if err := binary.Write(f, binary.LittleEndian, [4]uint32{uint32(len(s.Old)), uint32(len(s.New)), uint32(len(s.Full)), uint32(len(s.Note))}); err != nil {
+		return err
+	}
+	for _, data := range [][]byte{s.Old, s.New} {
+		if _, err := f.Write(data); err != nil {
+			return err
+		}
+	}
+	for _, data := range []string{s.Full, s.Note} {
+		if _, err := f.WriteString(data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readFileTabSnapshot(path string) (fileTabSnapshot, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return fileTabSnapshot{}, err
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return fileTabSnapshot{}, err
+	}
+	var sizes [4]uint32
+	if err := binary.Read(f, binary.LittleEndian, &sizes); err != nil {
+		return fileTabSnapshot{}, err
+	}
+	if int64(sizes[0])+int64(sizes[1])+int64(sizes[2])+int64(sizes[3])+16 != stat.Size() {
+		return fileTabSnapshot{}, io.ErrUnexpectedEOF
+	}
+	var snapshot fileTabSnapshot
+	for i, dst := range []*[]byte{&snapshot.Old, &snapshot.New} {
+		if sizes[i] == 0 {
+			continue
+		}
+		*dst = make([]byte, sizes[i])
+		if _, err := io.ReadFull(f, *dst); err != nil {
+			return fileTabSnapshot{}, err
+		}
+	}
+	for i, dst := range []*string{&snapshot.Full, &snapshot.Note} {
+		size := sizes[i+2]
+		if size == 0 {
+			continue
+		}
+		var value strings.Builder
+		value.Grow(int(size))
+		if _, err := io.CopyN(&value, f, int64(size)); err != nil {
+			return fileTabSnapshot{}, err
+		}
+		*dst = value.String()
+	}
+	return snapshot, nil
 }
 
 func (a *app) fileTabVisible(t *repoTab, tab *fileDiffTab) bool {
@@ -82,53 +145,45 @@ func (a *app) spillFileTabs(t *repoTab) {
 		return
 	}
 	go func() {
-		type result struct {
-			tab  *fileDiffTab
-			path string
-			err  error
-		}
-		results := make([]result, 0, len(jobs))
-		for _, j := range jobs {
-			if j.ctx.Err() != nil {
-				results = append(results, result{j.tab, "", j.ctx.Err()})
-				continue
+		for i, j := range jobs {
+			jobs[i] = job{}
+			tab := j.tab
+			var path string
+			err := j.ctx.Err()
+			if err == nil {
+				snapshot := fileTabSnapshot{Note: j.note}
+				if j.source != nil {
+					snapshot.Old, snapshot.New, snapshot.Note = j.source.old, j.source.new, j.source.note
+				}
+				if j.fullImage != nil {
+					snapshot.Old = j.fullImage.data
+				}
+				if j.buffer != nil {
+					snapshot.Full = j.buffer.String()
+				}
+				path, err = writeFileTabSnapshot(snapshot)
+				if path != "" {
+					context.AfterFunc(j.ctx, func() { _ = os.Remove(path) })
+				}
 			}
-			snapshot := fileTabSnapshot{Note: j.note}
-			if j.source != nil {
-				snapshot.Old, snapshot.New, snapshot.Note = j.source.old, j.source.new, j.source.note
-			}
-			if j.fullImage != nil {
-				snapshot.Old = j.fullImage.data
-			}
-			if j.buffer != nil {
-				snapshot.Full = j.buffer.String()
-			}
-			path, err := writeFileTabSnapshot(snapshot)
-			if path != "" {
-				context.AfterFunc(j.ctx, func() { _ = os.Remove(path) })
-			}
-			results = append(results, result{j.tab, path, err})
-		}
-		a.post(func() {
-			for _, r := range results {
-				tab := r.tab
+			a.post(func() {
 				tab.cachePending = false
 				if t.closed || tab.closed {
-					if r.path != "" {
-						_ = os.Remove(r.path)
+					if path != "" {
+						_ = os.Remove(path)
 					}
-					continue
+					return
 				}
-				if r.err != nil {
-					t.notice = "暂存文件快照失败：" + r.err.Error()
-					continue
+				if err != nil {
+					t.notice = "暂存文件快照失败：" + err.Error()
+					return
 				}
-				tab.backing = r.path
+				tab.backing = path
 				if !a.fileTabVisible(t, tab) {
 					tab.releaseContent()
 				}
-			}
-		})
+			})
+		}
 	}()
 }
 
@@ -148,12 +203,7 @@ func (a *app) restoreFileTab(t *repoTab, tab *fileDiffTab) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		var snapshot fileTabSnapshot
-		f, err := os.Open(path)
-		if err == nil {
-			err = gob.NewDecoder(f).Decode(&snapshot)
-			_ = f.Close()
-		}
+		snapshot, err := readFileTabSnapshot(path)
 		var source *fileDiffSource
 		var diff *editor.DiffState
 		var simple *simpleDiff

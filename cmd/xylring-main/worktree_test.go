@@ -158,15 +158,21 @@ func TestWorktreeRowConnectsToHead(t *testing.T) {
 	}
 }
 
-func TestCountTextLines(t *testing.T) {
-	if n := countTextLines(nil); n != 0 {
-		t.Fatalf("nil %d", n)
-	}
-	if n := countTextLines([]byte("a\n")); n != 1 {
-		t.Fatalf("one line %d", n)
-	}
-	if n := countTextLines([]byte("a\nb")); n != 2 {
-		t.Fatalf("no trailing newline %d", n)
+func TestWorktreeFingerprintCountsLinesAcrossChunks(t *testing.T) {
+	dir := t.TempDir()
+	for _, test := range []struct {
+		content string
+		lines   int
+	}{
+		{"", 0}, {"a\n", 1}, {"ab\ncd", 2}, {"ab\ncd\n", 2},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte(test.content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		stamp, note, lines, err := fingerprintWorktreeFile(dir, "file.txt", make([]byte, 2), true)
+		if err != nil || note != "" || lines != test.lines || stamp == "" {
+			t.Fatalf("%q: stamp=%q note=%q lines=%d err=%v", test.content, stamp, note, lines, err)
+		}
 	}
 }
 

@@ -1355,6 +1355,9 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 		return pointerOver && pointerY >= r.Y && pointerY < r.Y+r.H
 	}
 	graph := func() {
+		if a.win != nil {
+			a.loadVisibleHistoryStats(tab)
+		}
 		ui.Column(c.Key("commit-graph-host")).Grow(1).MinWidth(0).MinHeight(0).Transition(commitGraphMotion(tab.id)).Children(func() {
 			if tab.rows() == 0 && !tab.loading {
 				a.commitListEmpty(c, tab).Grow(1)
@@ -2044,6 +2047,7 @@ func main() {
 		a.startAutoRefresh()
 		a.win.OnFocus(a.focusRepo)
 		a.win.OnClosed(func() {
+			a.commitBoardDrafts()
 			a.queueSession()
 			if a.sessionWrites != nil {
 				close(a.sessionWrites)
@@ -2080,6 +2084,9 @@ func main() {
 	}
 	if a.sessionDone != nil {
 		<-a.sessionDone
+	}
+	if a.board.jobTail != nil {
+		<-a.board.jobTail
 	}
 	log.Print("stopped")
 	crashlog.MarkClean()

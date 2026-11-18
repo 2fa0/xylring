@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 )
@@ -451,6 +452,32 @@ func TestBoardCardDragReorderWithinAndAcrossColumns(t *testing.T) {
 	}
 	if a.board.selectedID != "" {
 		t.Fatalf("dragging card should not open drawer, selectedID=%q", a.board.selectedID)
+	}
+}
+
+func TestBoardBackgroundDraftWritesKeepSubmissionOrder(t *testing.T) {
+	withTempBoardConfig(t)
+	bf, task, err := boardAddTask("original", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := make(chan func(), 4)
+	a := &app{win: &mygo.Window{}, dispatch: func(fn func()) { updates <- fn }}
+	a.applyBoardFile(bf, nil)
+	a.selectBoardTask(task.ID)
+
+	a.board.titleDraft = "first draft"
+	a.commitBoardDrafts()
+	a.board.titleDraft = "original"
+	a.board.descDraft = "latest description"
+	a.commitBoardDrafts()
+	if a.board.jobs != 2 {
+		t.Fatal("both edits should be queued without waiting for disk")
+	}
+	waitUpdates(t, updates, func() bool { return a.board.jobs == 0 })
+	stored, err := loadBoardFile()
+	if err != nil || len(stored.Tasks) != 1 || stored.Tasks[0].Title != "original" || stored.Tasks[0].Description != "latest description" {
+		t.Fatalf("stored task after queued edits: %+v, %v", stored.Tasks, err)
 	}
 }
 

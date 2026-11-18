@@ -365,8 +365,9 @@ func (a *app) reload(t *repoTab) {
 	t.stopHistory()
 	t.generation++
 	t.locateGen++
-	gen := t.generation
+	gen, worktreeGen := t.generation, t.worktreeRefreshGen
 	t.worktreeCache = nil
+	t.nextRepoCheck, t.repoCheckDelay = time.Time{}, 0
 	t.loading = true
 	t.historyStarted = time.Now()
 	t.err, t.locateErr, t.notice = "", "", ""
@@ -374,6 +375,7 @@ func (a *app) reload(t *repoTab) {
 	path, query := t.path, t.query
 	previousWatch := t.refWatch
 	query.provs = &t.provenance
+	query.deferStats = true
 	n := max(pageFirst, len(t.commits))
 	budget := max(int64(historyMemoryStep), t.historyBudget)
 	location := t.location()
@@ -403,9 +405,6 @@ func (a *app) reload(t *repoTab) {
 		if err == nil {
 			tips, err = queryTips(ctx, path, meta, query)
 		}
-		if err == nil {
-			dirty, _ = worktreeStatus(ctx, path)
-		}
 		var p *historyPager
 		var prepared preparedHistory
 		more := false
@@ -427,6 +426,9 @@ func (a *app) reload(t *repoTab) {
 			if err == nil {
 				prepared, err = prepareHistory(ctx, commits, graph{}, nil, true, query.filtered())
 			}
+		}
+		if err == nil && len(prepared.commits) == 0 {
+			dirty, _ = worktreeStatus(ctx, path)
 		}
 		key := meta.key()
 		a.post(func() {
@@ -458,7 +460,9 @@ func (a *app) reload(t *repoTab) {
 			}
 			t.hasMore = more
 			a.installHistory(t, meta, prepared)
-			a.applyWorktree(t, dirty)
+			if len(prepared.commits) == 0 {
+				a.applyWorktree(t, dirty)
+			}
 			if t.pendingSession != nil && a.activeTab() == t {
 				r := t.pendingSession
 				t.pendingSession = nil
@@ -468,6 +472,20 @@ func (a *app) reload(t *repoTab) {
 				}
 			}
 		})
+		if err != nil || len(prepared.commits) == 0 {
+			return
+		}
+		worktreeCtx, cancelWorktree := context.WithTimeout(ctx, 10*time.Second)
+		defer cancelWorktree()
+		files, cache, err := pollWorktreeStatus(worktreeCtx, path, nil)
+		if err == nil {
+			a.post(func() {
+				if !t.closed && t.generation == gen && t.worktreeRefreshGen == worktreeGen {
+					t.worktreeCache = cache
+					a.applyWorktree(t, files)
+				}
+			})
+		}
 	}()
 }
 
@@ -493,6 +511,7 @@ func (a *app) loadMore(t *repoTab) {
 	t.err = ""
 	gen, query := t.generation, t.query
 	query.provs = &t.provenance
+	query.deferStats = true
 	if t.pager == nil {
 		streamCtx, cancel := context.WithCancel(context.Background())
 		t.pagerCancel = cancel
@@ -500,7 +519,6 @@ func (a *app) loadMore(t *repoTab) {
 	}
 	p := t.pager
 	baseLen, authors, g := len(t.commits), t.authors, t.graph.clone()
-	meta := repoMeta{operation: t.operation, branch: t.branch, head: t.head, refs: t.refs, ahead: t.ahead, behind: t.behind, incoming: hashList(t.incoming), outgoing: hashList(t.outgoing), upstream: t.upstream, hasUpstream: t.hasUpstream}
 	n := min(4096, max(pageMore, baseLen/2))
 	remaining := t.historyBudget - t.historyBytes
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -542,7 +560,7 @@ func (a *app) loadMore(t *repoTab) {
 			prepared.commits = append(t.commits, prepared.commits...)
 			prepared.index = t.commitIndex
 			prepared.bytes += t.historyBytes
-			a.installHistory(t, meta, prepared)
+			a.installHistoryPage(t, prepared)
 		})
 	}()
 }
@@ -564,10 +582,6 @@ func (a *app) applyHistory(t *repoTab, meta repoMeta, commits []commit, _, page 
 }
 
 func (a *app) installHistory(t *repoTab, meta repoMeta, p preparedHistory) {
-	selected := zeroHash
-	if item := t.rowData(t.selected); item != nil {
-		selected = item.hash
-	}
 	t.branch, t.head, t.refs = meta.branch, meta.head, meta.refs
 	t.operation = meta.operation
 	if meta.ringStatus != "" {
@@ -594,6 +608,14 @@ func (a *app) installHistory(t *repoTab, meta repoMeta, p preparedHistory) {
 		}
 	}
 	a.summaryMu.Unlock()
+	a.installHistoryPage(t, p)
+}
+
+func (a *app) installHistoryPage(t *repoTab, p preparedHistory) {
+	selected := zeroHash
+	if item := t.rowData(t.selected); item != nil {
+		selected = item.hash
+	}
 	t.graph, t.authors, t.commitIndex, t.historyBytes = p.graph, p.authors, p.index, p.bytes
 	t.commits = p.commits
 	t.selected = t.rowIndex(selected)
