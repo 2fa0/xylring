@@ -14,6 +14,7 @@ import (
 
 type historyQuery struct {
 	provs      *provenanceTable
+	deferStats bool
 	term, kind string
 	ref        string // 空值为全部引用，HEAD 为当前分支，其余为完整 ref。
 	hideRemote bool

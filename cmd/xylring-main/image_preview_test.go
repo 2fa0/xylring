@@ -86,6 +86,14 @@ func TestDecodeImageInfo(t *testing.T) {
 	}
 }
 
+func TestDecodeImageRejectsOversizedHeaderBeforePixels(t *testing.T) {
+	// GIF screen descriptor for 4096 × 4096, with no pixel data.
+	data := []byte("GIF89a\x00\x10\x00\x10\x00\x00\x00")
+	if _, err := decodeImageInfo(data, "large.gif"); err == nil || err.Error() != tr("图片分辨率超出预览上限") {
+		t.Fatalf("expected a size error before decoding pixels, got %v", err)
+	}
+}
+
 func TestFormatFileSizeAndDiff(t *testing.T) {
 	if s := formatFileSize(500); s != "500 B" {
 		t.Errorf("expected 500 B, got %s", s)

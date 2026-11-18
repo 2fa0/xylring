@@ -634,6 +634,7 @@ type boardTaskPatch struct {
 }
 
 type boardAddTaskOptions struct {
+	commit      *boardCommitLink
 	Title       string
 	Description string
 	Status      boardStatus
@@ -689,6 +690,9 @@ func boardAddTaskWithOptions(opts boardAddTaskOptions) (boardFile, boardTask, er
 			Repos:       normalizeBoardRepos(opts.Repos),
 			CreatedAt:   now,
 			UpdatedAt:   now,
+		}
+		if opts.commit != nil {
+			created.Commits = []boardCommitLink{*opts.commit}
 		}
 		f.Tasks = append([]boardTask{created}, f.Tasks...)
 		return nil

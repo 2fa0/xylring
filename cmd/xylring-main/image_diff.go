@@ -43,10 +43,17 @@ type imageDiff struct {
 	new *imageInfo
 }
 
+// A 4K preview fits while each decoded RGBA bitmap stays within 32 MiB.
+const maxPreviewPixels = 8 << 20
+
 // decodeImageInfo 解码图片数据并提取尺寸、格式等元数据。
 func decodeImageInfo(data []byte, path string) (*imageInfo, error) {
 	if len(data) == 0 {
 		return nil, errors.New("图片数据为空")
+	}
+	cfg, format, cfgErr := image.DecodeConfig(bytes.NewReader(data))
+	if cfgErr == nil && (cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxPreviewPixels/cfg.Height) {
+		return nil, errors.New(tr("图片分辨率超出预览上限"))
 	}
 	src, err := ui.DecodeImage(data)
 	if err != nil {
@@ -58,7 +65,6 @@ func decodeImageInfo(data []byte, path string) (*imageInfo, error) {
 		data: data,
 	}
 
-	cfg, format, cfgErr := image.DecodeConfig(bytes.NewReader(data))
 	if cfgErr == nil {
 		info.width = cfg.Width
 		info.height = cfg.Height

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,10 +118,8 @@ func worktreeBadges(files []fileChange) []string {
 
 func (a *app) applyWorktree(t *repoTab, files []fileChange) {
 	hadRow := t.hasWorktreeRow()
-	key := worktreeKey(files)
 	count := len(files)
-	same := t.worktreeKey == key
-	t.worktreeKey = key
+	same := slices.Equal(t.worktreeFiles, files)
 	t.worktreeCount = count
 	t.worktreeFiles = files
 	a.summaryMu.Lock()
@@ -199,13 +198,13 @@ func (a *app) showWorktree(t *repoTab) {
 func (a *app) fillWorktree(t *repoTab, files []fileChange) {
 	t.worktreeFiles = files
 	t.worktreeCount = len(files)
-	t.worktreeKey = worktreeKey(files)
 	a.startDiff(t, t.head, zeroHash, func(context.Context, string) ([]fileChange, error) {
 		return files, nil
 	})
 }
 
 func (a *app) loadWorktreeStatus(t *repoTab, open bool) {
+	t.worktreeRefreshGen++
 	gen, path := t.generation, t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

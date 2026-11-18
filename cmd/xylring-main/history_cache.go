@@ -123,7 +123,7 @@ func (t *repoTab) cachedBytes() int64 {
 
 // This is a cache estimate, not a process heap limit. Shared objects are counted once.
 func (t *repoTab) metadataBytes() int64 {
-	n := t.provenance.bytes()
+	n := t.provenance.bytes() + int64(len(t.incoming)+len(t.outgoing))*32
 	seenFiles := map[*fileChange]bool{}
 	for _, files := range [][]fileChange{t.compareFiles, t.worktreeFiles} {
 		if len(files) == 0 || seenFiles[&files[0]] {
@@ -190,6 +190,7 @@ func (t *repoTab) evictHistory() {
 	t.restoreDiff, t.restoreFile = nil, ""
 	t.commits, t.authors, t.commitIndex = nil, nil, nil
 	t.refs, t.historyTips = nil, nil
+	t.incoming, t.outgoing = nil, nil
 	// Keep only the repository identity so a rebuild while evicted resets old queries.
 	if t.refWatch != nil {
 		marker := filepath.Join(t.path, ".git")
@@ -207,7 +208,7 @@ func (t *repoTab) evictHistory() {
 	t.comparison = nil
 	t.diff, t.simpleDiff, t.imageDiff, t.diffSource, t.details = nil, nil, nil, nil, nil
 	t.compareFiles, t.worktreeFiles = nil, nil
-	t.worktreeCount, t.worktreeKey = 0, ""
+	t.worktreeCount = 0
 	t.worktreeCache = nil
 	t.loading, t.loaded, t.compareLoading, t.diffLoading, t.detailsLoading = false, false, false, false, false
 }

@@ -83,13 +83,16 @@ type repoTab struct {
 	fetchGen         int
 	fetchCancel      context.CancelFunc
 
-	historyCancel  context.CancelFunc
-	historyStarted time.Time
-	pager          *historyPager
-	pagerCancel    context.CancelFunc
-	commitIndex    map[[20]byte]int
-	historyBytes   int64
-	historyBudget  int64
+	historyCancel      context.CancelFunc
+	historyStarted     time.Time
+	pager              *historyPager
+	pagerCancel        context.CancelFunc
+	commitIndex        map[[20]byte]int
+	historyBytes       int64
+	historyBudget      int64
+	historyStatsCancel context.CancelFunc
+	nextRepoCheck      time.Time
+	repoCheckDelay     time.Duration
 
 	branch       string
 	head         [20]byte
@@ -142,12 +145,12 @@ type repoTab struct {
 	restoreFile       string
 	restoreDiff       *historyLocation
 
-	worktree      bool
-	worktreeCount int
-	worktreeKey   string
-	worktreeCache *worktreeStatusCache
-	worktreeFiles []fileChange
-	worktreeRow   commit
+	worktree           bool
+	worktreeCount      int
+	worktreeRefreshGen int
+	worktreeCache      *worktreeStatusCache
+	worktreeFiles      []fileChange
+	worktreeRow        commit
 
 	comparison           *commitComparison
 	compareFiles         []fileChange
@@ -520,6 +523,10 @@ func (t *repoTab) cancel() {
 }
 
 func (t *repoTab) stopHistory() {
+	if t.historyStatsCancel != nil {
+		t.historyStatsCancel()
+		t.historyStatsCancel = nil
+	}
 	if t.pagerCancel != nil {
 		t.pagerCancel()
 		t.pagerCancel = nil

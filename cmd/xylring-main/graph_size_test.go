@@ -11,6 +11,27 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestDeferredHistoryStatsFollowTheFirstPage(t *testing.T) {
+	dir, git := initTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\ntwo\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-m", "with changes")
+	var rows []commit
+	err := streamHistory(context.Background(), dir, historyQuery{deferStats: true}, []string{"HEAD"}, 0, 1, func(c commit) error {
+		rows = append(rows, c)
+		return nil
+	})
+	if err != nil || len(rows) != 1 || rows[0].lines != historyStatsPending {
+		t.Fatalf("first page did not defer stats: %+v, %v", rows, err)
+	}
+	hash := rows[0].hash
+	if got := readHistoryStats(context.Background(), dir, [][20]byte{hash}); got[hash] != 2 {
+		t.Fatalf("line counts for the visible page: %v", got)
+	}
+}
+
 func TestSplitShortstat(t *testing.T) {
 	record := strings.Repeat("a", 40) + "\x1f" + strings.Repeat("b", 40) + "\x1fauthor\x1f1700000000\x1fsubject\x1fAI-Agent: Cindy"
 	cases := []struct {

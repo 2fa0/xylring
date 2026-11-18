@@ -310,7 +310,7 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 	}
 	// Partial clones may need to fetch blobs just to calculate a diff. History
 	// must remain readable offline; unknown change sizes use the default node.
-	if _, err := configCommand(ctx, dir, "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`); configExit(err, 1) {
+	if !query.deferStats && canReadHistoryStats(ctx, dir) {
 		args = append(args, "--shortstat")
 	}
 	if gitN > 0 {
@@ -339,6 +339,9 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 				return err
 			}
 			c.lines = lines
+			if query.deferStats {
+				c.lines = historyStatsPending
+			}
 			if filtering {
 				if !query.matchesProvenance(pool.get(c.prov)) {
 					continue
@@ -656,18 +659,6 @@ func hashSet(hashes [][20]byte) map[[20]byte]bool {
 		set[h] = true
 	}
 	return set
-}
-
-// hashList is hashSet's inverse, for the paging path that re-installs a meta.
-func hashList(set map[[20]byte]bool) [][20]byte {
-	if len(set) == 0 {
-		return nil
-	}
-	list := make([][20]byte, 0, len(set))
-	for h := range set {
-		list = append(list, h)
-	}
-	return list
 }
 
 func shortHash(h [20]byte) string { return hashHex(h)[:7] }

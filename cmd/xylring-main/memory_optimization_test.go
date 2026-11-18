@@ -24,6 +24,43 @@ func TestCloseRightFileTabsReleasesReferences(t *testing.T) {
 	}
 }
 
+func TestHistoryTrackingSetsSurvivePagingAndReleaseOnEviction(t *testing.T) {
+	tab := newTab(1, "/unused")
+	hash := [20]byte{1}
+	tab.branch, tab.ahead = "main", 1
+	outgoing := map[[20]byte]bool{hash: true}
+	tab.outgoing = outgoing
+	a := &app{tabs: []*repoTab{tab}}
+
+	a.installHistoryPage(tab, preparedHistory{})
+	outgoing[[20]byte{2}] = true
+	if !tab.outgoing[hash] || !tab.outgoing[[20]byte{2}] || tab.cachedBytes() == 0 {
+		t.Fatal("paging replaced the tracking set or the budget ignored it")
+	}
+	tab.evictHistory()
+	if tab.outgoing != nil || tab.incoming != nil || tab.ahead != 1 || tab.branch != "main" {
+		t.Fatal("eviction failed to release detailed tracking while preserving the sidebar summary")
+	}
+}
+
+func TestFileTabSnapshotRejectsTruncatedPayload(t *testing.T) {
+	path, err := writeFileTabSnapshot(fileTabSnapshot{New: []byte("snapshot")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, stat.Size()-1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFileTabSnapshot(path); err == nil {
+		t.Fatal("truncated snapshot was accepted")
+	}
+}
+
 func TestFileTabBudgetCountsSharedBuffersOnce(t *testing.T) {
 	buf := editor.NewBuffer(strings.Repeat("x", 4<<20))
 	shared := newTab(1, "/unused")

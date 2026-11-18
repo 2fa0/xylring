@@ -18,7 +18,21 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+type boardFilterKey struct {
+	repo, search string
+	archived     bool
+	english      bool
+}
+
 type boardState struct {
+	jobTail            chan struct{}
+	jobs               int
+	loading            bool
+	draftWrites        map[string]boardDraftWrite
+	columnLists        [4]ui.ListState
+	filterKey          boardFilterKey
+	filtered           [][]boardTask
+	filteredTotal      int
 	loaded             bool
 	file               boardFile
 	loadErr            string
@@ -50,6 +64,7 @@ type boardState struct {
 	deleteNoteID       string
 	writeGen           int
 	showNewModal       bool
+	newSaving          bool
 	newTitle           string
 	newDesc            string
 	newStatus          boardStatus
@@ -84,6 +99,7 @@ type boardState struct {
 	switchDirErr       string
 	storageInfo        boardStorageInfo
 	storageLoaded      bool
+	storageBusy        bool
 	commitValid        map[string]bool
 	checkingLinks      map[string]bool
 }
@@ -96,10 +112,35 @@ func (a *app) boardModalOpen() bool {
 }
 
 func (a *app) ensureBoardLoaded() {
-	if a.board.loaded {
+	if a.board.loaded || a.board.loading {
 		return
 	}
-	a.reloadBoardSync()
+	a.board.loading = true
+	var bf boardFile
+	var info boardStorageInfo
+	var mod time.Time
+	var size int64
+	var err error
+	a.runBoardJob(func() {
+		info, _ = boardLocationInfo()
+		bf, err = loadBoardFile()
+		if p, pathErr := boardConfigPath(); pathErr == nil {
+			if stat, statErr := os.Stat(p); statErr == nil {
+				mod, size = stat.ModTime(), stat.Size()
+			}
+		}
+	}, func() {
+		a.board.loading, a.board.loaded = false, true
+		if info.ActiveDir != "" {
+			a.board.storageInfo, a.board.storageLoaded = info, true
+		}
+		if err != nil {
+			a.board.loadErr = err.Error()
+			return
+		}
+		a.board.lastMod, a.board.lastSize = mod, size
+		a.applyBoardFile(bf, nil)
+	})
 }
 
 func (a *app) refreshBoardStorageInfo() {
@@ -155,6 +196,7 @@ func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
 	prev := a.board.file
 	a.board.file = bf
 	a.board.loadErr = ""
+	a.board.filtered = nil
 	if a.board.selectedID == "" {
 		return
 	}
@@ -172,11 +214,15 @@ func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
 	prevTask, hasPrev := boardTaskByID(prev.Tasks, t.ID)
 	// A snapshot can arrive from another process while the drawer is open. Keep
 	// anything the user typed but has not saved yet; refresh the rest.
-	titleDirty := a.board.titleDraft != "" && (!hasPrev || a.board.titleDraft != prevTask.Title)
+	titleDirty := !hasPrev || a.board.titleDraft != prevTask.Title
+	queued := a.board.draftWrites[t.ID]
+	if queued.token != nil {
+		titleDirty = queued.token.Title != nil || titleDirty
+	}
 	if !titleDirty && (c == nil || !a.board.titleInput.Focused(c)) {
 		a.board.titleDraft = t.Title
 	}
-	descDirty := !hasPrev || a.board.descDraft != prevTask.Description
+	descDirty := !hasPrev || a.board.descDraft != prevTask.Description || queued.token != nil && queued.token.Description != nil
 	if !descDirty && (c == nil || !a.board.descInput.Focused(c)) {
 		a.board.descDraft = t.Description
 	}
@@ -202,6 +248,9 @@ func (a *app) syncBoardDrafts(t boardTask) {
 	a.board.editTaskID = t.ID
 	a.board.titleDraft = t.Title
 	a.board.descDraft = t.Description
+	if queued, ok := a.board.draftWrites[t.ID]; ok {
+		a.board.titleDraft, a.board.descDraft = queued.title, queued.description
+	}
 	a.board.drawerStatusIdx = boardStatusIndex(t.Status)
 	a.board.noteDraft = ""
 	if draft, ok := a.board.noteDrafts[t.ID]; ok {
@@ -263,42 +312,64 @@ func (a *app) closeBoardDrawer() {
 	a.board.deleteNoteID = ""
 }
 
+type boardDraftWrite struct {
+	title, description string
+	token              *boardTaskPatch
+}
+
 func (a *app) commitBoardDrafts() {
-	if a.board.editTaskID == "" {
+	id := a.board.editTaskID
+	if id == "" {
 		return
 	}
-	idx := findBoardTaskIndex(a.board.file.Tasks, a.board.editTaskID)
-	if idx < 0 {
+	cur, ok := boardTaskByID(a.board.file.Tasks, id)
+	if !ok {
 		return
 	}
-	cur := a.board.file.Tasks[idx]
-	var patch boardTaskPatch
-	changed := false
-	trimmedTitle := strings.TrimSpace(a.board.titleDraft)
-	switch {
-	case trimmedTitle == "":
-		// An emptied title cannot be saved; say so instead of dropping it silently.
+	base, queued := a.board.draftWrites[id]
+	if !queued {
+		base.title, base.description = cur.Title, cur.Description
+	}
+	title, desc := strings.TrimSpace(a.board.titleDraft), a.board.descDraft
+	if title == "" {
 		a.setBanner(tr("任务标题不能为空"), "")
-		a.board.titleDraft = cur.Title
-	case trimmedTitle != cur.Title:
-		patch.Title = &trimmedTitle
-		changed = true
+		title = base.title
+		a.board.titleDraft = title
 	}
-	if a.board.descDraft != cur.Description {
-		desc := a.board.descDraft
+	patch := &boardTaskPatch{}
+	if title != base.title {
+		patch.Title = &title
+	}
+	if desc != base.description {
 		patch.Description = &desc
-		changed = true
 	}
-	if !changed {
+	if patch.Title == nil && patch.Description == nil {
 		return
 	}
-	bf, updated, err := boardUpdateTask(cur.ID, patch)
-	if err != nil {
-		a.setBanner(err.Error(), "")
-		return
+	if queued && base.token.Title != nil {
+		patch.Title = &title
 	}
-	a.applyBoardFile(bf, nil)
-	a.syncBoardDrafts(updated)
+	if queued && base.token.Description != nil {
+		patch.Description = &desc
+	}
+	if a.board.draftWrites == nil {
+		a.board.draftWrites = make(map[string]boardDraftWrite)
+	}
+	a.board.draftWrites[id] = boardDraftWrite{title, desc, patch}
+	a.changeBoard(func() (boardFile, error) {
+		bf, _, err := boardUpdateTask(id, *patch)
+		return bf, err
+	}, func(err error) {
+		if a.board.draftWrites[id].token == patch {
+			delete(a.board.draftWrites, id)
+			if err == nil && a.board.editTaskID == id && strings.TrimSpace(a.board.titleDraft) == title {
+				a.board.titleDraft = title
+			}
+		}
+		if err != nil {
+			a.setBanner(err.Error(), "")
+		}
+	})
 }
 
 // leaveBoard saves the open drawer before the board page goes away, so text
@@ -318,16 +389,17 @@ func (a *app) openBoard() {
 }
 
 func (a *app) pollBoardFile() {
-	if a.closed || a.board.polling {
+	if a.closed || a.board.polling || a.board.jobs != 0 {
 		return
 	}
 	lastMod := a.board.lastMod
 	lastSize := a.board.lastSize
 	loaded := a.board.loaded
+	hasTasks := len(a.board.file.Tasks) > 0
 	gen := a.board.writeGen
 	a.board.polling = true
 	go func() {
-		defer a.post(func() {
+		defer a.onMain(func() {
 			a.board.polling = false
 		})
 		path, err := boardConfigPath()
@@ -336,8 +408,11 @@ func (a *app) pollBoardFile() {
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			if os.IsNotExist(err) && loaded && len(a.board.file.Tasks) > 0 {
+			if os.IsNotExist(err) && loaded && hasTasks {
 				a.post(func() {
+					if gen != a.board.writeGen || a.closed {
+						return
+					}
 					a.board.lastMod = time.Time{}
 					a.board.lastSize = 0
 					a.applyBoardFile(boardFile{Version: 1, NextSeq: 1}, nil)
@@ -357,7 +432,7 @@ func (a *app) pollBoardFile() {
 		a.post(func() {
 			// A local change landed while this read was in flight; applying the
 			// older snapshot would show it reverting.
-			if gen != a.board.writeGen {
+			if a.closed || gen != a.board.writeGen {
 				return
 			}
 			a.board.lastMod = mod
@@ -1340,11 +1415,11 @@ type boardCardMatch struct{ id string }
 type boardSegIndicatorMatch struct{ key string }
 
 func boardPageMotion() ui.ElementTransition {
+	// Keep the page opaque to avoid a window-sized offscreen render target.
 	return ui.ElementTransition{
 		Duration: motionPane,
 		Ease:     ui.EaseOut,
-		Enter:    &ui.Motion{Opacity: 0, Y: 6},
-		Exit:     &ui.Motion{Opacity: 0},
+		Enter:    &ui.Motion{Opacity: 1, Y: 6},
 	}
 }
 
@@ -1448,6 +1523,11 @@ func boardStatusSegmented(c *ui.Context, key string, selected *int, fontSize flo
 }
 
 func (a *app) boardFilteredByStatus() ([][]boardTask, int) {
+	b := &a.board
+	key := boardFilterKey{repo: b.repoFilter, search: b.search, archived: b.showArchived, english: englishUI.Load()}
+	if b.filtered != nil && b.filterKey == key {
+		return b.filtered, b.filteredTotal
+	}
 	cols := make([][]boardTask, len(boardStatuses))
 	total := 0
 	for _, task := range a.board.file.Tasks {
@@ -1457,6 +1537,7 @@ func (a *app) boardFilteredByStatus() ([][]boardTask, int) {
 		cols[boardStatusIndex(task.Status)] = append(cols[boardStatusIndex(task.Status)], task)
 		total++
 	}
+	b.filterKey, b.filtered, b.filteredTotal = key, cols, total
 	return cols, total
 }
 
@@ -1713,48 +1794,44 @@ func (a *app) boardColumns(c *ui.Context, cols [][]boardTask) {
 						moreBtn := paneIconButton(c, "board-done-more", tr("已完成列操作"), iconMore)
 						moreBtn.Menu(func(m *ui.Menu) {
 							if m.Item(tr("归档已完成任务")).Disabled(len(tasks) == 0).Chosen() {
-								bf, count, err := boardArchiveDone()
-								if err != nil {
-									a.setBanner(err.Error(), "")
-								} else {
-									a.applyBoardFile(bf, c)
-									if count > 0 {
-										c.Toast(fmt.Sprintf(tr("已归档 %d 个任务"), count))
+								var count int
+								a.changeBoard(func() (boardFile, error) {
+									bf, n, err := boardArchiveDone()
+									count = n
+									return bf, err
+								}, func(err error) {
+									if err != nil {
+										a.setBanner(err.Error(), "")
+									} else if count > 0 {
+										a.pendingToast = fmt.Sprintf(tr("已归档 %d 个任务"), count)
 									}
-								}
+								})
 							}
 						})
 					}
 				})
-				scroll := ui.Scroll(c.Key("board-col-scroll-" + string(st))).Grow(1).MinHeight(0).FillWidth()
+				scroll := ui.List(c.Key("board-col-scroll-"+string(st)), &a.board.columnLists[idx], len(tasks)).
+					Grow(1).MinHeight(0).FillWidth().ItemKey(func(i int) any { return tasks[i].ID })
 				scrollDrag, scrollOver := ui.DragOver[boardCardDrag](scroll)
-				showEndLine := scrollOver && len(tasks) > 0 && (scrollDrag.status != st || scrollDrag.index < len(tasks)-1)
+				showEndLine := scrollOver && a.board.columnLists[idx].AtEnd() && len(tasks) > 0 && (scrollDrag.status != st || scrollDrag.index < len(tasks)-1)
 				if scrollOver && scrollDrag.status != st {
 					colCrossHover = true
 				}
-				scroll.Children(func() {
-					if len(tasks) == 0 {
-						return
-					}
-					listCol := ui.Column(c).FillWidth().Gap(0).Padding(2, 0, 4, 0)
-					listCol.Children(func() {
-						for taskIdx, task := range tasks {
-							a.boardCardSlot(c, st, taskIdx, task, &colCrossHover)
-						}
-					})
-					if showEndLine {
-						listCol.DrawOver(func(p *ui.Painter, r ui.Rect) {
-							drawBoardDropLine(p, r, true, t.Accent)
-						})
-					}
+				scroll.Rows(func(row ui.ListRow) {
+					a.boardCardSlot(row.Context, st, row.Index, tasks[row.Index], &colCrossHover)
 				})
+				if showEndLine {
+					scroll.DrawOver(func(p *ui.Painter, r ui.Rect) {
+						drawBoardDropLine(p, r, true, t.Accent)
+					})
+				}
 				if dropped, ok := ui.Drop[boardCardDrag](scroll); ok {
 					if len(tasks) > 0 {
 						if dropped.status != st || dropped.index < len(tasks)-1 {
-							a.applyBoardTaskMove(dropped.taskID, c, st, tasks[len(tasks)-1].ID, true)
+							a.applyBoardTaskMove(dropped.taskID, st, tasks[len(tasks)-1].ID, true)
 						}
 					} else if dropped.status != st {
-						a.applyBoardTaskMove(dropped.taskID, c, st, "", false)
+						a.applyBoardTaskMove(dropped.taskID, st, "", false)
 					}
 				}
 			})
@@ -1770,7 +1847,7 @@ func (a *app) boardColumns(c *ui.Context, cols [][]boardTask) {
 				if len(tasks) > 0 {
 					anchorID = tasks[0].ID
 				}
-				a.applyBoardTaskMove(dropped.taskID, c, st, anchorID, false)
+				a.applyBoardTaskMove(dropped.taskID, st, anchorID, false)
 			}
 		}
 	})
@@ -1832,7 +1909,7 @@ func (a *app) boardCardSlot(c *ui.Context, st boardStatus, idx int, task boardTa
 
 	if dropped, ok := ui.Drop[boardCardDrag](slot); ok {
 		if after, valid := computeInsert(dropped); valid {
-			a.applyBoardTaskMove(dropped.taskID, c, st, task.ID, after)
+			a.applyBoardTaskMove(dropped.taskID, st, task.ID, after)
 		}
 	}
 }
@@ -2015,16 +2092,16 @@ func (a *app) boardCard(c *ui.Context, idx int, task boardTask, suppressHover bo
 		if task.Status == boardDone {
 			next = boardTodo
 		}
-		a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Status: &next})
+		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &next})
 		return
 	}
 	if hasMove {
-		a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Status: &moveStatus})
+		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &moveStatus})
 		return
 	}
 	if doArchive || doUnarchive {
 		v := doArchive
-		a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &v})
+		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Archived: &v})
 		return
 	}
 	if doDelete {
@@ -2038,26 +2115,26 @@ func (a *app) boardCard(c *ui.Context, idx int, task boardTask, suppressHover bo
 
 // applyBoardTaskPatch flushes the open drawer first: its typed title or
 // description must not be replaced by the snapshot this change returns.
-func (a *app) applyBoardTaskPatch(id string, c *ui.Context, patch boardTaskPatch) bool {
+func (a *app) applyBoardTaskPatch(id string, patch boardTaskPatch, toast ...string) {
 	a.commitBoardDrafts()
-	bf, _, err := boardUpdateTask(id, patch)
-	if err != nil {
-		a.setBanner(err.Error(), "")
-		return false
-	}
-	a.applyBoardFile(bf, c)
-	return true
+	a.changeBoard(func() (boardFile, error) {
+		bf, _, err := boardUpdateTask(id, patch)
+		return bf, err
+	}, func(err error) {
+		if err != nil {
+			a.setBanner(err.Error(), "")
+		} else if len(toast) > 0 {
+			a.pendingToast = toast[0]
+		}
+	})
 }
 
-func (a *app) applyBoardTaskMove(id string, c *ui.Context, status boardStatus, anchorID string, insertAfter bool) bool {
+func (a *app) applyBoardTaskMove(id string, status boardStatus, anchorID string, insertAfter bool) {
 	a.commitBoardDrafts()
-	bf, _, err := boardMoveTask(id, status, anchorID, insertAfter)
-	if err != nil {
-		a.setBanner(err.Error(), "")
-		return false
-	}
-	a.applyBoardFile(bf, c)
-	return true
+	a.changeBoard(func() (boardFile, error) {
+		bf, _, err := boardMoveTask(id, status, anchorID, insertAfter)
+		return bf, err
+	}, nil)
 }
 
 func (a *app) boardDetailDrawer(c *ui.Context) {
@@ -2100,16 +2177,12 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 				if task.Archived {
 					if m.Item(tr("取消归档")).Chosen() {
 						next := false
-						if a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &next}) {
-							c.Toast(tr("已取消归档"))
-						}
+						a.applyBoardTaskPatch(task.ID, boardTaskPatch{Archived: &next}, tr("已取消归档"))
 					}
 				} else {
 					if m.Item(tr("归档任务")).Chosen() {
 						next := true
-						if a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Archived: &next}) {
-							c.Toast(tr("已归档"))
-						}
+						a.applyBoardTaskPatch(task.ID, boardTaskPatch{Archived: &next}, tr("已归档"))
 					}
 				}
 				m.Separator()
@@ -2154,7 +2227,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 							if seg.Track.Changed() {
 								target := boardStatuses[a.board.drawerStatusIdx]
 								if target != task.Status {
-									a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Status: &target})
+									a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &target})
 								}
 							}
 						})
@@ -2164,7 +2237,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 					ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, tr("重要紧急")).Width(72).FontSize(14.5).TextColor(t.TextMuted).Shrink(0)
 						boardPriorityPicker(c, "board-drawer-priority", task.Priority, &a.board.drawerPriorityOpen, false, func(next boardPriority) {
-							a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Priority: &next})
+							a.applyBoardTaskPatch(task.ID, boardTaskPatch{Priority: &next})
 						})
 					})
 
@@ -2172,7 +2245,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 					ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, tr("截止日期")).Width(72).FontSize(14.5).TextColor(t.TextMuted).Shrink(0)
 						boardDueDatePicker(c, "board-drawer-due", task.DueDate, task.Status == boardDone || task.Archived, &a.board.drawerDueOpen, &a.board.drawerDuePicker, false, func(next string) {
-							a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{DueDate: &next})
+							a.applyBoardTaskPatch(task.ID, boardTaskPatch{DueDate: &next})
 						})
 					})
 
@@ -2241,7 +2314,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 										next = append(next, r)
 									}
 								}
-								a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{Repos: &next})
+								a.applyBoardTaskPatch(task.ID, boardTaskPatch{Repos: &next})
 							}
 
 							addRepoBtn := ui.Button(c.Key("board-drawer-add-repo"), tr("+ 项目")).Padding(3, 9).FontSize(14)
@@ -2255,7 +2328,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 									repoPath := rp
 									already := slices.Contains(repos, repoPath)
 									if m.Item(repoTitle(repoPath) + " (" + homePath(repoPath) + ")").Checked(already).Disabled(already).Chosen() {
-										a.applyBoardTaskPatch(task.ID, c, boardTaskPatch{AddRepos: []string{repoPath}})
+										a.applyBoardTaskPatch(task.ID, boardTaskPatch{AddRepos: []string{repoPath}})
 									}
 								}
 							})
@@ -2330,13 +2403,25 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 						if strings.TrimSpace(a.board.noteDraft) == "" {
 							return
 						}
-						bf, _, err := boardAddNote(task.ID, a.board.noteDraft, "human", "")
-						if err != nil {
-							a.setBanner(err.Error(), "")
-							return
-						}
+						text := a.board.noteDraft
 						a.forgetBoardTaskDraft(task.ID)
-						a.applyBoardFile(bf, c)
+						a.changeBoard(func() (boardFile, error) {
+							bf, _, err := boardAddNote(task.ID, text, "human", "")
+							return bf, err
+						}, func(err error) {
+							if err == nil {
+								return
+							}
+							a.setBanner(err.Error(), "")
+							if a.board.selectedID == task.ID && a.board.noteDraft == "" {
+								a.board.noteDraft = text
+							} else if a.board.noteDrafts[task.ID] == "" {
+								if a.board.noteDrafts == nil {
+									a.board.noteDrafts = map[string]string{}
+								}
+								a.board.noteDrafts[task.ID] = text
+							}
+						})
 					}
 					composer := ui.Column(c.Key("board-drawer-note-box")).FillWidth().Padding(9, 11).Gap(6).
 						Radius(8).Transition(colorMotion()).
@@ -2388,14 +2473,17 @@ func (a *app) boardNoteCard(c *ui.Context, task boardTask, idx int, n boardNote)
 		if strings.TrimSpace(a.board.editingNoteText) == "" {
 			return
 		}
-		bf, _, err := boardUpdateNote(task.ID, n.ID, a.board.editingNoteText)
-		if err != nil {
-			a.setBanner(err.Error(), "")
-			return
-		}
-		a.board.editingNoteID = ""
-		a.board.editingNoteText = ""
-		a.applyBoardFile(bf, c)
+		text := a.board.editingNoteText
+		a.changeBoard(func() (boardFile, error) {
+			bf, _, err := boardUpdateNote(task.ID, n.ID, text)
+			return bf, err
+		}, func(err error) {
+			if err != nil {
+				a.setBanner(err.Error(), "")
+			} else if a.board.editingNoteID == n.ID && a.board.editingNoteText == text {
+				a.board.editingNoteID, a.board.editingNoteText = "", ""
+			}
+		})
 	}
 	cancelEdit := func() {
 		a.board.editingNoteID = ""
@@ -2508,12 +2596,10 @@ func (a *app) boardNoteCard(c *ui.Context, task boardTask, idx int, n boardNote)
 
 	if !editing && len(task.Notes) > 1 {
 		if dropped, ok := ui.Drop[boardNoteDrag](slot); ok && dropped.taskID == task.ID && dropped.noteID != n.ID {
-			bf, _, err := boardMoveNote(task.ID, dropped.noteID, idx)
-			if err != nil {
-				a.setBanner(err.Error(), "")
-			} else {
-				a.applyBoardFile(bf, c)
-			}
+			a.changeBoard(func() (boardFile, error) {
+				bf, _, err := boardMoveNote(task.ID, dropped.noteID, idx)
+				return bf, err
+			}, nil)
 		}
 	}
 }
@@ -2575,12 +2661,10 @@ func (a *app) boardCommitChipRow(c *ui.Context, task boardTask, link boardCommit
 		}
 		if paneIconButton(c, "board-commit-unlink-"+link.Repo+"-"+link.Hash, tr("移除关联"), iconClose).Clicked() {
 			a.commitBoardDrafts()
-			bf, _, err := boardUnlinkCommit(task.ID, link.Repo, link.Hash)
-			if err != nil {
-				a.setBanner(err.Error(), "")
-			} else {
-				a.applyBoardFile(bf, c)
-			}
+			a.changeBoard(func() (boardFile, error) {
+				bf, _, err := boardUnlinkCommit(task.ID, link.Repo, link.Hash)
+				return bf, err
+			}, nil)
 		}
 	})
 }
@@ -2599,7 +2683,7 @@ func (a *app) boardModals(c *ui.Context) {
 
 func (a *app) newBoardTaskModal(c *ui.Context) {
 	t := c.Theme()
-	appModal(c.Key("board-new-task-modal"), &a.board.showNewModal, tr("新建看板任务"), 480, false, func() {
+	appModal(c.Key("board-new-task-modal"), &a.board.showNewModal, tr("新建看板任务"), 480, a.board.newSaving, func() {
 		ui.Column(c).FillWidth().Gap(10).Children(func() {
 			ui.Text(c, tr("标题")).FontSize(13).TextColor(t.TextMuted)
 			titleInput := ui.TextInput(c.Key("board-new-title"), &a.board.newTitle).
@@ -2678,29 +2762,32 @@ func (a *app) newBoardTaskModal(c *ui.Context) {
 		if ui.Button(c.Key("board-new-cancel"), tr("取消")).Clicked() {
 			a.board.showNewModal = false
 		}
-		if ui.PrimaryButton(c.Key("board-new-submit"), tr("创建")).Disabled(strings.TrimSpace(a.board.newTitle) == "").Clicked() {
+		if ui.PrimaryButton(c.Key("board-new-submit"), tr("创建")).Disabled(a.board.newSaving || strings.TrimSpace(a.board.newTitle) == "").Clicked() {
 			a.submitNewBoardTask()
 		}
 	})
 }
 
 func (a *app) submitNewBoardTask() {
-	bf, _, err := boardAddTaskWithOptions(boardAddTaskOptions{
-		Title:       a.board.newTitle,
-		Description: a.board.newDesc,
-		Status:      a.board.newStatus,
-		Priority:    a.board.newPriority,
-		DueDate:     a.board.newDueDate,
-		Repos:       a.board.newRepos,
-	})
-	if err != nil {
-		a.board.newErr = err.Error()
+	if a.board.newSaving {
 		return
 	}
-	a.board.showNewModal = false
-	a.board.newPriorityOpen = false
-	a.board.newDueOpen = false
-	a.applyBoardFile(bf, nil)
+	opts := boardAddTaskOptions{
+		Title: a.board.newTitle, Description: a.board.newDesc, Status: a.board.newStatus,
+		Priority: a.board.newPriority, DueDate: a.board.newDueDate, Repos: slices.Clone(a.board.newRepos),
+	}
+	a.board.newSaving = true
+	a.changeBoard(func() (boardFile, error) {
+		bf, _, err := boardAddTaskWithOptions(opts)
+		return bf, err
+	}, func(err error) {
+		a.board.newSaving = false
+		if err != nil {
+			a.board.newErr = err.Error()
+			return
+		}
+		a.board.showNewModal, a.board.newPriorityOpen, a.board.newDueOpen = false, false, false
+	})
 }
 
 func (a *app) linkBoardCommitModal(c *ui.Context) {
@@ -2988,19 +3075,22 @@ func (a *app) submitBoardLinkCommit() {
 			})
 			return
 		}
-		bf, _, err := boardLinkCommit(taskID, link)
 		a.post(func() {
-			a.board.linkBusy = false
-			if err != nil {
-				a.board.linkErr = err.Error()
+			if a.closed {
 				return
 			}
-			if a.board.commitValid == nil {
-				a.board.commitValid = map[string]bool{}
-			}
-			a.board.commitValid[boardCommitCacheKey(link.Repo, link.Hash)] = true
-			a.board.showLinkModal = false
-			a.applyBoardFile(bf, nil)
+			a.changeBoard(func() (boardFile, error) {
+				bf, _, err := boardLinkCommit(taskID, link)
+				return bf, err
+			}, func(err error) {
+				a.board.linkBusy = false
+				if err != nil {
+					a.board.linkErr = err.Error()
+					return
+				}
+				a.rememberBoardCommit(link)
+				a.board.showLinkModal = false
+			})
 		})
 	}()
 }
@@ -3043,19 +3133,14 @@ func (a *app) boardDeleteTaskModal(c *ui.Context) {
 			open = false
 		}
 		if dangerButton(c, "board-delete-confirm", tr("确认删除")).Clicked() {
-			bf, err := boardDeleteTask(id)
-			if err != nil {
-				a.setBanner(err.Error(), "")
-				open = false
-			} else {
-				a.forgetBoardTaskDraft(id)
-				if a.board.selectedID == id {
-					a.board.selectedID = ""
-					a.board.editTaskID = ""
+			open = false
+			a.changeBoard(func() (boardFile, error) { return boardDeleteTask(id) }, func(err error) {
+				if err != nil {
+					a.setBanner(err.Error(), "")
+				} else {
+					a.forgetBoardTaskDraft(id)
 				}
-				a.applyBoardFile(bf, c)
-				open = false
-			}
+			})
 		}
 	})
 	if !open {
@@ -3106,18 +3191,17 @@ func (a *app) boardDeleteNoteModal(c *ui.Context) {
 			open = false
 		}
 		if dangerButton(c, "board-delete-note-confirm", tr("确认删除")).Clicked() {
-			bf, _, err := boardDeleteNote(taskID, noteID)
-			if err != nil {
-				a.setBanner(err.Error(), "")
-				open = false
-			} else {
-				if a.board.editingNoteID == noteID {
-					a.board.editingNoteID = ""
-					a.board.editingNoteText = ""
+			open = false
+			a.changeBoard(func() (boardFile, error) {
+				bf, _, err := boardDeleteNote(taskID, noteID)
+				return bf, err
+			}, func(err error) {
+				if err != nil {
+					a.setBanner(err.Error(), "")
+				} else if a.board.editingNoteID == noteID {
+					a.board.editingNoteID, a.board.editingNoteText = "", ""
 				}
-				a.applyBoardFile(bf, c)
-				open = false
-			}
+			})
 		}
 	})
 	if !open {
@@ -3130,8 +3214,23 @@ func (a *app) linkCommitToBoardTask(tab *repoTab, cm commit, taskID string) {
 	if tab == nil || cm.hash == zeroHash || cm.hash == worktreeHash {
 		return
 	}
+	link := boardCommitFromRow(tab, cm)
+	a.changeBoard(func() (boardFile, error) {
+		bf, _, err := boardLinkCommit(taskID, link)
+		return bf, err
+	}, func(err error) {
+		if err != nil {
+			a.setBanner(err.Error(), "")
+			return
+		}
+		a.rememberBoardCommit(link)
+		a.pendingToast = fmt.Sprintf("已关联到 %s", taskID)
+	})
+}
+
+func boardCommitFromRow(tab *repoTab, cm commit) boardCommitLink {
 	prov := tab.provenance.get(cm.prov)
-	link := boardCommitLink{
+	return boardCommitLink{
 		Repo:    canonicalRepoDir(tab.path),
 		Hash:    hashHex(cm.hash),
 		Subject: cm.subject,
@@ -3141,17 +3240,13 @@ func (a *app) linkCommitToBoardTask(tab *repoTab, cm commit, taskID string) {
 		AddedBy: "human",
 		AddedAt: time.Now().UTC(),
 	}
-	bf, _, err := boardLinkCommit(taskID, link)
-	if err != nil {
-		a.setBanner(err.Error(), "")
-		return
-	}
+}
+
+func (a *app) rememberBoardCommit(link boardCommitLink) {
 	if a.board.commitValid == nil {
 		a.board.commitValid = map[string]bool{}
 	}
 	a.board.commitValid[boardCommitCacheKey(link.Repo, link.Hash)] = true
-	a.applyBoardFile(bf, nil)
-	a.pendingToast = fmt.Sprintf("已关联到 %s", taskID)
 }
 
 func (a *app) createBoardTaskWithCommit(tab *repoTab, cm commit) {
@@ -3162,13 +3257,21 @@ func (a *app) createBoardTaskWithCommit(tab *repoTab, cm commit) {
 	if title == "" {
 		title = hashHex(cm.hash)[:7]
 	}
-	bf, created, err := boardAddTask(title, "", boardDoing, []string{tab.path})
-	if err != nil {
-		a.setBanner(err.Error(), "")
-		return
-	}
-	a.applyBoardFile(bf, nil)
-	a.linkCommitToBoardTask(tab, cm, created.ID)
+	link := boardCommitFromRow(tab, cm)
+	opts := boardAddTaskOptions{Title: title, Status: boardDoing, Repos: []string{tab.path}, commit: &link}
+	var created boardTask
+	a.changeBoard(func() (boardFile, error) {
+		bf, task, err := boardAddTaskWithOptions(opts)
+		created = task
+		return bf, err
+	}, func(err error) {
+		if err != nil {
+			a.setBanner(err.Error(), "")
+			return
+		}
+		a.rememberBoardCommit(link)
+		a.pendingToast = fmt.Sprintf("已关联到 %s", created.ID)
+	})
 }
 
 func boardBackupReasonLabel(reason string) string {
@@ -3276,20 +3379,23 @@ func (a *app) executeBoardImport() {
 	a.board.importBusy = true
 	a.board.importErr = ""
 	srcPath := a.board.importPlan.SourcePath
-	bf, res, err := boardImport(srcPath, boardImportOptions{
-		Mode:    mode,
-		RepoMap: repoMap,
+	var bf boardFile
+	var res boardImportResult
+	var err error
+	a.runBoardJob(func() {
+		bf, res, err = boardImport(srcPath, boardImportOptions{Mode: mode, RepoMap: repoMap})
+	}, func() {
+		a.board.importBusy = false
+		if err != nil {
+			a.board.importErr = err.Error()
+			return
+		}
+		a.resetBoardAfterReplace()
+		a.applyBoardFile(bf, nil)
+		a.board.loaded = true
+		a.board.showImportModal = false
+		a.pendingToast = fmt.Sprintf("已导入 %d 个任务", res.ImportedTasks)
 	})
-	a.board.importBusy = false
-	if err != nil {
-		a.board.importErr = err.Error()
-		return
-	}
-	a.resetBoardAfterReplace()
-	a.applyBoardFile(bf, nil)
-	a.board.loaded = true
-	a.board.showImportModal = false
-	a.pendingToast = fmt.Sprintf("已导入 %d 个任务", res.ImportedTasks)
 }
 
 func (a *app) pickRemapRepoDir(idx int) {
@@ -3335,16 +3441,24 @@ func (a *app) openBoardBackupsModal() {
 }
 
 func (a *app) restoreBoardFromBackup(backupPath string) {
-	bf, err := boardRestoreBackup(backupPath)
-	if err != nil {
-		a.board.backupsErr = err.Error()
+	if a.board.storageBusy {
 		return
 	}
-	a.resetBoardAfterReplace()
-	a.applyBoardFile(bf, nil)
-	a.board.loaded = true
-	a.board.showBackupsModal = false
-	a.pendingToast = fmt.Sprintf("已恢复 %d 个任务", len(bf.Tasks))
+	a.board.storageBusy = true
+	var bf boardFile
+	var err error
+	a.runBoardJob(func() { bf, err = boardRestoreBackup(backupPath) }, func() {
+		a.board.storageBusy = false
+		if err != nil {
+			a.board.backupsErr = err.Error()
+			return
+		}
+		a.resetBoardAfterReplace()
+		a.applyBoardFile(bf, nil)
+		a.board.loaded = true
+		a.board.showBackupsModal = false
+		a.pendingToast = fmt.Sprintf("已恢复 %d 个任务", len(bf.Tasks))
+	})
 }
 
 func (a *app) openBoardStorageModal() {
@@ -3409,21 +3523,37 @@ func (a *app) beginSwitchBoardDir(targetDir string) {
 }
 
 func (a *app) applySwitchBoardDir(targetDir string, strategy boardDirSwitchStrategy) {
-	bf, err := boardSwitchStorageDir(targetDir, strategy)
-	if err != nil {
-		a.board.switchDirErr = err.Error()
-		a.board.storageErr = err.Error()
+	if a.board.storageBusy {
 		return
 	}
-	a.board.showSwitchDirModal = false
-	a.board.showStorageModal = false
-	a.board.storageErr = ""
-	a.board.switchDirErr = ""
-	a.refreshBoardStorageInfo()
-	a.resetBoardAfterReplace()
-	a.applyBoardFile(bf, nil)
-	a.board.loaded = true
-	a.pendingToast = "已切换看板数据目录"
+	a.board.storageBusy = true
+	var bf boardFile
+	var info boardStorageInfo
+	var err error
+	a.runBoardJob(func() {
+		bf, err = boardSwitchStorageDir(targetDir, strategy)
+		if err == nil {
+			info, _ = boardLocationInfo()
+		}
+	}, func() {
+		a.board.storageBusy = false
+		if err != nil {
+			a.board.switchDirErr = err.Error()
+			a.board.storageErr = err.Error()
+			return
+		}
+		a.board.showSwitchDirModal = false
+		a.board.showStorageModal = false
+		a.board.storageErr = ""
+		a.board.switchDirErr = ""
+		if info.ActiveDir != "" {
+			a.board.storageInfo, a.board.storageLoaded = info, true
+		}
+		a.resetBoardAfterReplace()
+		a.applyBoardFile(bf, nil)
+		a.board.loaded = true
+		a.pendingToast = "已切换看板数据目录"
+	})
 }
 
 func (a *app) boardImportModal(c *ui.Context) {
@@ -3512,7 +3642,7 @@ func (a *app) boardBackupRestoreModal(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
-	appModal(c.Key("board-backups-modal"), &a.board.showBackupsModal, tr("恢复自动备份"), 500, false, func() {
+	appModal(c.Key("board-backups-modal"), &a.board.showBackupsModal, tr("恢复自动备份"), 500, a.board.storageBusy, func() {
 		ui.Column(c).FillWidth().Gap(8).Children(func() {
 			if a.board.backupsErr != "" {
 				ui.Text(c, trMessage(a.board.backupsErr)).FontSize(12).TextColor(t.Danger)
@@ -3591,7 +3721,7 @@ func (a *app) boardSwitchDirModal(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
-	appModal(c.Key("board-switch-dir-modal"), &a.board.showSwitchDirModal, tr("目标目录已有看板数据"), 480, false, func() {
+	appModal(c.Key("board-switch-dir-modal"), &a.board.showSwitchDirModal, tr("目标目录已有看板数据"), 480, a.board.storageBusy, func() {
 		ui.Column(c).FillWidth().Gap(8).Children(func() {
 			ui.Text(c, homePath(a.board.switchTargetDir)).FontSize(12.5).FontWeight(500).TextColor(t.Text).
 				SingleLine().Tooltip(a.board.switchTargetDir)
