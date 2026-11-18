@@ -1,3 +1,29 @@
+## 0.9.1 - 2026-11-18
+
+### 更新内容
+
+- 看板任务的编辑、拖拽、归档与删除改为按提交顺序在后台写入，操作不再等磁盘，界面也不再跟着卡一下。
+- 看板列改为虚拟滚动，任务很多时滚动依然顺滑；关闭窗口前会先保存抽屉里还没提交的标题和描述。
+- 提交列表首屏只统计可见条目的改动行数，仓库刚打开时更快出图；部分克隆的仓库跳过统计，不为了显示数字去联网。
+- 仓库状态轮询跟着变化走：检测到改动后 2 秒复查，一直稳定时逐步退到 16 秒，后台更安静。
+- 工作区文件指纹改为分块读取，大文件不再整份读进内存；文件标签页的暂存快照读取时校验长度，损坏的快照直接放弃，而不是显示错位内容。
+- 图片预览先校验分辨率，超过约 840 万像素的图片直接提示超限，不再试着解码出几百 MB 的位图。
+- 侧栏里其他仓库的跟踪摘要（领先 / 落后、上游分支）在窗口失焦后不再丢失。
+- 升级到 mygo 0.10.0，并把 Metal 帧缓冲上限设为 2，图形内存占用更低。
+- 中文名「木年轮」写进 README，README 改为中英双版并补上双语展示海报。
+
+### Changes
+
+- Board edits, drags, archive, and delete now write in the background in submission order, so actions no longer wait on disk or make the window stutter.
+- Board columns use virtual scrolling and stay smooth with long task lists, and unsaved title and description drafts are saved before the window closes.
+- The first page of history only counts changed lines for the visible rows, so a repository opens with a graph sooner; partial clones skip the count instead of fetching over the network just for a number.
+- Repository polling follows activity: a detected change is rechecked after 2 seconds, and a stable repository backs off to 16 seconds.
+- Worktree fingerprints read files in chunks, so large files are no longer loaded whole, and file-tab snapshots validate their length before use instead of showing garbled content.
+- Image previews check resolution first and report anything above roughly 8.4 megapixels instead of trying to decode a bitmap hundreds of megabytes large.
+- Tracking summaries for other repositories in the sidebar (ahead / behind, upstream branch) no longer disappear when the window loses focus.
+- Upgrade to mygo 0.10.0 and cap the Metal drawable count at 2 for lower graphics memory use.
+- Add the Chinese name 木年轮 to the README, ship English and Chinese READMEs, and include bilingual showcase posters.
+
 ## 0.9.0 - 2026-11-17
 
 ### 更新内容
