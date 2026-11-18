@@ -2029,6 +2029,7 @@ func main() {
 			TitleBarHeight: chromeMinHeight,
 			Content:        ui.View(a.view),
 		})
+		configureWindowRendering(a.win)
 		paths := normalizePaths(os.Args[1:], "")
 		if len(paths) == 0 {
 			a.restoreSession()
