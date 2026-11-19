@@ -915,6 +915,23 @@ func (s fileSide) key() string {
 	return ""
 }
 
+// groupFileSides 说这批文件该不该按暂存 / 未暂存分组：只有两侧都有改动时，分组才带来信息——
+// 全在暂存区或全在工作区时，标题只是把「只有一组」这件事再说一遍。
+// 只看仓库状态，不看筛选后的可见行：筛选只改变列表显示哪些文件，不应该让分组标题和
+// 批量操作在筛选时跳位置。
+func groupFileSides(files []fileChange) bool {
+	var staged, unstaged bool
+	for _, f := range files {
+		switch f.side {
+		case sideStaged:
+			staged = true
+		case sideUnstaged:
+			unstaged = true
+		}
+	}
+	return staged && unstaged
+}
+
 // fileSideTitle 是分组标题：布局已经说明分组，标题只说这一组是什么。
 func fileSideTitle(s fileSide) string {
 	switch s {

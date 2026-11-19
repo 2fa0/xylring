@@ -128,6 +128,9 @@ type app struct {
 	push           pushDialog
 	showBoard      bool
 	board          boardState
+	quitGuard      closeGuardState
+	writes         map[int]string // 正在跑的 Git 写操作，见 startGitWrite
+	writeSeq       int
 }
 
 type discardDialog struct {
@@ -269,6 +272,7 @@ func (a *app) view(c *ui.Context) {
 	a.settingsModal(c)
 	a.gitLogModal(c)
 	a.boardModals(c)
+	a.closeGuardModal(c)
 }
 
 func (a *app) handleShortcuts(c *ui.Context) {
@@ -2046,6 +2050,7 @@ func main() {
 		}
 		a.startAutoRefresh()
 		a.win.OnFocus(a.focusRepo)
+		a.win.OnClose(a.closeGuardHook)
 		a.win.OnClosed(func() {
 			a.commitBoardDrafts()
 			a.queueSession()

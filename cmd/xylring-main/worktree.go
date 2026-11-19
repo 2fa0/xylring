@@ -249,11 +249,12 @@ func stageFile(ctx context.Context, dir, path string) error {
 	return err
 }
 
-func unstageFile(ctx context.Context, dir, path string) error {
-	_, err := runGit(ctx, dir, "--literal-pathspecs", "restore", "--staged", "--", path)
-	if err != nil {
-		_, err = runGit(ctx, dir, "--literal-pathspecs", "reset", "HEAD", "--", path)
-	}
+// unstageFile 把路径退出暂存区，工作区内容不动。带路径的 reset 在两种状态下都成立：
+// 有 HEAD 时把索引还原成 HEAD，还没有第一次提交时按空树重置（索引里不再有这个文件），
+// 文件都留在工作区。它只看仓库此刻的状态，不依赖界面缓存的 head，也就没有后台线程读
+// 界面字段的竞争，终端在别处切了分支也不会挑错命令。
+func unstageFile(ctx context.Context, dir string, paths ...string) error {
+	_, err := runGit(ctx, dir, append([]string{"--literal-pathspecs", "reset", "--"}, paths...)...)
 	return err
 }
 
@@ -262,11 +263,9 @@ func stageAll(ctx context.Context, dir string) error {
 	return err
 }
 
+// unstageAll 是 unstageFile 的整份版本：同样一条路径级 reset，空仓库也不会失败。
 func unstageAll(ctx context.Context, dir string) error {
-	_, err := runGit(ctx, dir, "restore", "--staged", ".")
-	if err != nil {
-		_, err = runGit(ctx, dir, "reset", "HEAD")
-	}
+	_, err := runGit(ctx, dir, "reset", "--", ".")
 	return err
 }
 
@@ -310,18 +309,21 @@ func (a *app) stageWorktreeFile(t *repoTab, path string) {
 		return
 	}
 	t.commitBusy = true
+	w := a.startGitWrite("正在暂存文件")
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := stageFile(ctx, repoPath, path); err != nil {
 			a.post(func() {
+				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
@@ -331,26 +333,33 @@ func (a *app) stageWorktreeFile(t *repoTab, path string) {
 	}()
 }
 
-func (a *app) unstageWorktreeFile(t *repoTab, path string) {
+func (a *app) unstageWorktreeFile(t *repoTab, f fileChange) {
 	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
 		return
 	}
-	if t == nil || path == "" {
+	if t == nil || f.path == "" {
 		return
 	}
+	paths := []string{f.path}
+	if f.status == "R" && f.oldPath != "" {
+		paths = append(paths, f.oldPath)
+	}
 	t.commitBusy = true
+	w := a.startGitWrite("正在取消暂存")
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := unstageFile(ctx, repoPath, path); err != nil {
+		if err := unstageFile(ctx, repoPath, paths...); err != nil {
 			a.post(func() {
+				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("取消暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
@@ -368,18 +377,21 @@ func (a *app) stageAllWorktree(t *repoTab) {
 		return
 	}
 	t.commitBusy = true
+	w := a.startGitWrite("正在暂存文件")
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := stageAll(ctx, repoPath); err != nil {
 			a.post(func() {
+				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("全部暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
@@ -397,18 +409,21 @@ func (a *app) unstageAllWorktree(t *repoTab) {
 		return
 	}
 	t.commitBusy = true
+	w := a.startGitWrite("正在取消暂存")
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := unstageAll(ctx, repoPath); err != nil {
 			a.post(func() {
+				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("全部取消暂存失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
 			if t.worktree {
@@ -439,18 +454,21 @@ func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
 	a.showDiscard = false
 	a.discard.open = false
 	t.commitBusy = true
+	w := a.startGitWrite("正在放弃改动")
 	repoPath := t.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := discardFile(ctx, repoPath, f); err != nil {
 			a.post(func() {
+				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("丢弃失败: "+err.Error(), "")
 			})
 			return
 		}
 		a.post(func() {
+			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.pendingToast = "已丢弃改动: " + filepath.Base(f.path)
 			a.refreshWorktree(t)
@@ -484,6 +502,7 @@ func (a *app) runCommitWorktree(t *repoTab) {
 		return
 	}
 	t.commitBusy = true
+	w := a.startGitWrite("正在提交")
 	t.commitErr = ""
 	repoPath := t.path
 	amend := t.commitAmend
@@ -504,6 +523,7 @@ func (a *app) runCommitWorktree(t *repoTab) {
 			err = commitWorktree(ctx, repoPath, finalMsg, amend)
 		}
 		a.post(func() {
+			a.finishGitWrite(w)
 			t.commitBusy = false
 			if err != nil {
 				t.commitErr = err.Error()
@@ -715,7 +735,7 @@ func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, key
 	})
 	if btn.Clicked() {
 		if staged {
-			a.unstageWorktreeFile(t, f.path)
+			a.unstageWorktreeFile(t, f)
 		} else {
 			a.stageWorktreeFile(t, f.path)
 		}
@@ -726,7 +746,7 @@ func (a *app) worktreeStageHoverButtons(c *ui.Context, t *repoTab, f fileChange)
 	key := func(prefix string) string { return prefix + f.rowKey() }
 	if f.side == sideStaged {
 		fileIconButton(c, key("inspect-unstage-"), "取消暂存", iconMinus).Tooltip(tr("取消暂存")).OnClick(func() {
-			a.unstageWorktreeFile(t, f.path)
+			a.unstageWorktreeFile(t, f)
 		})
 		return
 	}
@@ -746,7 +766,7 @@ func (a *app) worktreeFileMenu(c *ui.Context, m *ui.Menu, t *repoTab, f fileChan
 		}
 		m.Separator()
 		if m.Item(tr("取消暂存")).Chosen() {
-			a.unstageWorktreeFile(t, f.path)
+			a.unstageWorktreeFile(t, f)
 		}
 		return
 	}

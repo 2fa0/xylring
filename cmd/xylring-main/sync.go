@@ -99,12 +99,14 @@ func (a *app) quickPull(tab *repoTab) {
 	}
 	tab.syncBusy = true
 	tab.notice = "正在拉取更新 (git pull)…"
+	w := a.startGitWrite("正在拉取")
 	repoPath := tab.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		out, err := gitPull(ctx, repoPath)
 		a.post(func() {
+			a.finishGitWrite(w)
 			tab.syncBusy = false
 			tab.notice = ""
 			if err != nil {
@@ -141,12 +143,14 @@ func (a *app) quickPush(tab *repoTab) {
 	}
 	tab.syncBusy = true
 	tab.notice = "正在推送到远程 (git push)…"
+	w := a.startGitWrite("正在推送")
 	repoPath := tab.path
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		out, err := gitPush(ctx, repoPath)
 		a.post(func() {
+			a.finishGitWrite(w)
 			tab.syncBusy = false
 			tab.notice = ""
 			if err != nil {

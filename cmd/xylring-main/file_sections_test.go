@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -86,10 +87,18 @@ func TestFileListRowsInsertSectionHeaders(t *testing.T) {
 		}
 	}
 
-	// 过滤掉一组之后就不要再留空标题。
-	only := fileListRows(files, []int{1})
-	if len(only) != 2 || only[0].file != -1 || only[0].section != sideStaged {
-		t.Fatalf("过滤后的行不对: %+v", only)
+	// 筛选只是不出某些行，分组仍按仓库状态保留：标题不跟着筛选消失。
+	filtered := fileListRows(files, []int{1})
+	if len(filtered) != 2 || filtered[0].file != -1 || filtered[0].section != sideStaged {
+		t.Fatalf("筛选后标题不该消失: %+v", filtered)
+	}
+
+	// 仓库只有一侧时才不分组：标题只是把「只有一组」再说一遍。
+	for _, side := range []fileSide{sideStaged, sideUnstaged} {
+		single := []fileChange{{path: "only.txt", side: side}}
+		if rows := fileListRows(single, []int{0}); len(rows) != 1 || rows[0].file != 0 {
+			t.Fatalf("%v: 只有一侧时不该有标题: %+v", side, rows)
+		}
 	}
 
 	// 提交之间的对比不分侧，不加标题。
@@ -466,5 +475,212 @@ func TestConflictDiffFallsBackToWorktree(t *testing.T) {
 	}
 	if !strings.Contains(string(source.new), "<<<<<<<") {
 		t.Fatalf("工作区应当带着冲突标记: %q", source.new)
+	}
+}
+
+// 全部都在暂存区、或全部都在工作区时，分组标题只是把「只有一组」再说一遍：
+// 不分组，这一组的批量操作移到列表行尾，不跟着标题消失。
+func TestWorktreeListDropsSectionsForOneSide(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []fileChange
+		bulk  string
+	}{
+		{
+			name:  "all staged",
+			files: []fileChange{{status: "M", path: "staged.txt", extra: "已暂存", indexStatus: 'M', workStatus: ' '}},
+			bulk:  "全部取消暂存",
+		},
+		{
+			name:  "all in the worktree",
+			files: []fileChange{{status: "A", path: "loose.txt", extra: "未跟踪", indexStatus: '?', workStatus: '?'}},
+			bulk:  "全部暂存",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tab := newTab(1, "/tmp/work/one-side")
+			tab.loaded = true
+			tab.branch = "main"
+			tab.worktreeFiles = tc.files
+			tab.commits = []commit{{hash: hashN(1), subject: "init"}}
+			a := &app{
+				tabs:      []*repoTab{tab},
+				found:     []string{"/tmp/work/one-side"},
+				foundFrom: "/tmp/work",
+				dispatch:  func(func()) {},
+			}
+			activateWorktreeInspect(tab)
+			tt := ui.NewTester(a.view, 1100, 720)
+			tt.Frame()
+
+			// 标题只作为整行出现；行上的「已暂存 M」这类标签不算分组。
+			exact := map[string]bool{}
+			for _, text := range tt.Texts() {
+				exact[text] = true
+			}
+			for _, title := range []string{fileSideTitle(sideStaged), fileSideTitle(sideUnstaged)} {
+				if exact[title] {
+					t.Fatalf("只剩一侧时不该出现分组标题 %q：%q", title, tt.Texts())
+				}
+			}
+			if !tt.HasText(tc.bulk) {
+				t.Fatalf("列表行尾应有 %q：%q", tc.bulk, tt.Texts())
+			}
+		})
+	}
+}
+
+// 树视图不分组：文件直接挂在根上，选中行也还找得到（键不能还带分组前缀）。
+func TestWorktreeTreeSkipsSectionsForOneSide(t *testing.T) {
+	files := []fileChange{
+		{path: "cmd/a.go", side: sideUnstaged, status: "M"},
+		{path: "cmd/b.go", side: sideUnstaged, status: "M"},
+	}
+	indices := []int{0, 1}
+	if groupFileSides(files) {
+		t.Fatal("one side must not group")
+	}
+	tree := buildFilteredFileTree(files, indices, true)
+	if want := []string{"cmd/"}; !reflect.DeepEqual(tree.roots, want) {
+		t.Fatalf("tree roots %q, want %q", tree.roots, want)
+	}
+	tab := newTab(1, "/tmp/work/tree")
+	tab.worktree, tab.compareFiles, tab.fileSel = true, files, 1
+	tab.fileOutline.Open.Add("cmd/")
+	tab.syncFileOutlineSel(tree)
+	if tab.fileOutlineSel < 0 {
+		t.Fatal("the selected file was not found in the ungrouped tree")
+	}
+	if row := tree.rowOf(files[1].treeKey(tab.groupedFileSides()), &tab.fileOutline.Open); row != tab.fileOutlineSel {
+		t.Fatalf("row %d, selection %d", row, tab.fileOutlineSel)
+	}
+}
+
+func TestFileListRowsOnlyGroupsWhenBothSidesChange(t *testing.T) {
+	files := []fileChange{
+		{path: "a.go", side: sideStaged},
+		{path: "b.go", side: sideUnstaged},
+	}
+	if !groupFileSides(files) {
+		t.Fatal("both sides must group")
+	}
+	if groupFileSides(files[:1]) {
+		t.Fatal("one side must not group")
+	}
+	if groupFileSides([]fileChange{{path: "a.go"}}) {
+		t.Fatal("a plain comparison must not group")
+	}
+}
+
+// 分组只由仓库状态决定。过滤只是不出某些行：标题要留在可见的那一侧，
+// 批量操作也不能从标题里跑到列表行尾。
+func TestFileListRowsKeepSectionsWhenFilterHidesOneSide(t *testing.T) {
+	files := []fileChange{
+		{path: "staged.go", side: sideStaged},
+		{path: "loose.go", side: sideUnstaged},
+	}
+	rows := fileListRows(files, []int{0})
+	if len(rows) != 2 || rows[0].file != -1 || rows[0].section != sideStaged {
+		t.Fatalf("筛选后分组不该消失: %+v", rows)
+	}
+	tab := newTab(1, "/tmp/work/filtered")
+	tab.worktree, tab.compareFiles, tab.fileFilter = true, files, "staged"
+	if side := tab.soloFileSide(); side != sideNone {
+		t.Fatalf("两层都有改动时不该走单侧工具栏: %v", side)
+	}
+}
+
+// 还没有第一次提交时也要能取消暂存：`restore --staged` 和 `reset HEAD` 都会
+// 因为解析不到 HEAD 失败，最后一步 `reset -- <path>` 按空树重置索引才对。
+func TestUnstageWorksBeforeFirstCommit(t *testing.T) {
+	dir, git := initTestRepo(t)
+	write := func(name, s string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.txt", "a\n")
+	write("b.txt", "b\n")
+	git("add", ".")
+	files, err := worktreeStatus(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := expandWorktreeRows(files)
+	if len(rows) != 2 || rows[0].side != sideStaged {
+		t.Fatalf("expected two staged files: %+v", rows)
+	}
+	updates := make(chan func(), 16)
+	tab := newTab(1, dir)
+	tab.worktree, tab.compareFiles = true, rows
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+	defer tab.cancel()
+
+	// 单个文件：带路径的那条路。
+	a.unstageWorktreeFile(tab, rows[0])
+	waitUpdates(t, updates, func() bool { return !tab.commitBusy })
+	if tab.commitErr != "" {
+		t.Fatal(tab.commitErr)
+	}
+	if status := strings.TrimSpace(string(git("status", "--porcelain"))); !strings.Contains(status, "?? a.txt") || !strings.Contains(status, "A  b.txt") {
+		t.Fatalf("取消暂存单个文件后状态不对: %q", status)
+	}
+
+	// 全部：整份索引的那条路。
+	a.stageAllWorktree(tab)
+	waitUpdates(t, updates, func() bool { return !tab.commitBusy })
+	a.unstageAllWorktree(tab)
+	waitUpdates(t, updates, func() bool { return !tab.commitBusy })
+	if tab.commitErr != "" {
+		t.Fatal(tab.commitErr)
+	}
+	status := strings.TrimSpace(string(git("status", "--porcelain")))
+	if strings.Contains(status, "A  ") || !strings.Contains(status, "?? a.txt") || !strings.Contains(status, "?? b.txt") {
+		t.Fatalf("全部取消暂存后应只剩未跟踪文件: %q", status)
+	}
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("%s 不该被删除: %v", name, err)
+		}
+	}
+}
+
+// 有 HEAD 时取消暂存不能把文件变成未跟踪：路径级 reset 还原的是 HEAD 里的索引条目，
+// 和空仓库里的那一步是同一条命令，所以不需要提前判断仓库有没有第一次提交。
+func TestUnstageKeepsTrackedFilesTracked(t *testing.T) {
+	dir, git := initTestRepo(t)
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600)
+	git("add", ".")
+	git("commit", "-m", "base")
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o600)
+	git("add", "a.txt")
+	// porcelain 的状态列带前导空格，只去掉行尾换行，别把「未暂存」的标记也 trim 掉。
+	porcelain := func() string { return strings.TrimRight(string(git("status", "--porcelain")), "\n") }
+	if status := porcelain(); status != "M  a.txt" {
+		t.Fatalf("setup: %q", status)
+	}
+	if err := unstageFile(context.Background(), dir, "a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if status := porcelain(); status != " M a.txt" {
+		t.Fatalf("取消暂存后应仍是已跟踪文件的未暂存改动: %q", status)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "a.txt")); err != nil || string(data) != "two\n" {
+		t.Fatalf("工作区内容不该被改动: %q %v", data, err)
+	}
+
+	// 整份索引同样一条命令，也把新文件退回未跟踪，而不是删掉它。
+	os.WriteFile(filepath.Join(dir, "c.txt"), []byte("new\n"), 0o600)
+	git("add", ".")
+	if err := unstageAll(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if status := porcelain(); status != " M a.txt\n?? c.txt" {
+		t.Fatalf("全部取消暂存后状态不对: %q", status)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "c.txt")); err != nil {
+		t.Fatalf("c.txt 不该被删除: %v", err)
 	}
 }
