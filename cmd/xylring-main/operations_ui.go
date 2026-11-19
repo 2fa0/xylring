@@ -354,6 +354,12 @@ func (a *app) runOperation() {
 	d.err = ""
 	a.op = d
 	a.write.busy = true
+	// Blame、行历史、查看 Stash 只读仓库：它们也让 a.op.busy 为真，但没有写操作，
+	// 退出确认不该提到它们。
+	w := 0
+	if !operationReadOnly(d.action) {
+		w = a.startGitWrite("正在执行批量操作")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	a.opCancel = cancel
 	go func() {
@@ -378,6 +384,9 @@ func (a *app) runOperation() {
 			out, err = executeOperation(ctx, d)
 		}
 		a.post(func() {
+			if w != 0 {
+				a.finishGitWrite(w)
+			}
 			a.write.busy = false
 			a.opCancel = nil
 			if a.op.gen != d.gen {

@@ -40,9 +40,10 @@ func sectionKey(side fileSide) string {
 	return "\x00" + side.key()
 }
 
-// treeKey 是文件在树里的键。未提交改动按侧分开，同名文件在两组里各是一行。
-func (f fileChange) treeKey() string {
-	if f.side == sideNone {
+// treeKey 是文件在树里的键。未提交改动两侧都有改动时按侧分开，同名文件在两组里各是一行；
+// 不分组时树里没有分组节点，键就是路径。
+func (f fileChange) treeKey(grouped bool) string {
+	if f.side == sideNone || !grouped {
 		return slashPath(f.path)
 	}
 	return sectionKey(f.side) + "/" + slashPath(f.path)
@@ -132,13 +133,9 @@ func addFileNode(root *rawFileNode, files []fileChange, idx int, nested bool) {
 
 func buildFilteredFileTree(files []fileChange, indices []int, nested bool) fileTree {
 	root := &rawFileNode{file: -1, index: map[string]int{}}
-	grouped := false
-	for _, idx := range indices {
-		if idx >= 0 && idx < len(files) && files[idx].side != sideNone {
-			grouped = true
-			break
-		}
-	}
+	// 只剩一侧时不建分组层，树里的文件直接挂在根上。分组看仓库状态、不看筛选：
+	// 否则筛到只剩一侧的文件时，树会马上改结构。
+	grouped := groupFileSides(files)
 	if !grouped {
 		for _, idx := range indices {
 			addFileNode(root, files, idx, nested)
@@ -287,7 +284,7 @@ func (t *repoTab) syncFileOutlineSel(tree fileTree) {
 	if t.fileSel < 0 || t.fileSel >= len(t.compareFiles) {
 		return
 	}
-	want := t.compareFiles[t.fileSel].treeKey()
+	want := t.compareFiles[t.fileSel].treeKey(t.groupedFileSides())
 	if t.fileOutlineSel >= 0 && t.fileOutlineSel < t.fileOutline.Rows() {
 		cur := t.fileOutline.Item(t.fileOutlineSel)
 		if cur == want {

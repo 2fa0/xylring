@@ -256,6 +256,7 @@ func (a *app) runCheckoutBranch(tab *repoTab, name string) {
 		a.pendingToast = "当前已处于分支 " + name
 		return
 	}
+	w := a.startGitWrite("正在切换分支")
 	a.write.busy = true
 	a.write.gen++
 	gen, repo := a.write.gen, tab.path
@@ -264,6 +265,7 @@ func (a *app) runCheckoutBranch(tab *repoTab, name string) {
 		defer cancel()
 		err := checkoutBranch(ctx, repo, name)
 		a.post(func() {
+			a.finishGitWrite(w)
 			if a.write.gen != gen {
 				return
 			}
@@ -285,6 +287,7 @@ func (a *app) runCheckoutCommit(tab *repoTab, hash [20]byte) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
+	w := a.startGitWrite("正在检出提交")
 	a.write.busy = true
 	a.write.gen++
 	gen, repo := a.write.gen, tab.path
@@ -293,6 +296,7 @@ func (a *app) runCheckoutCommit(tab *repoTab, hash [20]byte) {
 		defer cancel()
 		err := checkoutDetached(ctx, repo, hash)
 		a.post(func() {
+			a.finishGitWrite(w)
 			if a.write.gen != gen {
 				return
 			}
@@ -557,6 +561,11 @@ func (a *app) runCommitWrite() {
 		}
 	}
 	d.busy = true
+	label := "正在修改分支或标签"
+	if kind == writeMessage {
+		label = "正在改写提交说明"
+	}
+	w := a.startGitWrite(label)
 	gen := d.gen
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -600,6 +609,7 @@ func (a *app) runCommitWrite() {
 			}
 		}
 		a.post(func() {
+			a.finishGitWrite(w)
 			if a.write.gen != gen {
 				return
 			}

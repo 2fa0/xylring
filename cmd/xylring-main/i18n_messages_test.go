@@ -110,6 +110,10 @@ func TestEnglishDialogsAndStoredErrorsContainNoChinese(t *testing.T) {
 			a.showDiscard = true
 			a.discard.file = fileChange{path: "example.go", extra: "未跟踪"}
 		}, (*app).discardModal},
+		{"close-guard", func(a *app) {
+			a.startGitWrite("正在提交")
+			a.quitGuard = closeGuardState{open: true}
+		}, (*app).closeGuardModal},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

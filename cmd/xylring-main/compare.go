@@ -1071,6 +1071,8 @@ func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
 				t.collapseAllTree()
 			}
 		}
+		// 只剩一侧时列表不分组，这一侧的批量操作就落在列表行尾，不跟着分组标题一起消失。
+		a.bulkStageButton(c, t, t.soloFileSide())
 		// 导出管的是这批文件，所以放在文件列表行尾，不占 diff 头部。
 		if paneIconButton(c, "copy-diff-notes", tr("复制审阅笔记"), iconCopy).Disabled(len(t.diffNotes) == 0).Clicked() {
 			a.copyDiffNotes(c, t)
@@ -1628,22 +1630,44 @@ func (r fileListRow) key(files []fileChange) string {
 	return files[r.file].rowKey()
 }
 
-// fileListRows 在文件行前面插分组标题。没有分侧的列表（提交之间的对比）
-// 不加标题，和以前一样是一列文件。
+// fileListRows 在文件行前面插分组标题。两侧都有改动时才分组；只剩一侧时标题一带而过、
+// 又占一行，不如直接列出文件。没有分侧的列表（提交之间的对比）也不加标题。
+// 分组看的是仓库状态（files 是整份列表），筛选只是不出这一侧的行，不改变分组本身。
 func fileListRows(files []fileChange, indices []int) []fileListRow {
 	rows := make([]fileListRow, 0, len(indices)+2)
+	grouped := groupFileSides(files)
 	last := sideNone
 	for _, idx := range indices {
 		if idx < 0 || idx >= len(files) {
 			continue
 		}
-		if side := files[idx].side; side != sideNone && side != last {
+		if side := files[idx].side; grouped && side != sideNone && side != last {
 			rows = append(rows, fileListRow{file: -1, section: side})
 			last = side
 		}
 		rows = append(rows, fileListRow{file: idx})
 	}
 	return rows
+}
+
+// groupedFileSides 是这份列表是否带分组标题。
+func (t *repoTab) groupedFileSides() bool {
+	return groupFileSides(t.compareFiles)
+}
+
+// soloFileSide 说仓库是否只剩一侧：只剩一侧时列表不分组，这一侧的批量操作
+// 要另找地方放，不能跟着分组标题一起消失。
+func (t *repoTab) soloFileSide() fileSide {
+	if groupFileSides(t.compareFiles) {
+		return sideNone
+	}
+	side := sideNone
+	for _, f := range t.compareFiles {
+		if f.side != sideNone {
+			side = f.side
+		}
+	}
+	return side
 }
 
 // fileRowIndex 把 compareFiles 的下标换成列表行号：分组标题也占行。
@@ -1663,16 +1687,23 @@ func (a *app) fileSectionRow(c *ui.Context, t *repoTab, side fileSide) {
 	ui.Row(c).FillWidth().MinHeight(26).Padding(4, 6).Gap(6).AlignItems(ui.Center).Background(theme.Background).Children(func() {
 		ui.Text(c, fileSideTitle(side)).FontSize(12).Bold().TextColor(theme.TextMuted).SingleLine().Shrink(0)
 		ui.Box(c).Grow(1).MinWidth(0)
-		if side == sideStaged {
-			if paneIconButton(c, fmt.Sprintf("staged-unstage-all-%d", t.id), tr("全部取消暂存"), iconMinus).Clicked() {
-				a.unstageAllWorktree(t)
-			}
-			return
+		a.bulkStageButton(c, t, side)
+	})
+}
+
+// bulkStageButton 是整份列表的批量操作，出现在分组标题右侧，或（只有一侧时）列表行尾。
+// 它作用于整个仓库，筛选只是不出某些行，所以 tooltip 把范围说出来。
+func (a *app) bulkStageButton(c *ui.Context, t *repoTab, side fileSide) {
+	switch side {
+	case sideStaged:
+		if paneIconButton(c, fmt.Sprintf("staged-unstage-all-%d", t.id), tr("全部取消暂存（整个仓库）"), iconMinus).Clicked() {
+			a.unstageAllWorktree(t)
 		}
-		if paneIconButton(c, fmt.Sprintf("unstaged-stage-all-%d", t.id), tr("全部暂存"), iconPlus).Clicked() {
+	case sideUnstaged:
+		if paneIconButton(c, fmt.Sprintf("unstaged-stage-all-%d", t.id), tr("全部暂存（整个仓库）"), iconPlus).Clicked() {
 			a.stageAllWorktree(t)
 		}
-	})
+	}
 }
 
 func (a *app) fileFlatList(c *ui.Context, t *repoTab) {

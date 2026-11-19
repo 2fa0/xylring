@@ -477,8 +477,9 @@ func (a *app) reload(t *repoTab) {
 		}
 		worktreeCtx, cancelWorktree := context.WithTimeout(ctx, 10*time.Second)
 		defer cancelWorktree()
-		files, cache, err := pollWorktreeStatus(worktreeCtx, path, nil)
-		if err == nil {
+		// 用新变量接结果：这里的 err 还被上面那个 post 回调读着，后台线程不能再写它。
+		files, cache, worktreeErr := pollWorktreeStatus(worktreeCtx, path, nil)
+		if worktreeErr == nil {
 			a.post(func() {
 				if !t.closed && t.generation == gen && t.worktreeRefreshGen == worktreeGen {
 					t.worktreeCache = cache
