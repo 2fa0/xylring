@@ -1,3 +1,23 @@
+## 0.9.2 - 2026-11-19
+
+### 更新内容
+
+- 正在提交、推送、拉取、暂存或跑批量操作时，关窗口和 ⌘Q 会先问一句再退：可以留下等它跑完，也可以仍要退出；确认框里的操作名跟着实际进度变，操作跑完就改说「操作已完成。」
+- 写操作记在应用级状态里而不是仓库标签上，关掉仓库不会停下已经发起的 Git，退出保护也不会跟着消失；只认真正改仓库或远端状态的调用，fetch、读历史、看 diff 这类能干净取消的不拦。
+- 未提交改动只有一侧时不再显示分组标题，全部暂存 / 全部取消暂存移到文件列表行尾；是否分组只由仓库状态决定，筛选不会让标题和按钮跳位置，按钮提示写明作用于整个仓库。
+- 取消暂存改用一条路径级 reset：还没有第一次提交的空仓库和有 HEAD 的仓库走同一条命令，后台不再读界面缓存的 HEAD，终端在别处切了分支也不会挑错命令。
+- 分组标题不再抢键盘焦点，滚动时标题自己铺底色；行级笔记按「路径 + 侧」判断换行，同一文件两侧切换不再误清草稿；非重命名的行清掉旧路径，取消暂存不会去还原一个不存在的路径。
+- 修掉一处数据竞争：读取仓库时后台线程复用了上一个回调正在读的变量。
+
+### Changes
+
+- Quitting with the window close button or ⌘Q now asks first when a commit, push, pull, staging or batch operation is running: stay and let it finish, or quit anyway. The dialog follows the actual progress and switches to "the operation has finished" once it completes.
+- Running Git writes are tracked on the app rather than on the repository tab, so closing a repository does not drop the guard, and those writes keep going as before. Only calls that change the repository or a remote hold the window; fetch, history and diff reads, which cancel cleanly, do not.
+- A worktree with changes on only one side no longer shows a group header, and Stage all / Unstage all move to the end of the file list row. Grouping now depends on the repository state alone, so filtering no longer moves the header or the buttons, and the button tooltip states that it covers the whole repository.
+- Unstaging uses one path-level reset: a repository without its first commit and one with HEAD take the same command, the background no longer reads a cached HEAD from the UI, and switching branches in a terminal cannot pick the wrong command.
+- Group headers no longer take keyboard focus and paint their own background while scrolling; line notes compare row identity (path and side) so switching between the two sides of one file keeps the draft; rows that are not renames drop their old path so unstaging cannot restore a path that no longer exists.
+- Fixed a data race where reading a repository reused a variable the previous callback was still reading.
+
 ## 0.9.1 - 2026-11-18
 
 ### 更新内容
