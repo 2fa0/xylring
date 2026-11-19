@@ -713,8 +713,8 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 	t.compareGen++
 	gen := t.compareGen
 	f := t.compareFiles[i]
-	if t.noteEdit != nil && t.noteEdit.Path != f.path {
-		t.noteEdit = nil // 换了文件，输入条锚的那一行已经不在屏上。
+	if t.noteEdit != nil && t.noteEdit.noteKey() != f.rowKey() {
+		t.noteEdit = nil
 	}
 	if saved := t.restoreDiff; saved != nil {
 		t.restoreDiff = nil
@@ -1660,7 +1660,7 @@ func (t *repoTab) fileRowIndex(file int) int {
 // 计数只留在图谱里的未提交改动徽章，这里不再重复一遍。
 func (a *app) fileSectionRow(c *ui.Context, t *repoTab, side fileSide) {
 	theme := c.Theme()
-	ui.Row(c).FillWidth().MinHeight(26).Padding(4, 6).Gap(6).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).FillWidth().MinHeight(26).Padding(4, 6).Gap(6).AlignItems(ui.Center).Background(theme.Background).Children(func() {
 		ui.Text(c, fileSideTitle(side)).FontSize(12).Bold().TextColor(theme.TextMuted).SingleLine().Shrink(0)
 		ui.Box(c).Grow(1).MinWidth(0)
 		if side == sideStaged {
@@ -1694,6 +1694,7 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 	selectedRow := currentSel
 	var action func()
 	t.fileList.Selected = &selectedRow
+	t.fileList.Header = func(i int) bool { return rows[i].file < 0 }
 	t.fileList.Key = func(i int) any {
 		if i < 0 || i >= len(rows) {
 			return i

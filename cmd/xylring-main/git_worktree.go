@@ -167,6 +167,9 @@ func sideStatus(f fileChange, b byte) string {
 func worktreeRow(f fileChange, side fileSide, status, extra string) fileChange {
 	f.side = side
 	f.status, f.extra = status, extra
+	if status != "R" && status != "C" {
+		f.oldPath = ""
+	}
 	// 一行只属于一侧：另一侧的状态清掉，hasStaged/hasUnstaged 才是这一行的意思。
 	if side == sideStaged {
 		f.workStatus = ' '
