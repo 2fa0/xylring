@@ -13,7 +13,7 @@ func activateWorktreeInspect(tab *repoTab) {
 	tab.worktree = true
 	tab.inspecting = zeroHash
 	tab.comparison = nil
-	tab.compareFiles = tab.worktreeFiles
+	tab.compareFiles = expandWorktreeRows(tab.worktreeFiles)
 	tab.worktreeCount = len(tab.worktreeFiles)
 	tab.selected = 0
 	tab.selection.Clear()
@@ -372,12 +372,20 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 	}
 
 	// Verify directory node is open by default
-	if !tab.fileOutline.Open.Has("zaec-image/") {
+	dirKey := func(name string) string {
+		for key, n := range tab.prepareFileTree().nodes {
+			if n.dir && n.name == name {
+				return key
+			}
+		}
+		return ""
+	}
+	if key := dirKey("zaec-image"); key == "" || !tab.fileOutline.Open.Has(key) {
 		t.Fatalf("zaec-image/ 应该默认展开")
 	}
 	initialRows := tab.fileOutline.Rows()
 	// Collapse directory
-	tab.fileOutline.Open.Remove("zaec-image/")
+	tab.fileOutline.Open.Remove(dirKey("zaec-image"))
 	tt.Frame()
 	if tt.HasText("Dockerfile.jdk8-2") {
 		t.Fatalf("折叠 zaec-image 后不应显示内部文件")
@@ -386,7 +394,7 @@ func TestSidebarWorktreeTreeToggle(t *testing.T) {
 		t.Fatalf("折叠后行数应减少: was %d, now %d", initialRows, tab.fileOutline.Rows())
 	}
 	// Re-expand directory
-	tab.fileOutline.Open.Add("zaec-image/")
+	tab.fileOutline.Open.Add(dirKey("zaec-image"))
 	tt.Frame()
 	if !tt.HasText("Dockerfile.jdk8-2") {
 		t.Fatalf("重新展开后应显示内部文件")
@@ -503,14 +511,22 @@ func TestSidebarWorktreeFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tab.fileOutline.Open.Has("pkg/") {
+	openPkg := func() bool {
+		for key, n := range tab.prepareFileTree().nodes {
+			if n.dir && n.name == "pkg" {
+				return tab.fileOutline.Open.Has(key)
+			}
+		}
+		return false
+	}
+	if openPkg() {
 		t.Fatalf("全部收起后 pkg/ 目录不应处于展开状态")
 	}
 	if err := tt.Click("全部展开"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !tab.fileOutline.Open.Has("pkg/") {
+	if !openPkg() {
 		t.Fatalf("全部展开后 pkg/ 目录应处于展开状态")
 	}
 }

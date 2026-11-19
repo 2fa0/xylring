@@ -214,12 +214,27 @@ type fileReview struct {
 	stamp  string
 }
 
-// diffNote 是一条行级笔记，锚在某个文件的某一行上。
+// diffNote 是一条行级笔记，锚在某一行的某一行上。
 type diffNote struct {
 	Path string
 	Side string // "old" 或 "new"
 	Line int    // 行号，从 1 起
 	Text string
+	// Section 是这条笔记所属的一侧：未提交改动里同名文件两侧各有一条 diff。
+	Section fileSide
+}
+
+// noteKey 是笔记挂在列表哪一行的身份，和 fileChange.rowKey 一致。
+func (n diffNote) noteKey() string {
+	return fileChange{path: n.Path, side: n.Section}.rowKey()
+}
+
+// noteLabel 是导出时写进 Markdown 标题的文件名。
+func (n diffNote) noteLabel() string {
+	if n.Section == sideStaged {
+		return n.Path + "（" + fileSideTitle(sideStaged) + "）"
+	}
+	return n.Path
 }
 
 func newTab(id int, path string) *repoTab {

@@ -68,7 +68,7 @@ func (a *app) finishOpenFileTab(t *repoTab) {
 
 func (a *app) openWorktreeFileTab(t *repoTab, f fileChange) {
 	for i, tab := range t.fileTabs {
-		if tab.file.path == f.path && tab.worktree {
+		if tab.file.rowKey() == f.rowKey() && tab.worktree {
 			t.contentTab = i + 1
 			t.revealFileTab = true
 			return
@@ -324,11 +324,18 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 	if len(t.fileTabs) == 0 {
 		return
 	}
+	// 同一文件的两侧各开一个标签页时，标签要能分开：只有这时才在名字前说侧。
+	samePaths := map[string]int{}
+	for _, tab := range t.fileTabs {
+		samePaths[tab.file.path]++
+	}
 	labels := []string{tr("提交历史")}
 	for _, tab := range t.fileTabs {
 		name := filepath.Base(tab.file.path)
 		if tab.fullFile {
 			name += " (" + tr(tab.fullRev) + ")"
+		} else if tab.file.side != sideNone && samePaths[tab.file.path] > 1 {
+			name = fileSideTitle(tab.file.side) + " " + name
 		}
 		labels = append(labels, name)
 	}
@@ -480,7 +487,7 @@ func (a *app) fileTabPane(c *ui.Context, t *repoTab, tab *fileDiffTab) {
 	fileIdx := -1
 	if tab.from == t.diffFrom && tab.to == t.diffTo && tab.worktree == t.worktree {
 		for i, f := range t.compareFiles {
-			if f.path == tab.file.path {
+			if f.rowKey() == tab.file.rowKey() {
 				fileIdx = i
 				break
 			}

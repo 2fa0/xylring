@@ -192,13 +192,13 @@ func TestWorktreeStatusLineStats(t *testing.T) {
 	for _, f := range files {
 		got[f.path] = f
 	}
-	if !got["a.txt"].hasStat || got["a.txt"].added != 1 || got["a.txt"].deleted != 1 {
+	if st := got["a.txt"].unstagedStat; !st.has || st.added != 1 || st.deleted != 1 {
 		t.Fatalf("modified %+v", got["a.txt"])
 	}
-	if !got["b.txt"].hasStat || got["b.txt"].binary || got["b.txt"].added != 1 || got["b.txt"].deleted != 0 {
+	if st := got["b.txt"].unstagedStat; !st.has || st.binary || st.added != 1 || st.deleted != 0 {
 		t.Fatalf("untracked %+v", got["b.txt"])
 	}
-	if !got["bin.dat"].hasStat || !got["bin.dat"].binary {
+	if st := got["bin.dat"].unstagedStat; !st.has || !st.binary {
 		t.Fatalf("binary %+v", got["bin.dat"])
 	}
 }
@@ -211,7 +211,7 @@ func TestWorktreeStatusCachedWithoutHead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0].path != "a.txt" || !files[0].hasStat || files[0].added != 1 || files[0].deleted != 0 {
+	if len(files) != 1 || files[0].path != "a.txt" || !files[0].stagedStat.has || files[0].stagedStat.added != 1 || files[0].stagedStat.deleted != 0 {
 		t.Fatalf("staged without HEAD %+v", files)
 	}
 }
@@ -232,7 +232,7 @@ func TestWorktreeRenameUsesGitPathOrder(t *testing.T) {
 	if len(files) != 1 || files[0].path != newPath || files[0].oldPath != oldPath || files[0].status != "R" {
 		t.Fatalf("rename paths: %+v", files)
 	}
-	if !files[0].hasStat || files[0].added != 1 || files[0].deleted != 1 {
+	if !files[0].stagedStat.has || !files[0].unstagedStat.has || files[0].unstagedStat.added != 1 || files[0].unstagedStat.deleted != 1 {
 		t.Fatalf("rename stats: %+v", files[0])
 	}
 	source, err := readFileDiffSource(context.Background(), dir, hashHex(head), "", files[0], true)
@@ -254,7 +254,7 @@ func TestWorktreeDiffTakesFullBottomWidthWithoutInspectFilesPane(t *testing.T) {
 		{status: "M", path: "main.go", extra: "未暂存", hasStat: true, added: 10, deleted: 2},
 		{status: "A", path: "new.go", extra: "未跟踪", hasStat: true, added: 20, deleted: 0},
 	}
-	tab.compareFiles = tab.worktreeFiles
+	tab.compareFiles = expandWorktreeRows(tab.worktreeFiles)
 	tab.fileSel = 0
 	tab.worktree = true
 	tab.selected = 0

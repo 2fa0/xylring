@@ -16,13 +16,18 @@ type fileTreeNode struct {
 	name string
 	dir  bool
 	file int
+	// section 非 sideNone 时这一行是分组标题（已暂存 / 未暂存），不是目录。
+	section fileSide
 }
 
 type rawFileNode struct {
+	key   string
 	name  string
 	file  int
 	kids  []*rawFileNode
 	index map[string]int
+
+	section fileSide
 }
 
 func slashPath(p string) string {
@@ -30,16 +35,29 @@ func slashPath(p string) string {
 	return strings.Trim(p, "/")
 }
 
-func (n *rawFileNode) child(name string, file int) *rawFileNode {
-	key := name
-	if file < 0 {
-		key += "/"
+// sectionKey 是分组标题在树里的键。路径里不会有 NUL，所以不会撞上真实文件。
+func sectionKey(side fileSide) string {
+	return "\x00" + side.key()
+}
+
+// treeKey 是文件在树里的键。未提交改动按侧分开，同名文件在两组里各是一行。
+func (f fileChange) treeKey() string {
+	if f.side == sideNone {
+		return slashPath(f.path)
 	}
-	if i, ok := n.index[key]; ok {
+	return sectionKey(f.side) + "/" + slashPath(f.path)
+}
+
+func (n *rawFileNode) child(key, name string, file int) *rawFileNode {
+	k := key
+	if file < 0 {
+		k += "/"
+	}
+	if i, ok := n.index[k]; ok {
 		return n.kids[i]
 	}
-	ch := &rawFileNode{name: name, file: file, index: map[string]int{}}
-	n.index[key] = len(n.kids)
+	ch := &rawFileNode{key: key, name: name, file: file, index: map[string]int{}}
+	n.index[k] = len(n.kids)
 	n.kids = append(n.kids, ch)
 	return ch
 }
@@ -48,62 +66,97 @@ func (n *rawFileNode) compact() {
 	for _, ch := range n.kids {
 		ch.compact()
 	}
-	if n.file >= 0 {
+	// 分组标题不能被压进它下面的目录里。
+	if n.file >= 0 || n.section != sideNone {
 		return
 	}
 	for len(n.kids) == 1 && n.kids[0].file < 0 {
 		ch := n.kids[0]
+		n.key = n.key + "/" + ch.key
 		n.name = n.name + "/" + ch.name
 		n.kids = ch.kids
 		n.index = ch.index
 	}
 }
 
-func (n *rawFileNode) emit(parent string, tree *fileTree) string {
-	path := n.name
-	if parent != "" {
-		path = parent + "/" + n.name
+func (n *rawFileNode) emit(parentKey string, tree *fileTree) string {
+	key := n.key
+	if parentKey != "" {
+		key = parentKey + "/" + n.key
 	}
 	// A diff can contain both a deleted file and a new directory at this path.
-	key := path
+	k := key
 	if n.file < 0 {
-		key += "/"
+		k += "/"
 	}
-	tree.nodes[key] = fileTreeNode{name: n.name, dir: n.file < 0, file: n.file}
+	tree.nodes[k] = fileTreeNode{name: n.name, dir: n.file < 0, file: n.file, section: n.section}
 	if n.file >= 0 {
-		return key
+		return k
 	}
 	kids := make([]string, 0, len(n.kids))
 	for _, ch := range n.kids {
-		kids = append(kids, ch.emit(path, tree))
+		kids = append(kids, ch.emit(key, tree))
 	}
-	tree.kids[key] = kids
-	return key
+	tree.kids[k] = kids
+	return k
 }
 
-func buildFilteredFileTree(files []fileChange, indices []int) fileTree {
+// addFileNode 把一个文件挂到树里。nested 为 true 时按路径拆成目录层，
+// 否则整条路径就是一个节点（列表视图的树只有分组标题这一层）。
+func addFileNode(root *rawFileNode, files []fileChange, idx int, nested bool) {
+	if idx < 0 || idx >= len(files) {
+		return
+	}
+	path := slashPath(files[idx].path)
+	if !nested {
+		root.child(path, path, idx)
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return
+	}
+	n := root
+	for _, part := range parts[:len(parts)-1] {
+		if part == "" || part == "." {
+			continue
+		}
+		n = n.child(part, part, -1)
+	}
+	name := parts[len(parts)-1]
+	if name == "" || name == "." {
+		return
+	}
+	n.child(name, name, idx)
+}
+
+func buildFilteredFileTree(files []fileChange, indices []int, nested bool) fileTree {
 	root := &rawFileNode{file: -1, index: map[string]int{}}
+	grouped := false
 	for _, idx := range indices {
-		if idx < 0 || idx >= len(files) {
-			continue
+		if idx >= 0 && idx < len(files) && files[idx].side != sideNone {
+			grouped = true
+			break
 		}
-		f := files[idx]
-		parts := strings.Split(slashPath(f.path), "/")
-		if len(parts) == 0 || parts[0] == "" {
-			continue
+	}
+	if !grouped {
+		for _, idx := range indices {
+			addFileNode(root, files, idx, nested)
 		}
-		n := root
-		for _, part := range parts[:len(parts)-1] {
-			if part == "" || part == "." {
-				continue
+	} else {
+		for _, side := range []fileSide{sideStaged, sideUnstaged} {
+			var section *rawFileNode
+			for _, idx := range indices {
+				if idx < 0 || idx >= len(files) || files[idx].side != side {
+					continue
+				}
+				if section == nil {
+					section = root.child(sectionKey(side), "", -1)
+					section.section = side
+				}
+				addFileNode(section, files, idx, nested)
 			}
-			n = n.child(part, -1)
 		}
-		name := parts[len(parts)-1]
-		if name == "" || name == "." {
-			continue
-		}
-		n.child(name, idx)
 	}
 	for _, ch := range root.kids {
 		ch.compact()
@@ -120,7 +173,7 @@ func buildFileTree(files []fileChange) fileTree {
 	for i := range files {
 		indices[i] = i
 	}
-	return buildFilteredFileTree(files, indices)
+	return buildFilteredFileTree(files, indices, true)
 }
 
 func (t fileTree) children(key string) []string {
@@ -156,6 +209,8 @@ func fileSetKey(files []fileChange) string {
 		b.WriteString(f.path)
 		b.WriteByte(0)
 		b.WriteString(f.oldPath)
+		b.WriteByte(0)
+		b.WriteString(f.side.key())
 		b.WriteByte(0)
 	}
 	return b.String()
@@ -203,7 +258,7 @@ func (t *repoTab) prepareFileTree() fileTree {
 		}
 		t.fileTreeKey = key
 		indices := t.filteredFileIndices()
-		t.fileTreeData = buildFilteredFileTree(t.compareFiles, indices)
+		t.fileTreeData = buildFilteredFileTree(t.compareFiles, indices, true)
 		t.fileOutline.Open.Clear()
 		for k, n := range t.fileTreeData.nodes {
 			if n.dir {
@@ -232,7 +287,7 @@ func (t *repoTab) syncFileOutlineSel(tree fileTree) {
 	if t.fileSel < 0 || t.fileSel >= len(t.compareFiles) {
 		return
 	}
-	want := slashPath(t.compareFiles[t.fileSel].path)
+	want := t.compareFiles[t.fileSel].treeKey()
 	if t.fileOutlineSel >= 0 && t.fileOutlineSel < t.fileOutline.Rows() {
 		cur := t.fileOutline.Item(t.fileOutlineSel)
 		if cur == want {

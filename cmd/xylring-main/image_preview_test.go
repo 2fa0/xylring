@@ -227,7 +227,7 @@ func TestGitWorktreeImageChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0].path != "app.png" || !files[0].binary {
+	if len(files) != 1 || files[0].path != "app.png" || !files[0].unstagedStat.binary {
 		t.Fatalf("未跟踪的图片应标记为 binary: %+v", files)
 	}
 
