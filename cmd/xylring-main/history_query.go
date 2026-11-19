@@ -58,7 +58,8 @@ func (t *repoTab) location() *historyLocation {
 		}
 	}
 	if t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
-		l.file = t.compareFiles[t.fileSel].path
+		// 行的身份而不是路径：未提交改动的同名文件两侧是两条不同的 diff。
+		l.file = t.compareFiles[t.fileSel].rowKey()
 	}
 	return l
 }

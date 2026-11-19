@@ -154,7 +154,7 @@ func (a *app) applyWorktree(t *repoTab, files []fileChange) {
 		return
 	}
 	if t.restoreFile == "" && t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
-		t.restoreFile = t.compareFiles[t.fileSel].path
+		t.restoreFile = t.compareFiles[t.fileSel].rowKey()
 	}
 	a.fillWorktree(t, files)
 }
@@ -198,8 +198,10 @@ func (a *app) showWorktree(t *repoTab) {
 func (a *app) fillWorktree(t *repoTab, files []fileChange) {
 	t.worktreeFiles = files
 	t.worktreeCount = len(files)
+	// 列表按侧拆成两行：同一文件两侧都有改动时各占一行，各自看自己那半段 diff。
+	rows := expandWorktreeRows(files)
 	a.startDiff(t, t.head, zeroHash, func(context.Context, string) ([]fileChange, error) {
-		return files, nil
+		return rows, nil
 	})
 }
 
@@ -571,9 +573,6 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 				ui.Text(c, tr(operationDisplayName(t.operation))+tr(" 进行中")).FontSize(12).TextColor(theme.Warning).Shrink(0)
 			}
 			ui.Box(c).Grow(1)
-			if stagedCount > 0 {
-				ui.Text(c, fmt.Sprintf(tr("%d 个文件已暂存"), stagedCount)).FontSize(11).TextColor(theme.Accent).Shrink(0)
-			}
 			toggleIcon := iconExpandAll
 			if isExpanded {
 				toggleIcon = iconCollapseAll
@@ -682,8 +681,9 @@ func (a *app) loadAmendMessage(t *repoTab) {
 
 func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, keyPrefix string) {
 	theme := c.Theme()
+	key := fmt.Sprintf("%s-%d-%s", keyPrefix, t.id, f.rowKey())
 	if f.extra == "冲突" {
-		ui.Box(c.Key(fmt.Sprintf("%s-%d-%s", keyPrefix, t.id, f.path))).
+		ui.Box(c.Key(key)).
 			Size(14, 14).Radius(3).
 			Background(theme.Danger.Alpha(0.15)).Border(1, theme.Danger.Alpha(0.5)).
 			Shrink(0).Center().Tooltip(tr("存在合并冲突")).Children(func() {
@@ -691,24 +691,17 @@ func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, key
 		})
 		return
 	}
-	staged := f.hasStaged()
-	unstaged := f.hasUnstaged()
-	partial := staged && unstaged
-	fullyStaged := staged && !unstaged
-	label := "暂存文件"
-	tip := "未暂存 (点击暂存)"
-	if fullyStaged {
-		label = "取消暂存"
-		tip = "已暂存 (点击取消暂存)"
-	} else if partial {
-		label = "暂存剩余改动"
-		tip = "部分已暂存 (点击全部暂存)"
+	// 一行只属于一侧：已暂存的行勾上，未暂存的行空着，点一下就是那一侧的操作。
+	staged := f.side == sideStaged
+	label, tip := "暂存文件", "未暂存 (点击暂存)"
+	if staged {
+		label, tip = "取消暂存", "已暂存 (点击取消暂存)"
 	}
-	btn := ui.ButtonBase(c.Key(fmt.Sprintf("%s-%d-%s", keyPrefix, t.id, f.path))).
+	btn := ui.ButtonBase(c.Key(key)).
 		Size(14, 14).Radius(3).
 		Label(tr(label)).Tooltip(trMessage(tip)).
 		Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
-	if fullyStaged || partial {
+	if staged {
 		btn.Background(theme.Accent.Alpha(0.18)).Border(1, theme.Accent.Alpha(0.6))
 	} else if btn.Hovered() {
 		btn.Background(theme.SurfaceHover).Border(1, theme.TextMuted)
@@ -716,14 +709,12 @@ func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, key
 		btn.Border(1, theme.TextMuted.Alpha(0.55))
 	}
 	btn.Children(func() {
-		if fullyStaged {
+		if staged {
 			ui.Icon(c, iconCheck).Size(10, 10).TextColor(theme.Accent)
-		} else if partial {
-			ui.Icon(c, iconMinus).Size(10, 10).TextColor(theme.Accent)
 		}
 	})
 	if btn.Clicked() {
-		if fullyStaged {
+		if staged {
 			a.unstageWorktreeFile(t, f.path)
 		} else {
 			a.stageWorktreeFile(t, f.path)
@@ -732,33 +723,32 @@ func (a *app) worktreeStageCheckbox(c *ui.Context, t *repoTab, f fileChange, key
 }
 
 func (a *app) worktreeStageHoverButtons(c *ui.Context, t *repoTab, f fileChange) {
-	switch {
-	case f.hasStaged() && !f.hasUnstaged():
-		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip(tr("取消暂存")).OnClick(func() {
+	key := func(prefix string) string { return prefix + f.rowKey() }
+	if f.side == sideStaged {
+		fileIconButton(c, key("inspect-unstage-"), "取消暂存", iconMinus).Tooltip(tr("取消暂存")).OnClick(func() {
 			a.unstageWorktreeFile(t, f.path)
 		})
-	case f.hasStaged() && f.hasUnstaged():
-		fileIconButton(c, "inspect-stage-"+f.path, "暂存改动", iconPlus).Tooltip(tr("暂存改动")).OnClick(func() {
-			a.stageWorktreeFile(t, f.path)
-		})
-		fileIconButton(c, "inspect-unstage-"+f.path, "取消暂存", iconMinus).Tooltip(tr("取消暂存")).OnClick(func() {
-			a.unstageWorktreeFile(t, f.path)
-		})
-	default:
-		fileIconButton(c, "inspect-stage-"+f.path, "暂存文件", iconPlus).Tooltip(tr("暂存文件")).OnClick(func() {
-			a.stageWorktreeFile(t, f.path)
-		})
+		return
 	}
-	fileIconButton(c, "inspect-discard-"+f.path, "丢弃改动", iconTrash2).Tooltip(tr("丢弃改动")).OnClick(func() {
+	fileIconButton(c, key("inspect-stage-"), "暂存文件", iconPlus).Tooltip(tr("暂存文件")).OnClick(func() {
+		a.stageWorktreeFile(t, f.path)
+	})
+	fileIconButton(c, key("inspect-discard-"), "丢弃改动", iconTrash2).Tooltip(tr("丢弃改动")).OnClick(func() {
 		a.promptDiscardWorktreeFile(t, f)
 	})
 }
 
 func (a *app) worktreeFileMenu(c *ui.Context, m *ui.Menu, t *repoTab, f fileChange) {
-	for _, action := range []string{"审阅并暂存", "审阅并取消暂存"} {
-		if m.Item(action + "…").Chosen() {
-			a.openOperation(action, "", f.path)
+	if f.side == sideStaged {
+		// 已暂存的行只能往后退：屏幕上的 diff 就是 HEAD→索引，块序号对得上。
+		if m.Item("审阅并取消暂存…").Chosen() {
+			a.openOperation("审阅并取消暂存", "", f.path)
 		}
+		m.Separator()
+		if m.Item(tr("取消暂存")).Chosen() {
+			a.unstageWorktreeFile(t, f.path)
+		}
+		return
 	}
 	if f.extra == "冲突" {
 		if m.Item(tr("使用外部合并工具解决…")).Chosen() {
@@ -767,24 +757,14 @@ func (a *app) worktreeFileMenu(c *ui.Context, m *ui.Menu, t *repoTab, f fileChan
 		if m.Item(tr("标记已解决")).Chosen() {
 			a.stageWorktreeFile(t, f.path)
 		}
+		return
+	}
+	if m.Item("审阅并暂存…").Chosen() {
+		a.openOperation("审阅并暂存", "", f.path)
 	}
 	m.Separator()
-	switch {
-	case f.hasStaged() && !f.hasUnstaged():
-		if m.Item(tr("取消暂存")).Chosen() {
-			a.unstageWorktreeFile(t, f.path)
-		}
-	case f.hasStaged() && f.hasUnstaged():
-		if m.Item(tr("暂存工作区改动")).Chosen() {
-			a.stageWorktreeFile(t, f.path)
-		}
-		if m.Item(tr("取消暂存")).Chosen() {
-			a.unstageWorktreeFile(t, f.path)
-		}
-	default:
-		if m.Item(tr("暂存文件")).Chosen() {
-			a.stageWorktreeFile(t, f.path)
-		}
+	if m.Item(tr("暂存文件")).Chosen() {
+		a.stageWorktreeFile(t, f.path)
 	}
 	if m.Item(tr("丢弃改动…")).Chosen() {
 		a.promptDiscardWorktreeFile(t, f)

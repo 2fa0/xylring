@@ -493,19 +493,41 @@ func (a *app) startDiff(t *repoTab, from, to [20]byte, list func(context.Context
 			}
 			t.fileSel = 0
 			if t.restoreFile != "" {
-				for i, f := range files {
-					if f.path == t.restoreFile {
-						t.fileSel = i
-						break
-					}
+				if i := restoreFileIndex(files, t.restoreFile); i >= 0 {
+					t.fileSel = i
 				}
 				t.restoreFile = ""
 			}
-			t.fileList.ScrollIntoView(t.fileSel)
+			if row := t.fileRowIndex(t.fileSel); row >= 0 {
+				t.fileList.ScrollIntoView(row)
+			}
 			t.resetFileTree()
 			a.loadFileDiff(t, t.fileSel)
 		})
 	}()
+}
+
+// restoreFileIndex 找回刷新前选中的那一行。行换了组（暂存或取消暂存之后）
+// 就停在同一个文件上，别跳回列表顶端。
+func restoreFileIndex(files []fileChange, want string) int {
+	if want == "" {
+		return -1
+	}
+	for i, f := range files {
+		if f.rowKey() == want {
+			return i
+		}
+	}
+	path := want
+	if _, rest, ok := strings.Cut(want, "\x00"); ok {
+		path = rest
+	}
+	for i, f := range files {
+		if f.path == path {
+			return i
+		}
+	}
+	return -1
 }
 
 func (a *app) closeComparison(t *repoTab) {
@@ -565,6 +587,10 @@ func readFileDiffSource(ctx context.Context, dir, fromRev, toRev string, f fileC
 	if f.status == "D" {
 		newPath = ""
 	}
+	// 冲突文件的索引里没有 stage 0，两侧基准都拿不到内容，仍按 HEAD→工作区看整份。
+	if worktree && f.side != sideNone && f.extra != "冲突" {
+		return readWorktreeSideSource(ctx, dir, fromRev, f.side, oldPath, newPath)
+	}
 	s := &fileDiffSource{}
 	var err error
 	s.old, s.note, err = readBlob(ctx, dir, fromRev, oldPath)
@@ -584,6 +610,36 @@ func readFileDiffSource(ctx context.Context, dir, fromRev, toRev string, f fileC
 		s.note = note
 	}
 	return s, ctx.Err()
+}
+
+// readWorktreeSideSource 按行所属的一侧选基准：
+// 已暂存是 HEAD→索引，未暂存是索引→工作区。拆开之后，暂存过的改动不会
+// 再和暂存后新改的内容混在同一份 diff 里。
+func readWorktreeSideSource(ctx context.Context, dir, fromRev string, side fileSide, oldPath, newPath string) (*fileDiffSource, error) {
+	s := &fileDiffSource{}
+	var err error
+	if side == sideStaged {
+		s.old, s.note, err = readBlob(ctx, dir, fromRev, oldPath)
+		if err != nil {
+			return nil, err
+		}
+		var note string
+		s.new, note, err = readIndexBlob(ctx, dir, newPath)
+		if note != "" {
+			s.note = note
+		}
+		return s, err
+	}
+	s.old, s.note, err = readIndexBlob(ctx, dir, oldPath)
+	if err != nil {
+		return nil, err
+	}
+	var note string
+	s.new, note, err = readWorktreeFile(dir, newPath)
+	if note != "" {
+		s.note = note
+	}
+	return s, err
 }
 
 func (s *fileDiffSource) prepare(ctx context.Context, path string, ignoreWhitespace bool) (*editor.DiffState, *simpleDiff, *imageDiff, string, error) {
@@ -662,7 +718,7 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 	}
 	if saved := t.restoreDiff; saved != nil {
 		t.restoreDiff = nil
-		if saved.from == t.diffFrom && saved.to == t.diffTo && saved.file == f.path && (saved.diff != nil || saved.imageDiff != nil || saved.note != "") {
+		if saved.from == t.diffFrom && saved.to == t.diffTo && saved.file == f.rowKey() && (saved.diff != nil || saved.imageDiff != nil || saved.note != "") {
 			t.diff, t.simpleDiff, t.imageDiff, t.diffSource, t.diffNote, t.diffLoading = saved.diff, saved.simpleDiff, saved.imageDiff, saved.source, saved.note, false
 			a.finishOpenFileTab(t)
 			return
@@ -700,7 +756,7 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 			}
 			t.diffLoading = false
 			t.diffSource = source
-			t.applyFileStamp(f.path, stamp)
+			t.applyFileStamp(f.rowKey(), stamp)
 			if err != nil {
 				t.diffNote = err.Error()
 				t.openFileTabAfterLoad = false
@@ -891,8 +947,8 @@ func (a *app) noteInputBar(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	save := func() {
 		text := strings.TrimSpace(n.Text)
-		if text != "" && n.Path == t.currentFilePath() {
-			t.diffNotes = append(t.diffNotes, diffNote{Path: n.Path, Side: n.Side, Line: n.Line, Text: text})
+		if text != "" && n.noteKey() == t.currentFileRowKey() {
+			t.diffNotes = append(t.diffNotes, diffNote{Path: n.Path, Side: n.Side, Line: n.Line, Text: text, Section: n.Section})
 		}
 		t.noteEdit = nil
 	}
@@ -1001,14 +1057,6 @@ func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
 		if viewed, total := t.reviewedCount(); viewed > 0 {
 			ui.Text(c, fmt.Sprintf(tr("%d/%d 已读"), viewed, total)).FontSize(11).TextColor(theme.TextMuted).Shrink(0)
 		}
-		if t.worktree && len(t.compareFiles) > 0 {
-			paneIconButton(c, "inspect-stage-all", tr("全部暂存"), iconPlus).Tooltip(tr("全部暂存")).OnClick(func() {
-				a.stageAllWorktree(t)
-			})
-			paneIconButton(c, "inspect-unstage-all", tr("全部取消暂存"), iconMinus).Tooltip(tr("全部取消暂存")).OnClick(func() {
-				a.unstageAllWorktree(t)
-			})
-		}
 		if t.comparison != nil {
 			if iconButton(c, "compare-close", tr("返回"), iconBack).Shrink(0).Clicked() {
 				a.endComparison(t)
@@ -1079,6 +1127,10 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 			}
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(1).MinWidth(0).Children(func() {
 				fileStatusMark(c, f)
+				// 列表藏起来时（放大阅读）这里补一句这是哪一侧，不然两行看着一样。
+				if f.side != sideNone && t.diffMaximized {
+					ui.Text(c, fileSideTitle(f.side)).FontSize(11).TextColor(theme.TextMuted).Shrink(0)
+				}
 				ui.Text(c, base).Bold().FontSize(12).SingleLine().Shrink(0)
 				if dir != "" && dir != "." {
 					ui.Text(c, dir).FontSize(11).TextColor(theme.TextMuted).SingleLine().Shrink(1).MinWidth(0)
@@ -1147,7 +1199,7 @@ const noteAnnotationHeight float32 = 22
 
 // prepareDiffNotes 把笔记接到 mygo 的行选择、行号加号和行下注释上。
 func (a *app) prepareDiffNotes(t *repoTab, d *editor.DiffState) {
-	notes := t.notesFor(t.currentFilePath())
+	notes := t.notesFor(t.currentFileRowKey())
 	d.LineSelection = true
 	d.OnGutterButton = func(r editor.DiffLineRange) {
 		a.openNoteEditor(t, r)
@@ -1183,7 +1235,7 @@ func (a *app) openNoteEditor(t *repoTab, r editor.DiffLineRange) {
 	if path == "" {
 		return
 	}
-	t.noteEdit = &diffNote{Path: path, Side: noteSideText(r.Side), Line: r.Start + 1}
+	t.noteEdit = &diffNote{Path: path, Side: noteSideText(r.Side), Line: r.Start + 1, Section: t.compareFiles[t.fileSel].side}
 }
 
 // noteSide 把笔记里的边翻回 mygo 的边。
@@ -1392,12 +1444,12 @@ func fileIconButton(c *ui.Context, key, name string, icon *ui.SVG) ui.Element {
 // 已读是文件列表的事实，不归 diff 头部管。
 func fileReviewButton(c *ui.Context, t *repoTab, f fileChange) {
 	theme := c.Theme()
-	reviewed := t.fileViewed(f.path)
+	reviewed := t.fileViewed(f.rowKey())
 	tip := "标记为已读"
 	if reviewed {
 		tip = "标记为未读"
 	}
-	btn := ui.ButtonBase(c.Key("file-review-" + f.path)).Label(tr(tip)).Tooltip(tr(tip)).
+	btn := ui.ButtonBase(c.Key("file-review-" + f.rowKey())).Label(tr(tip)).Tooltip(tr(tip)).
 		Padding(4).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
 	switch {
 	case btn.Pressed():
@@ -1413,7 +1465,7 @@ func fileReviewButton(c *ui.Context, t *repoTab, f fileChange) {
 		ui.Icon(c, iconCheck).Size(14, 14).TextColor(color)
 	})
 	if btn.Clicked() {
-		t.toggleFileReviewed(f.path)
+		t.toggleFileReviewed(f.rowKey())
 	}
 }
 
@@ -1464,16 +1516,16 @@ func (a *app) fileHoverActions(c *ui.Context, t *repoTab, i int, hovered bool) {
 		if t.worktree {
 			a.worktreeStageHoverButtons(c, t, f)
 		}
-		copy := fileIconButton(c, "copy-file-path-"+f.path, "复制路径", iconCopy).Tooltip(copyPathTip(c))
+		copy := fileIconButton(c, "copy-file-path-"+f.rowKey(), "复制路径", iconCopy).Tooltip(copyPathTip(c))
 		if copy.Clicked() {
 			copyFilePath(c, t.path, f.path, copy.ClickModifiers())
 		}
-		open := fileIconButton(c, "open-file-tab-"+f.path, "在新标签页打开", iconOpenTab).Disabled(t.compareLoading || t.diffLoading)
+		open := fileIconButton(c, "open-file-tab-"+f.rowKey(), "在新标签页打开", iconOpenTab).Disabled(t.compareLoading || t.diffLoading)
 		if open.Clicked() {
 			a.openFileTabAt(t, i)
 		}
 		if t.query.filePath == "" {
-			fileIconButton(c, "file-history-"+f.path, "文件历史", iconHistory).OnClick(func() {
+			fileIconButton(c, "file-history-"+f.rowKey(), "文件历史", iconHistory).OnClick(func() {
 				a.openFileHistoryAt(t, i)
 			})
 		}
@@ -1562,6 +1614,67 @@ func fileLineStats(c *ui.Context, f fileChange) {
 	})
 }
 
+// fileListRow 是文件列表里的一行：分组标题，或一个文件。
+// 未提交改动的暂存和未暂存各自成组，同一文件两侧都有改动时出现两次。
+type fileListRow struct {
+	file    int // compareFiles 下标，-1 表示分组标题
+	section fileSide
+}
+
+func (r fileListRow) key(files []fileChange) string {
+	if r.file < 0 || r.file >= len(files) {
+		return sectionKey(r.section)
+	}
+	return files[r.file].rowKey()
+}
+
+// fileListRows 在文件行前面插分组标题。没有分侧的列表（提交之间的对比）
+// 不加标题，和以前一样是一列文件。
+func fileListRows(files []fileChange, indices []int) []fileListRow {
+	rows := make([]fileListRow, 0, len(indices)+2)
+	last := sideNone
+	for _, idx := range indices {
+		if idx < 0 || idx >= len(files) {
+			continue
+		}
+		if side := files[idx].side; side != sideNone && side != last {
+			rows = append(rows, fileListRow{file: -1, section: side})
+			last = side
+		}
+		rows = append(rows, fileListRow{file: idx})
+	}
+	return rows
+}
+
+// fileRowIndex 把 compareFiles 的下标换成列表行号：分组标题也占行。
+func (t *repoTab) fileRowIndex(file int) int {
+	for i, r := range fileListRows(t.compareFiles, t.filteredFileIndices()) {
+		if r.file == file {
+			return i
+		}
+	}
+	return -1
+}
+
+// fileSectionRow 是分组标题：标题点名这一组是什么，右边是这一组的批量操作。
+// 计数只留在图谱里的未提交改动徽章，这里不再重复一遍。
+func (a *app) fileSectionRow(c *ui.Context, t *repoTab, side fileSide) {
+	theme := c.Theme()
+	ui.Row(c).FillWidth().MinHeight(26).Padding(4, 6).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, fileSideTitle(side)).FontSize(12).Bold().TextColor(theme.TextMuted).SingleLine().Shrink(0)
+		ui.Box(c).Grow(1).MinWidth(0)
+		if side == sideStaged {
+			if paneIconButton(c, fmt.Sprintf("staged-unstage-all-%d", t.id), tr("全部取消暂存"), iconMinus).Clicked() {
+				a.unstageAllWorktree(t)
+			}
+			return
+		}
+		if paneIconButton(c, fmt.Sprintf("unstaged-stage-all-%d", t.id), tr("全部暂存"), iconPlus).Clicked() {
+			a.stageAllWorktree(t)
+		}
+	})
+}
+
 func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
 	scrolling := takeScrollMove(&t.fileListScroll, &t.fileListScrollY)
@@ -1570,9 +1683,10 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 		noMatchingFiles(c, &t.fileFilter)
 		return
 	}
+	rows := fileListRows(t.compareFiles, indices)
 	currentSel := -1
-	for row, origIdx := range indices {
-		if origIdx == t.fileSel {
+	for row, r := range rows {
+		if r.file == t.fileSel {
 			currentSel = row
 			break
 		}
@@ -1581,22 +1695,29 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 	var action func()
 	t.fileList.Selected = &selectedRow
 	t.fileList.Key = func(i int) any {
-		if i >= 0 && i < len(indices) && indices[i] >= 0 && indices[i] < len(t.compareFiles) {
-			return t.compareFiles[indices[i]].path
+		if i < 0 || i >= len(rows) {
+			return i
 		}
-		return i
+		return rows[i].key(t.compareFiles)
 	}
 	t.fileList.Label = func(i int) string {
-		if i >= 0 && i < len(indices) && indices[i] >= 0 && indices[i] < len(t.compareFiles) {
-			return t.compareFiles[indices[i]].label()
+		if i < 0 || i >= len(rows) {
+			return ""
 		}
-		return ""
+		if rows[i].file < 0 {
+			return fileSideTitle(rows[i].section)
+		}
+		return t.compareFiles[rows[i].file].rowLabel()
 	}
-	list := ui.List(c.Key(fmt.Sprintf("compare-files-%d", t.id)), &t.fileList, len(indices), func(i int) {
-		if i < 0 || i >= len(indices) {
+	list := ui.List(c.Key(fmt.Sprintf("compare-files-%d", t.id)), &t.fileList, len(rows), func(i int) {
+		if i < 0 || i >= len(rows) {
 			return
 		}
-		origIdx := indices[i]
+		if rows[i].file < 0 {
+			a.fileSectionRow(c, t, rows[i].section)
+			return
+		}
+		origIdx := rows[i].file
 		f := t.compareFiles[origIdx]
 		muted := theme.TextMuted
 		if origIdx == t.fileSel {
@@ -1609,7 +1730,7 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 		row := ui.Column(c).FillWidth().MinHeight(48).Padding(6, 10).Gap(4)
 		hovered := row.Hovered()
 		path := f.fullPath()
-		row.Tooltip(filePathTip(path, scrolling || t.fileRowMoving(c, row, "list:"+path, hovered)))
+		row.Tooltip(filePathTip(path, scrolling || t.fileRowMoving(c, row, "list:"+f.rowKey(), hovered)))
 		if row.RowDoubleClicked() {
 			a.openFileTabAt(t, origIdx)
 		}
@@ -1622,7 +1743,7 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 					a.worktreeStageCheckbox(c, t, f, "wt-stage-list")
 				}
 				name := ui.Text(c, filepath.Base(f.path)).FontSize(13).SingleLine().Grow(1).MinWidth(0)
-				if t.fileViewed(f.path) {
+				if t.fileViewed(f.rowKey()) {
 					name.TextColor(theme.TextMuted) // 已读用布局表达，不补“已读”两个字。
 				}
 				fileTrailingMeta(c, f, hovered)
@@ -1635,8 +1756,8 @@ func (a *app) fileFlatList(c *ui.Context, t *repoTab) {
 		action()
 		return
 	}
-	if list.Changed() && selectedRow >= 0 && selectedRow < len(indices) {
-		t.fileSel = indices[selectedRow]
+	if list.Changed() && selectedRow >= 0 && selectedRow < len(rows) && rows[selectedRow].file >= 0 {
+		t.fileSel = rows[selectedRow].file
 		a.loadFileDiff(t, t.fileSel)
 	}
 }
@@ -1657,22 +1778,34 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 			return ""
 		}
 		n := tree.nodes[t.fileOutline.Item(i)]
+		if n.section != sideNone {
+			return fileSideTitle(n.section)
+		}
 		if n.dir || n.file < 0 || n.file >= len(t.compareFiles) {
 			return n.name
 		}
-		return t.compareFiles[n.file].label()
+		return t.compareFiles[n.file].rowLabel()
 	}
 	var action func()
 	outline := ui.Outline(c.Key(fmt.Sprintf("compare-tree-%d", t.id)), &t.fileOutline, tree.roots, tree.children, func(key string) {
 		n := tree.nodes[key]
+		if n.section != sideNone {
+			a.fileSectionRow(c, t, n.section)
+			return
+		}
+		file := n.file >= 0 && n.file < len(t.compareFiles)
 		tip := key
-		if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
+		if file {
 			tip = t.compareFiles[n.file].fullPath()
 		}
 		row := ui.Row(c).Gap(5).MinWidth(0).Grow(1).MinHeight(20).Padding(1, 0).AlignItems(ui.Center)
 		hovered := row.Hovered()
-		row.Tooltip(filePathTip(tip, scrolling || t.fileRowMoving(c, row, "tree:"+tip, hovered)))
-		if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
+		id := "tree:" + key
+		if file {
+			id = "tree:" + t.compareFiles[n.file].rowKey()
+		}
+		row.Tooltip(filePathTip(tip, scrolling || t.fileRowMoving(c, row, id, hovered)))
+		if file {
 			idx := n.file
 			if row.RowDoubleClicked() {
 				a.openFileTabAt(t, idx)
@@ -1682,14 +1815,14 @@ func (a *app) fileTreeList(c *ui.Context, t *repoTab) {
 			})
 		}
 		row.Children(func() {
-			if t.worktree && !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
+			if t.worktree && file {
 				a.worktreeStageCheckbox(c, t, t.compareFiles[n.file], "wt-stage-tree")
 			}
 			name := ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).MinWidth(0)
-			if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) && t.fileViewed(t.compareFiles[n.file].path) {
+			if file && t.fileViewed(t.compareFiles[n.file].rowKey()) {
 				name.TextColor(theme.TextMuted)
 			}
-			if !n.dir && n.file >= 0 && n.file < len(t.compareFiles) {
+			if file {
 				f := t.compareFiles[n.file]
 				fileTrailingMeta(c, f, hovered)
 				a.fileHoverActions(c, t, n.file, hovered)
@@ -1953,15 +2086,15 @@ func fileContentStamp(s *fileDiffSource) string {
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
-// applyFileStamp 记下文件内容现在的指纹，内容变了就把已读作废。
-func (t *repoTab) applyFileStamp(path, stamp string) {
+// applyFileStamp 记下这一行内容现在的指纹，内容变了就把已读作废。
+func (t *repoTab) applyFileStamp(key, stamp string) {
 	if stamp == "" {
 		return
 	}
 	if t.reviewed == nil {
 		t.reviewed = map[string]fileReview{}
 	}
-	rec := t.reviewed[path]
+	rec := t.reviewed[key]
 	if rec.stamp == stamp {
 		return
 	}
@@ -1969,31 +2102,39 @@ func (t *repoTab) applyFileStamp(path, stamp string) {
 		rec.viewed = false
 	}
 	rec.stamp = stamp
-	t.reviewed[path] = rec
+	t.reviewed[key] = rec
 }
 
-// fileViewed 说这个文件是否已标记为已读。
-func (t *repoTab) fileViewed(path string) bool { return t.reviewed[path].viewed }
+// fileViewed 说这一行是否已标记为已读。
+func (t *repoTab) fileViewed(key string) bool { return t.reviewed[key].viewed }
 
 // toggleFileReviewed 在已读和未读之间切换一个文件。
-func (t *repoTab) toggleFileReviewed(path string) {
+func (t *repoTab) toggleFileReviewed(key string) {
 	if t.reviewed == nil {
 		t.reviewed = map[string]fileReview{}
 	}
-	rec := t.reviewed[path]
+	rec := t.reviewed[key]
 	rec.viewed = !rec.viewed
-	t.reviewed[path] = rec
+	t.reviewed[key] = rec
 }
 
-// reviewedCount 数这批文件里已读的有几个、共几个。
+// reviewedCount 数这批行里已读的有几个、共几个。
 func (t *repoTab) reviewedCount() (viewed, total int) {
 	for _, f := range t.compareFiles {
 		total++
-		if t.fileViewed(f.path) {
+		if t.fileViewed(f.rowKey()) {
 			viewed++
 		}
 	}
 	return viewed, total
+}
+
+// currentFileRowKey 是详情面板正在看的那一行的身份。
+func (t *repoTab) currentFileRowKey() string {
+	if t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
+		return t.compareFiles[t.fileSel].rowKey()
+	}
+	return ""
 }
 
 // currentFilePath 是详情面板正在看的文件。
@@ -2004,14 +2145,14 @@ func (t *repoTab) currentFilePath() string {
 	return ""
 }
 
-// notesFor 是这个文件上的笔记。
-func (t *repoTab) notesFor(path string) []diffNote {
-	if path == "" {
+// notesFor 是这一行上的笔记。键是行的身份，同名文件的两侧各算各的。
+func (t *repoTab) notesFor(key string) []diffNote {
+	if key == "" {
 		return nil
 	}
 	var out []diffNote
 	for _, n := range t.diffNotes {
-		if n.Path == path {
+		if n.noteKey() == key {
 			out = append(out, n)
 		}
 	}
@@ -2024,22 +2165,25 @@ func (a *app) copyDiffNotes(c *ui.Context, t *repoTab) {
 		return
 	}
 	seen := map[string]bool{}
-	paths := make([]string, 0, len(t.diffNotes))
+	keys := make([]string, 0, len(t.diffNotes))
+	pathOf := map[string]string{}
 	for _, n := range t.diffNotes {
-		if !seen[n.Path] {
-			seen[n.Path] = true
-			paths = append(paths, n.Path)
+		key := n.noteKey()
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+			pathOf[key] = n.noteLabel()
 		}
 	}
-	sort.Strings(paths)
-	current := t.currentFilePath()
+	sort.Strings(keys)
+	current := t.currentFileRowKey()
 	var b strings.Builder
-	for _, path := range paths {
+	for _, key := range keys {
 		var d *editor.DiffState
-		if path == current {
+		if key == current {
 			d = t.diff // 只有当前装载的文件拿得到代码上下文。
 		}
-		b.WriteString(renderNotesMarkdown(d, t.notesFor(path), path))
+		b.WriteString(renderNotesMarkdown(d, t.notesFor(key), pathOf[key]))
 	}
 	c.Services().WriteClipboard(b.String())
 	c.Toast(tr("已复制审阅笔记"))

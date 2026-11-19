@@ -894,6 +894,46 @@ func mergeBase(ctx context.Context, dir string, a, b [20]byte) ([20]byte, error)
 	return parseHash(string(out))
 }
 
+// fileSide 说文件列表里一行属于未提交改动的哪一侧。暂存和未暂存各自成组，
+// 同一文件两侧都有改动时会出现两行，各自的 diff 基准不同。
+type fileSide uint8
+
+const (
+	// sideNone 是不分侧的列表：提交之间的对比，以及没有索引参与的树。
+	sideNone fileSide = iota
+	sideStaged
+	sideUnstaged
+)
+
+func (s fileSide) key() string {
+	switch s {
+	case sideStaged:
+		return "staged"
+	case sideUnstaged:
+		return "unstaged"
+	}
+	return ""
+}
+
+// fileSideTitle 是分组标题：布局已经说明分组，标题只说这一组是什么。
+func fileSideTitle(s fileSide) string {
+	switch s {
+	case sideStaged:
+		return tr("已暂存")
+	case sideUnstaged:
+		return tr("未暂存")
+	}
+	return ""
+}
+
+// lineStat 是一侧的行数统计。索引侧是 HEAD→index，工作区侧是 index→工作区，
+// 两侧分开算，行上的 +N/-N 才对得上点开看到的 diff。
+type lineStat struct {
+	added, deleted int
+	binary         bool
+	has            bool
+}
+
 type fileChange struct {
 	status         string
 	path           string
@@ -905,6 +945,19 @@ type fileChange struct {
 
 	indexStatus, workStatus byte
 	worktreeVersion         string
+
+	side fileSide
+	// 工作区原始文件带着两侧的统计，拆成两行时各取一侧。
+	stagedStat, unstagedStat lineStat
+}
+
+// rowKey 是文件列表里一行的身份。未提交改动的两侧同名文件是两行，
+// 已读、笔记、文件标签页都按它区分。
+func (f fileChange) rowKey() string {
+	if f.side == sideNone {
+		return f.path
+	}
+	return f.side.key() + "\x00" + f.path
 }
 
 func (f fileChange) label() string {
@@ -923,6 +976,14 @@ func (f fileChange) label() string {
 		return name
 	}
 	return word + "  " + name
+}
+
+// rowLabel 是读屏用的行名。两侧是两条不同的 diff，只在分侧时带头。
+func (f fileChange) rowLabel() string {
+	if f.side == sideNone {
+		return f.label()
+	}
+	return fileSideTitle(f.side) + " " + f.label()
 }
 
 func (f fileChange) fullPath() string {
@@ -1146,7 +1207,19 @@ func readBlob(ctx context.Context, dir, rev, path string) ([]byte, string, error
 	if rev == "" || path == "" {
 		return nil, "", nil
 	}
-	spec := rev + ":" + path
+	return readBlobSpec(ctx, dir, path, rev+":"+path)
+}
+
+// readIndexBlob 读取暂存区里的文件内容。暂存侧的 diff 以它为新的那一侧，
+// 未暂存侧以它为旧的。
+func readIndexBlob(ctx context.Context, dir, path string) ([]byte, string, error) {
+	if path == "" {
+		return nil, "", nil
+	}
+	return readBlobSpec(ctx, dir, path, ":"+path)
+}
+
+func readBlobSpec(ctx context.Context, dir, path, spec string) ([]byte, string, error) {
 	sizeOut, err := runGit(ctx, dir, "cat-file", "-s", spec)
 	if err != nil {
 		if missingBlob(err) {

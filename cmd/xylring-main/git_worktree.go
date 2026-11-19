@@ -22,26 +22,30 @@ func worktreeStatus(ctx context.Context, dir string) ([]fileChange, error) {
 }
 
 func enrichWorktreeStatus(ctx context.Context, dir string, files []fileChange) ([]fileChange, error) {
-	applyWorktreeNumStat(ctx, dir, files)
 	if len(files) == 0 {
 		return files, nil
 	}
+	staged, unstaged := worktreeNumStats(ctx, dir)
 	scratch := make([]byte, 64<<10)
 	for i := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		f := &files[i]
-		countLines := !f.hasStat && f.extra == "未跟踪"
+		f.stagedStat = staged[f.path]
+		countLines := f.extra == "未跟踪"
 		stamp, note, lines, err := fingerprintWorktreeFile(dir, f.path, scratch, countLines)
 		f.worktreeVersion = stamp
 		if countLines && err == nil {
-			if isImageFile(f.path) || strings.HasPrefix(note, "二进制文件") {
-				f.binary, f.hasStat = true, true
-			} else if note == "" {
-				f.added, f.hasStat = lines, true
+			switch {
+			case isImageFile(f.path) || strings.HasPrefix(note, "二进制文件"):
+				f.unstagedStat = lineStat{binary: true, has: true}
+			case note == "":
+				f.unstagedStat = lineStat{added: lines, has: true}
 			}
+			continue
 		}
+		f.unstagedStat = unstaged[f.path]
 	}
 	return files, nil
 }
@@ -94,18 +98,89 @@ func fingerprintWorktreeFile(dir, path string, scratch []byte, countLines bool) 
 	return hex.EncodeToString(h.Sum(digest[:0])), note, lines, err
 }
 
-func applyWorktreeNumStat(ctx context.Context, dir string, files []fileChange) {
-	if len(files) == 0 {
-		return
-	}
-	statOut, err := runGit(ctx, dir, "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "HEAD", "--")
-	if err != nil {
-		statOut, err = runGit(ctx, dir, "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z", "--cached", "--")
-	}
-	if err == nil {
-		applyNumStat(files, parseNumStatZ(statOut))
-	}
+// worktreeNumStats 分别读索引侧（HEAD→index）和工作区侧（index→工作区）的增删行数。
+// 一个文件两侧都有改动时，两行各显示自己那一份，行上的 +N/-N 才能和点开的 diff 对上。
+func worktreeNumStats(ctx context.Context, dir string) (staged, unstaged map[string]lineStat) {
+	staged = numStatByPath(ctx, dir, true)
+	unstaged = numStatByPath(ctx, dir, false)
+	return staged, unstaged
+}
 
+func numStatByPath(ctx context.Context, dir string, cached bool) map[string]lineStat {
+	base := []string{"--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-M", "-z"}
+	// 新仓库还没有 HEAD：索引侧的基准退回空树，这时 --cached 不带 HEAD。
+	specs := [][]string{append(append([]string{}, base...), "--")}
+	if cached {
+		specs = [][]string{
+			append(append([]string{}, base...), "--cached", "HEAD", "--"),
+			append(append([]string{}, base...), "--cached", "--"),
+		}
+	}
+	for _, args := range specs {
+		out, err := runGit(ctx, dir, args...)
+		if err != nil {
+			continue
+		}
+		stats := map[string]lineStat{}
+		for _, s := range parseNumStatZ(out) {
+			stats[s.path] = lineStat{added: s.added, deleted: s.deleted, binary: s.binary, has: true}
+		}
+		return stats
+	}
+	return nil
+}
+
+// expandWorktreeRows 把工作区状态拆成文件列表的行：已暂存在上，未暂存在下，
+// 两侧都有改动的文件出现两次。冲突和未跟踪归在未暂存一组。
+func expandWorktreeRows(files []fileChange) []fileChange {
+	rows := make([]fileChange, 0, len(files)*2)
+	var staged, unstaged []fileChange
+	for _, f := range files {
+		switch {
+		case f.extra == "冲突":
+			unstaged = append(unstaged, worktreeRow(f, sideUnstaged, f.status, f.extra))
+		case f.hasStaged() && f.hasUnstaged():
+			staged = append(staged, worktreeRow(f, sideStaged, sideStatus(f, f.indexStatus), ""))
+			unstaged = append(unstaged, worktreeRow(f, sideUnstaged, sideStatus(f, f.workStatus), ""))
+		case f.hasStaged():
+			staged = append(staged, worktreeRow(f, sideStaged, sideStatus(f, f.indexStatus), ""))
+		default:
+			status := sideStatus(f, f.workStatus)
+			if f.extra == "未跟踪" {
+				status = "A"
+			}
+			unstaged = append(unstaged, worktreeRow(f, sideUnstaged, status, f.extra))
+		}
+	}
+	rows = append(rows, staged...)
+	return append(rows, unstaged...)
+}
+
+// sideStatus 取一侧的状态字母。测试和旧调用点没有 porcelain 的字节时退回原来的状态。
+func sideStatus(f fileChange, b byte) string {
+	if b == 0 {
+		return f.status
+	}
+	return statusLetter(string(b))
+}
+
+func worktreeRow(f fileChange, side fileSide, status, extra string) fileChange {
+	f.side = side
+	f.status, f.extra = status, extra
+	// 一行只属于一侧：另一侧的状态清掉，hasStaged/hasUnstaged 才是这一行的意思。
+	if side == sideStaged {
+		f.workStatus = ' '
+	} else {
+		f.indexStatus = ' '
+	}
+	stat := f.stagedStat
+	if side == sideUnstaged {
+		stat = f.unstagedStat
+	}
+	if stat.has {
+		f.added, f.deleted, f.binary, f.hasStat = stat.added, stat.deleted, stat.binary, true
+	}
+	return f
 }
 
 // parsePorcelainZ 解析 git status --porcelain=v1 -z。
