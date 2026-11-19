@@ -142,6 +142,51 @@ func TestWorktreeSideDiffBases(t *testing.T) {
 	}
 }
 
+func TestWorktreeSideDiffBasesAfterStagedRename(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("config", "user.email", "t@example.com")
+	git("config", "user.name", "Tester")
+	write := func(name, contents string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := strings.Repeat("line\n", 20)
+	write("old.txt", base)
+	git("add", "old.txt")
+	git("commit", "-m", "base")
+	git("mv", "old.txt", "new.txt")
+	staged := base + "staged\n"
+	write("new.txt", staged)
+	git("add", "new.txt")
+	unstaged := staged + "unstaged\n"
+	write("new.txt", unstaged)
+
+	ctx := context.Background()
+	files, err := worktreeStatus(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := expandWorktreeRows(files)
+	if len(rows) != 2 {
+		t.Fatalf("expected a staged rename and an unstaged edit: %+v", rows)
+	}
+	if rows[0].side != sideStaged || rows[0].oldPath != "old.txt" ||
+		rows[1].side != sideUnstaged || rows[1].oldPath != "" {
+		t.Fatalf("wrong paths for staged rename and unstaged edit: %+v", rows)
+	}
+	for i, want := range [][2]string{{base, staged}, {staged, unstaged}} {
+		source, err := readFileDiffSource(ctx, dir, "HEAD", "", rows[i], true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(source.old) != want[0] || string(source.new) != want[1] {
+			t.Fatalf("row %d: old=%q new=%q", i, source.old, source.new)
+		}
+	}
+}
+
 // TestWorktreeSideDiffBasesNewAndDeleted 覆盖新增、删除和未跟踪三种边界。
 func TestWorktreeSideDiffBasesNewAndDeleted(t *testing.T) {
 	dir, git := initTestRepo(t)
@@ -244,53 +289,139 @@ func TestWorktreeListShowsTwoSections(t *testing.T) {
 	}
 }
 
-// TestHunkPatchMatchesShownSide 守住块级暂存的基准：屏幕上看到的是哪一段，
-// 「审阅并暂存 / 取消暂存」拿去应用的补丁就必须是同一段。两边基准错开时，
-// 同一个块序号会落到别的块上。
-func TestHunkPatchMatchesShownSide(t *testing.T) {
-	dir, git := initTestRepo(t)
-	git("config", "user.email", "t@example.com")
-	git("config", "user.name", "Tester")
-	lines := make([]string, 20)
-	for i := range lines {
-		lines[i] = "line " + strconv.Itoa(i+1) + "\n"
+func TestWorktreeListArrowKeysSkipSectionHeaders(t *testing.T) {
+	dir, _ := initTestRepo(t)
+	tab := newTab(1, dir)
+	tab.worktree = true
+	tab.compareFiles = []fileChange{
+		{path: "staged.txt", side: sideStaged, status: "D"},
+		{path: "unstaged.txt", side: sideUnstaged, status: "A"},
 	}
-	write := func() {
-		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(strings.Join(lines, "")), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	tab.fileSel = 0
+	a := &app{dispatch: func(func()) {}}
+	tt := ui.NewTester(func(c *ui.Context) { a.fileFlatList(c, tab) }, 600, 500)
+	tt.Frame()
+	if err := tt.Click("staged.txt"); err != nil {
+		t.Fatal(err)
 	}
-	write()
-	git("add", "a.txt")
-	git("commit", "-m", "base")
+	tt.Key(0, ui.KeyDown)
+	tt.Frame()
+	if tab.fileSel != 1 {
+		t.Fatalf("Down selected file %d, want 1", tab.fileSel)
+	}
+	tt.Key(0, ui.KeyUp)
+	tt.Frame()
+	if tab.fileSel != 0 {
+		t.Fatalf("Up selected file %d, want 0", tab.fileSel)
+	}
+}
 
-	lines[1] = "staged change\n"
-	write()
-	git("add", "a.txt")
-	lines[18] = "worktree change\n"
-	write()
+func TestWorktreeNoteDraftFollowsSelectedRow(t *testing.T) {
+	dir, _ := initTestRepo(t)
+	tab := newTab(1, dir)
+	tab.worktree = true
+	tab.compareFiles = []fileChange{
+		{path: "both.txt", side: sideStaged, status: "D"},
+		{path: "both.txt", side: sideUnstaged, status: "A"},
+	}
+	draft := &diffNote{Path: "both.txt", Section: sideStaged, Line: 1, Text: "draft"}
+	tab.noteEdit = draft
+	a := &app{dispatch: func(func()) {}}
 
-	files, err := worktreeStatus(context.Background(), dir)
-	if err != nil {
-		t.Fatal(err)
+	tab.fileSel = 0
+	a.loadFileDiff(tab, tab.fileSel)
+	if tab.noteEdit != draft {
+		t.Fatal("reloading the same row cleared the draft")
 	}
-	rows := expandWorktreeRows(files)
-	if len(rows) != 2 {
-		t.Fatalf("应拆成两行: %+v", rows)
+	tab.fileSel = 1
+	a.loadFileDiff(tab, tab.fileSel)
+	if tab.noteEdit != nil {
+		t.Fatal("switching to the other side left the previous row's editor visible")
 	}
-	stagedPatch, err := readIndexPatch(context.Background(), dir, rows[0].path, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	worktreePatch, err := readIndexPatch(context.Background(), dir, rows[1].path, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stagedPatch, "staged change") || strings.Contains(stagedPatch, "worktree change") {
-		t.Fatalf("已暂存的补丁应只有暂存的那一段:\n%s", stagedPatch)
-	}
-	if !strings.Contains(worktreePatch, "worktree change") || strings.Contains(worktreePatch, "staged change") {
-		t.Fatalf("未暂存的补丁应只有暂存之后改的那一段:\n%s", worktreePatch)
+}
+
+func TestWorktreeHunkReviewAppliesOnlySelectedBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		side         fileSide
+	}{
+		{"stage", "审阅并暂存", sideUnstaged},
+		{"unstage", "审阅并取消暂存", sideStaged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, git := initTestRepo(t)
+			git("config", "diff.context", "3")
+			git("config", "diff.interHunkContext", "0")
+			const path = "a.txt"
+			lines := make([]string, 50)
+			for i := range lines {
+				lines[i] = "line " + strconv.Itoa(i+1) + "\n"
+			}
+			base := strings.Join(lines, "")
+			write := func(content string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(base)
+			git("add", path)
+			git("commit", "-m", "base")
+
+			first := strings.Replace(base, "line 5\n", "first block\nextra line\n", 1)
+			both := strings.Replace(first, "line 25\n", "second block\n", 1)
+			withOtherSide := func(content string) string {
+				return strings.Replace(content, "line 45\n", "other side\n", 1)
+			}
+			index := withOtherSide(base)
+			worktree := withOtherSide(both)
+			wantIndex := strings.Replace(index, "line 25\n", "second block\n", 1)
+			if tc.side == sideStaged {
+				index, wantIndex = both, first
+			}
+			write(index)
+			git("add", path)
+			write(worktree)
+
+			tab := newTab(1, dir)
+			updates := make(chan func(), 64)
+			a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+			defer func() {
+				tab.cancel()
+				if a.scanCancel != nil {
+					a.scanCancel()
+				}
+			}()
+			a.openOperation(tc.action, "", path)
+			waitUpdates(t, updates, func() bool { return !a.op.busy })
+			if !a.op.ready || len(a.op.hunks) != 2 || !strings.Contains(a.op.output, "+first block") {
+				t.Fatalf("expected first of two blocks, got %d blocks, preview %q, error %q", len(a.op.hunks), a.op.output, a.op.err)
+			}
+
+			tt := ui.NewTester(a.operationModal, 900, 700)
+			tt.Frame()
+			if err := tt.Click(tr("下一块")); err != nil {
+				t.Fatal(err)
+			}
+			tt.Frame()
+			if !strings.Contains(a.op.output, "+second block") || strings.Contains(a.op.output, "+first block") {
+				t.Fatalf("wrong selected block preview: %s", a.op.output)
+			}
+			if err := tt.Click(tr("执行")); err != nil {
+				t.Fatal(err)
+			}
+			waitUpdates(t, updates, func() bool { return !a.op.busy })
+			if a.showOperation || a.op.err != "" {
+				t.Fatalf("selected block was not applied: %q", a.op.err)
+			}
+			if got := git("show", ":"+path); string(got) != wantIndex {
+				t.Fatalf("wrong index content: %q", got)
+			}
+			onDisk, err := os.ReadFile(filepath.Join(dir, path))
+			if err != nil || string(onDisk) != worktree {
+				t.Fatalf("worktree content changed: %q (%v)", onDisk, err)
+			}
+		})
 	}
 }
 

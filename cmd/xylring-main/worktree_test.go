@@ -10,6 +10,64 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestUnstageRenameRestoresBothIndexPaths(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("config", "status.renames", "true")
+	const oldPath, newPath = "old[1].txt", "new[1].txt"
+	const base, edited = "original\n", "original\nworktree edit\n"
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(oldPath, base)
+	git("add", "--", oldPath)
+	git("commit", "-m", "base")
+	git("mv", "--", oldPath, newPath)
+	write(newPath, edited)
+	write("other.txt", "unrelated\n")
+	git("add", "--", "other.txt")
+
+	files, err := worktreeStatus(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := newTab(1, dir)
+	tab.compareFiles = expandWorktreeRows(files)
+	idx := slices.IndexFunc(tab.compareFiles, func(f fileChange) bool {
+		return f.path == newPath && f.side == sideStaged && f.status == "R"
+	})
+	if idx < 0 {
+		t.Fatalf("missing staged rename: %+v", tab.compareFiles)
+	}
+	rename := tab.compareFiles[idx]
+	updates := make(chan func(), 64)
+	a := &app{dispatch: func(fn func()) { updates <- fn }}
+	defer tab.cancel()
+	tt := ui.NewTester(func(c *ui.Context) { a.worktreeStageCheckbox(c, tab, rename, "rename") }, 600, 500)
+	tt.Frame()
+	if err := tt.Click(tr("取消暂存")); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdates(t, updates, func() bool { return !tab.commitBusy })
+	if a.banner != "" {
+		t.Fatal(a.banner)
+	}
+	if got := git("diff", "--cached", "--name-only", "-z"); string(got) != "other.txt\x00" {
+		t.Fatalf("unexpected staged paths: %q", got)
+	}
+	if got := git("show", ":"+oldPath); string(got) != base {
+		t.Fatalf("original contents were not restored to the index: %q", got)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, newPath)); err != nil || string(got) != edited {
+		t.Fatalf("renamed worktree file changed: %q (%v)", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, oldPath)); !os.IsNotExist(err) {
+		t.Fatalf("original worktree path was recreated or could not be checked: %v", err)
+	}
+}
+
 func TestParsePorcelainZ(t *testing.T) {
 	files := parsePorcelainZ([]byte(" M file.txt\x00?? new.txt\x00R  renamed.txt\x00old.txt\x00"))
 	if len(files) != 3 {
