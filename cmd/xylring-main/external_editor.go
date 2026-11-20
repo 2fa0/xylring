@@ -80,16 +80,20 @@ func resolveEditorCommand(
 	statFn func(string) (os.FileInfo, error),
 	lookPathFn func(string) (string, error),
 ) (string, []string, error) {
+	return resolveEditorCommandWithEnv(goos, home, editor, targetPath, false, statFn, lookPathFn, nil)
+}
+
+func resolveEditorCommandWithEnv(
+	goos, home, editor, targetPath string,
+	inWSL bool,
+	statFn func(string) (os.FileInfo, error),
+	lookPathFn func(string) (string, error),
+	wslPathFn func(string) (string, error),
+) (string, []string, error) {
 	editor = strings.TrimSpace(editor)
 	if editor == "" {
-		switch goos {
-		case "darwin":
-			return "open", []string{targetPath}, nil
-		case "windows":
-			return "cmd", []string{"/c", "start", "", targetPath}, nil
-		default:
-			return "xdg-open", []string{targetPath}, nil
-		}
+		bin, args := resolveDefaultOpenCommand(goos, targetPath, inWSL, lookPathFn, wslPathFn)
+		return bin, args, nil
 	}
 	if p, ok := findEditorPreset(editor); ok {
 		if goos == "darwin" {
@@ -133,7 +137,7 @@ func resolveEditorCommand(
 
 func openWithConfiguredEditor(targetPath, editor string) error {
 	home, _ := os.UserHomeDir()
-	bin, args, err := resolveEditorCommand(runtime.GOOS, home, editor, targetPath, os.Stat, exec.LookPath)
+	bin, args, err := resolveEditorCommandWithEnv(runtime.GOOS, home, editor, targetPath, isWSL(), os.Stat, exec.LookPath, wslPathToWindows)
 	if err != nil {
 		return err
 	}
