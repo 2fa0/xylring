@@ -142,6 +142,29 @@ func (a *app) pickRepo() {
 	}()
 }
 
+func (a *app) pickWSLRepo() {
+	if a.picking || a.win == nil {
+		return
+	}
+	a.picking = true
+	win := a.win
+	go func() {
+		defaultPath := defaultWSLRepoRoot()
+		paths, err := openWSLRepoDialog(win, defaultPath)
+		a.post(func() {
+			a.picking = false
+			if err != nil {
+				a.setBanner(trimMsg(err.Error()), "")
+				return
+			}
+			if len(paths) == 0 {
+				return
+			}
+			a.openPath(paths[0])
+		})
+	}()
+}
+
 func (a *app) openRepo(path string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

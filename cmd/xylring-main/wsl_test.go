@@ -16,89 +16,86 @@ func fakeLookPath(available map[string]string) func(string) (string, error) {
 	}
 }
 
-func fakeWSLPath(p string) (string, error) {
-	return `\\wsl.localhost\Ubuntu` + p, nil
+func TestParseAndFormatWSLUNCPath(t *testing.T) {
+	for _, tc := range []struct {
+		in        string
+		wantOK    bool
+		wantDist  string
+		wantLinux string
+		wantUNC   string
+	}{
+		{`\\wsl.localhost\Ubuntu\home\user\repo`, true, "Ubuntu", "/home/user/repo", `\\wsl.localhost\Ubuntu\home\user\repo`},
+		{`\\wsl$\Ubuntu-22.04\home\user\repo\`, true, "Ubuntu-22.04", "/home/user/repo", `\\wsl.localhost\Ubuntu-22.04\home\user\repo`},
+		{`//WSL.LOCALHOST/Debian/var/log`, true, "Debian", "/var/log", `\\wsl.localhost\Debian\var\log`},
+		{`\\wsl.localhost\Ubuntu`, true, "Ubuntu", "/", `\\wsl.localhost\Ubuntu\`},
+		{`C:\Users\me\repo`, false, "", "", ""},
+		{`/home/user/repo`, false, "", "", ""},
+	} {
+		distro, linuxPath, ok := parseWSLUNCPath(tc.in)
+		if ok != tc.wantOK || distro != tc.wantDist || linuxPath != tc.wantLinux {
+			t.Fatalf("parseWSLUNCPath(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.in, distro, linuxPath, ok, tc.wantDist, tc.wantLinux, tc.wantOK)
+		}
+		if ok {
+			if got := formatWSLUNCPath(distro, linuxPath); got != tc.wantUNC {
+				t.Fatalf("formatWSLUNCPath(%q, %q) = %q, want %q", distro, linuxPath, got, tc.wantUNC)
+			}
+			if got := canonicalRepoDir(tc.in); got != tc.wantUNC {
+				t.Fatalf("canonicalRepoDir(%q) = %q, want %q", tc.in, got, tc.wantUNC)
+			}
+		}
+	}
 }
 
-func TestResolveDefaultOpenCommandWSL(t *testing.T) {
+func TestWSLGitEnvAndWorktreeList(t *testing.T) {
+	env := wslGitEnv("Ubuntu", "/home/u/repo", []string{
+		`GIT_INDEX_FILE=\\wsl$\Ubuntu\home\u\repo\.git\index`,
+		"CUSTOM_VAR=1",
+	})
+	for _, want := range []string{
+		"LC_ALL=C",
+		"GIT_CEILING_DIRECTORIES=/home/u",
+		"GIT_INDEX_FILE=/home/u/repo/.git/index",
+		"CUSTOM_VAR=1",
+	} {
+		if !slices.Contains(env, want) {
+			t.Fatalf("missing env %q in %v", want, env)
+		}
+	}
+
+	raw := []byte("worktree /home/u/repo\x00HEAD 0123456789abcdef0123456789abcdef01234567\x00branch refs/heads/main\x00\x00worktree /home/u/repo-wt\x00HEAD 0123456789abcdef0123456789abcdef01234567\x00branch refs/heads/feat\x00\x00")
+	wts := parseWorktreeListForRepo(`\\wsl.localhost\Ubuntu\home\u\repo`, raw)
+	if len(wts) != 2 {
+		t.Fatalf("expected 2 worktrees, got %d", len(wts))
+	}
+	if wts[0].path != `\\wsl.localhost\Ubuntu\home\u\repo` || wts[1].path != `\\wsl.localhost\Ubuntu\home\u\repo-wt` {
+		t.Fatalf("unexpected worktree paths: %+v", wts)
+	}
+}
+
+func TestParseWSLDistroList(t *testing.T) {
+	// Simulate UTF-16LE output from `wsl.exe -l -q` when WSL_UTF8 is unavailable.
+	raw := []byte("U\x00b\x00u\x00n\x00t\x00u\x00\r\x00\n\x00D\x00e\x00b\x00i\x00a\x00n\x00\r\x00\n\x00")
+	got := parseWSLDistroList(raw)
+	if !slices.Equal(got, []string{"Ubuntu", "Debian"}) {
+		t.Fatalf("parseWSLDistroList = %v", got)
+	}
+}
+
+func TestWindowsWSLTerminalAndEditor(t *testing.T) {
+	bin, args, ok := resolveWindowsWSLTerminalCommand(`\\wsl.localhost\Ubuntu\home\u\repo`, fakeLookPath(map[string]string{"wt.exe": `C:\wt.exe`}))
+	if !ok || bin != `C:\wt.exe` || !slices.Equal(args, []string{"wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/repo"}) {
+		t.Fatalf("wt.exe terminal: got (%q, %v, %v)", bin, args, ok)
+	}
+
+	bin, args, ok = resolveWindowsWSLTerminalCommand(`\\wsl$\Ubuntu\home\u\repo`, fakeLookPath(nil))
+	if !ok || bin != "cmd" || !slices.Equal(args, []string{"/c", "start", "wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/repo"}) {
+		t.Fatalf("cmd fallback terminal: got (%q, %v, %v)", bin, args, ok)
+	}
+
 	noStat := func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
-
-	bin, args, err := resolveEditorCommandWithEnv("linux", "/home/u", "", "/home/u/repo", true, noStat,
-		fakeLookPath(map[string]string{"wslview": "/usr/bin/wslview", "xdg-open": "/usr/bin/xdg-open"}), fakeWSLPath)
-	if err != nil || bin != "/usr/bin/wslview" || !slices.Equal(args, []string{"/home/u/repo"}) {
-		t.Fatalf("wslview preferred: got (%q, %v, %v)", bin, args, err)
-	}
-
-	bin, args, err = resolveEditorCommandWithEnv("linux", "/home/u", "", "/home/u/repo", true, noStat,
-		fakeLookPath(map[string]string{"xdg-open": "/usr/bin/xdg-open", "explorer.exe": "/mnt/c/Windows/explorer.exe"}), fakeWSLPath)
-	if err != nil || bin != "/usr/bin/xdg-open" || !slices.Equal(args, []string{"/home/u/repo"}) {
-		t.Fatalf("xdg-open fallback: got (%q, %v, %v)", bin, args, err)
-	}
-
-	bin, args, err = resolveEditorCommandWithEnv("linux", "/home/u", "", "/home/u/repo", true, noStat,
-		fakeLookPath(map[string]string{"explorer.exe": "/mnt/c/Windows/explorer.exe"}), fakeWSLPath)
-	if err != nil || bin != "/mnt/c/Windows/explorer.exe" || !slices.Equal(args, []string{`\\wsl.localhost\Ubuntu/home/u/repo`}) {
-		t.Fatalf("explorer.exe fallback: got (%q, %v, %v)", bin, args, err)
-	}
-}
-
-func TestResolveFileManagerCommandsWSL(t *testing.T) {
-	bin, args := resolveRevealCommand("linux", "/home/u/repo/main.go", false, true,
-		fakeLookPath(map[string]string{"explorer.exe": "/mnt/c/Windows/explorer.exe"}), fakeWSLPath)
-	if bin != "/mnt/c/Windows/explorer.exe" || !slices.Equal(args, []string{"/select,", `\\wsl.localhost\Ubuntu/home/u/repo/main.go`}) {
-		t.Fatalf("reveal explorer.exe: got (%q, %v)", bin, args)
-	}
-
-	bin, args = resolveRevealCommand("linux", "/home/u/repo/main.go", false, true,
-		fakeLookPath(map[string]string{"wslview": "/usr/bin/wslview"}), fakeWSLPath)
-	if bin != "/usr/bin/wslview" || !slices.Equal(args, []string{"/home/u/repo"}) {
-		t.Fatalf("reveal wslview parent dir: got (%q, %v)", bin, args)
-	}
-
-	bin, args = resolveOpenFolderCommand("linux", "/home/u/repo", true,
-		fakeLookPath(map[string]string{"explorer.exe": "/mnt/c/Windows/explorer.exe"}), fakeWSLPath)
-	if bin != "/mnt/c/Windows/explorer.exe" || !slices.Equal(args, []string{`\\wsl.localhost\Ubuntu/home/u/repo`}) {
-		t.Fatalf("open folder explorer.exe: got (%q, %v)", bin, args)
-	}
-
-	bin, args = resolveOpenFolderCommand("linux", "/home/u/repo", false,
-		fakeLookPath(map[string]string{"explorer.exe": "/mnt/c/Windows/explorer.exe"}), fakeWSLPath)
-	if bin != "xdg-open" || !slices.Equal(args, []string{"/home/u/repo"}) {
-		t.Fatalf("non-WSL linux keeps xdg-open: got (%q, %v)", bin, args)
-	}
-}
-
-func TestResolveTerminalCommandWSL(t *testing.T) {
-	// Native Linux terminal takes precedence when available.
-	bin, args, dir, err := resolveTerminalCommand("linux", "/home/u/repo", "", true, "Ubuntu",
-		fakeLookPath(map[string]string{"gnome-terminal": "/usr/bin/gnome-terminal", "wt.exe": "/mnt/c/wt.exe"}), fakeWSLPath)
-	if err != nil || bin != "/usr/bin/gnome-terminal" || len(args) != 0 || dir != "/home/u/repo" {
-		t.Fatalf("linux terminal preferred: got (%q, %v, %q, %v)", bin, args, dir, err)
-	}
-
-	// WSL falls back to Windows Terminal with distro and --cd.
-	bin, args, dir, err = resolveTerminalCommand("linux", "/home/u/repo", "", true, "Ubuntu",
-		fakeLookPath(map[string]string{"wt.exe": "/mnt/c/wt.exe", "cmd.exe": "/mnt/c/cmd.exe"}), fakeWSLPath)
-	if err != nil || bin != "/mnt/c/wt.exe" || !slices.Equal(args, []string{"wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/repo"}) || dir != "" {
-		t.Fatalf("wt.exe fallback: got (%q, %v, %q, %v)", bin, args, dir, err)
-	}
-
-	// Without distro name, wt.exe uses Windows path via wslpath.
-	bin, args, dir, err = resolveTerminalCommand("linux", "/home/u/repo", "", true, "",
-		fakeLookPath(map[string]string{"wt.exe": "/mnt/c/wt.exe"}), fakeWSLPath)
-	if err != nil || bin != "/mnt/c/wt.exe" || !slices.Equal(args, []string{"-d", `\\wsl.localhost\Ubuntu/home/u/repo`}) || dir != "" {
-		t.Fatalf("wt.exe without distro: got (%q, %v, %q, %v)", bin, args, dir, err)
-	}
-
-	// Fallback to cmd.exe when wt.exe is absent.
-	bin, args, dir, err = resolveTerminalCommand("linux", "/home/u/repo", "", true, "Ubuntu",
-		fakeLookPath(map[string]string{"cmd.exe": "/mnt/c/cmd.exe"}), fakeWSLPath)
-	if err != nil || bin != "/mnt/c/cmd.exe" || !slices.Equal(args, []string{"/c", "start", "wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/repo"}) || dir != "" {
-		t.Fatalf("cmd.exe fallback: got (%q, %v, %q, %v)", bin, args, dir, err)
-	}
-
-	// Error when no terminal is found.
-	if _, _, _, err := resolveTerminalCommand("linux", "/home/u/repo", "", true, "Ubuntu", fakeLookPath(nil), fakeWSLPath); err == nil {
-		t.Fatal("expected error when no terminal is available")
+	bin, args, err := resolveEditorCommand("windows", `C:\Users\u`, "vscode", `\\wsl.localhost\Ubuntu\home\u\repo`, noStat,
+		fakeLookPath(map[string]string{"code": `C:\Users\u\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd`}))
+	if err != nil || !slices.Equal(args, []string{"--remote", "wsl+Ubuntu", "/home/u/repo"}) {
+		t.Fatalf("vscode wsl remote: got (%q, %v, %v)", bin, args, err)
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
-	"time"
 )
 
 type configOption struct{ value, label string }
@@ -44,18 +43,13 @@ func configCommand(ctx context.Context, dir string, args ...string) ([]byte, err
 		return nil, err
 	}
 	defer func() { <-gitSlots }()
-	bin, err := gitPath()
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"config"}, args...)...)
-	hideConsoleWindow(cmd)
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	cmd.Dir = dir
-	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, nil))
-	cmd.WaitDelay = 2 * time.Second
+	cmd, bin, err := prepareGitCommand(ctx, dir, nil, append([]string{"config"}, args...)...)
+	if err != nil {
+		return nil, err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		err = gitExecError(bin, err)

@@ -944,5 +944,7 @@
   "正在改写提交说明": "Rewriting a commit message",
   "正在修改分支或标签": "Changing a branch or tag",
   "正在执行批量操作": "Batch operation in progress",
-  "正在执行 Git 操作": "Git operation in progress"
+  "正在执行 Git 操作": "Git operation in progress",
+  "导入 WSL 仓库": "Import WSL repository",
+  "导入 WSL 仓库…": "Import WSL Repository…"
 }
