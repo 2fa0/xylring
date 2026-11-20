@@ -14,6 +14,15 @@ func openRepoDialog(win *mygo.Window) ([]string, error) {
 	})
 }
 
+func openWSLRepoDialog(win *mygo.Window, defaultPath string) ([]string, error) {
+	return mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:      win,
+		Title:       tr("导入 WSL 仓库"),
+		DefaultPath: defaultPath,
+		Directory:   true,
+	})
+}
+
 func openEditorDialog(win *mygo.Window) ([]string, error) {
 	opts := mygo.OpenDialogOptions{
 		Parent: win,

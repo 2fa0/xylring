@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -1356,7 +1355,10 @@ func readBoardRepoRemoteURL(ctx context.Context, repo string) string {
 	}
 	subCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(subCtx, "git", "-C", repo, "remote", "get-url", "origin")
+	cmd, _, err := prepareGitCommand(subCtx, repo, nil, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

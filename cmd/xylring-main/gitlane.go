@@ -32,6 +32,9 @@ var gitLanes struct {
 // canonicalRepoDir 是命令日志和车道共用的仓库键：绝对路径，软链接已解开，
 // 所以同一个仓库的两种写法（真目录、指向它的符号链接、带末尾斜杠）落到同一条车道。
 func canonicalRepoDir(dir string) string {
+	if distro, linuxPath, ok := parseWSLUNCPath(dir); ok {
+		return formatWSLUNCPath(distro, linuxPath)
+	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return filepath.Clean(dir)

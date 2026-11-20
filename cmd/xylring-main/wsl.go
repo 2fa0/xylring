@@ -1,175 +1,169 @@
 package main
 
 import (
-	"errors"
-	"os"
+	"context"
 	"os/exec"
-	"path/filepath"
-	"runtime"
+	"path"
 	"strings"
+	"time"
 )
 
-// isWSL reports whether the process is running inside Windows Subsystem for Linux.
-func isWSL() bool {
-	if runtime.GOOS != "linux" {
-		return false
+// parseWSLUNCPath parses a Windows WSL UNC path such as
+// \\wsl.localhost\Ubuntu\home\user\repo or \\wsl$\Ubuntu\home\user\repo.
+func parseWSLUNCPath(p string) (distro, linuxPath string, ok bool) {
+	s := strings.ReplaceAll(strings.TrimSpace(p), "/", `\`)
+	lower := strings.ToLower(s)
+	var rest string
+	switch {
+	case strings.HasPrefix(lower, `\\wsl.localhost\`):
+		rest = s[len(`\\wsl.localhost\`):]
+	case strings.HasPrefix(lower, `\\wsl$\`):
+		rest = s[len(`\\wsl$\`):]
+	default:
+		return "", "", false
 	}
-	if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "" {
-		return true
+	rest = strings.TrimLeft(rest, `\`)
+	if rest == "" {
+		return "", "", false
 	}
-	_, err := os.Stat("/proc/sys/fs/binfmt_misc/WSLInterop")
-	return err == nil
+	idx := strings.IndexByte(rest, '\\')
+	if idx < 0 {
+		return rest, "/", true
+	}
+	distro = rest[:idx]
+	sub := strings.ReplaceAll(rest[idx:], `\`, "/")
+	linuxPath = path.Clean(sub)
+	if !strings.HasPrefix(linuxPath, "/") {
+		linuxPath = "/" + linuxPath
+	}
+	return distro, linuxPath, true
 }
 
-func wslDistroName() string {
-	return strings.TrimSpace(os.Getenv("WSL_DISTRO_NAME"))
+// formatWSLUNCPath formats a WSL distro and Linux path as a Windows UNC path.
+func formatWSLUNCPath(distro, linuxPath string) string {
+	clean := path.Clean("/" + strings.ReplaceAll(strings.TrimSpace(linuxPath), `\`, "/"))
+	if clean == "/" {
+		return `\\wsl.localhost\` + distro + `\`
+	}
+	return `\\wsl.localhost\` + distro + strings.ReplaceAll(clean, "/", `\`)
 }
 
-// wslPathToWindows converts a Linux path inside WSL to its Windows path via wslpath.
-func wslPathToWindows(path string) (string, error) {
-	out, err := exec.Command("wslpath", "-w", path).Output()
+// wslGitEnv builds the Linux environment assignments passed to `env` inside WSL.
+func wslGitEnv(distro, linuxDir string, extra []string) []string {
+	envMap := map[string]string{
+		"LC_ALL":             "C",
+		"LANG":               "C",
+		"GIT_TERMINAL_PROMPT": "0",
+		"GIT_PAGER":          "cat",
+		"PAGER":              "cat",
+		"GIT_OPTIONAL_LOCKS": "0",
+	}
+	var keys []string
+	for k := range envMap {
+		keys = append(keys, k)
+	}
+	if parent := path.Dir(linuxDir); linuxDir != "/" && parent != "" && parent != linuxDir {
+		envMap["GIT_CEILING_DIRECTORIES"] = parent
+		keys = append(keys, "GIT_CEILING_DIRECTORIES")
+	}
+	for _, entry := range extra {
+		k, v, ok := strings.Cut(entry, "=")
+		if !ok || k == "" {
+			continue
+		}
+		if d, lp, isWSL := parseWSLUNCPath(v); isWSL && strings.EqualFold(d, distro) {
+			v = lp
+		}
+		if _, exists := envMap[k]; !exists {
+			keys = append(keys, k)
+		}
+		envMap[k] = v
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k+"="+envMap[k])
+	}
+	return out
+}
+
+func wslCommand(ctx context.Context, distro, linuxDir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
+	wslBin, err := exec.LookPath("wsl.exe")
 	if err != nil {
-		return "", err
+		return nil, "", &gitUnavailableError{
+			message: "未找到 wsl.exe，无法访问 WSL 仓库",
+			err:     err,
+		}
 	}
-	winPath := strings.TrimRight(string(out), "\r\n")
-	if winPath == "" {
-		return "", errors.New("wslpath 返回空路径")
+	if linuxDir == "" {
+		linuxDir = "/"
 	}
-	return winPath, nil
+	wslArgs := []string{"-d", distro, "--cd", linuxDir, "env"}
+	wslArgs = append(wslArgs, wslGitEnv(distro, linuxDir, extraEnv)...)
+	wslArgs = append(wslArgs, "git")
+	wslArgs = append(wslArgs, fullArgs...)
+	cmd := exec.CommandContext(ctx, wslBin, wslArgs...)
+	hideConsoleWindow(cmd)
+	cmd.WaitDelay = 2 * time.Second
+	return cmd, wslBin, nil
 }
 
-func resolveDefaultOpenCommand(
-	goos, targetPath string,
-	inWSL bool,
-	lookPathFn func(string) (string, error),
-	wslPathFn func(string) (string, error),
-) (string, []string) {
-	switch goos {
-	case "darwin":
-		return "open", []string{targetPath}
-	case "windows":
-		return "cmd", []string{"/c", "start", "", targetPath}
+func parseWSLDistroList(raw []byte) []string {
+	cleaned := strings.ReplaceAll(string(raw), "\x00", "")
+	var out []string
+	for _, line := range strings.Split(cleaned, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func listWSLDistros() []string {
+	wslBin, err := exec.LookPath("wsl.exe")
+	if err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, wslBin, "-l", "-q")
+	hideConsoleWindow(cmd)
+	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	return parseWSLDistroList(out)
+}
+
+func defaultWSLRepoRoot() string {
+	if distros := listWSLDistros(); len(distros) > 0 {
+		return `\\wsl.localhost\` + distros[0]
+	}
+	return `\\wsl.localhost\`
+}
+
+func resolveWindowsWSLTerminalCommand(abs string, lookPathFn func(string) (string, error)) (bin string, args []string, ok bool) {
+	distro, linuxPath, isWSL := parseWSLUNCPath(abs)
+	if !isWSL {
+		return "", nil, false
+	}
+	wslArgs := []string{"wsl.exe", "-d", distro, "--cd", linuxPath}
+	if wt, err := lookPathFn("wt.exe"); err == nil {
+		return wt, wslArgs, true
+	}
+	return "cmd", append([]string{"/c", "start"}, wslArgs...), true
+}
+
+func resolveWindowsWSLEditorArgs(presetID, targetPath string) ([]string, bool) {
+	distro, linuxPath, ok := parseWSLUNCPath(targetPath)
+	if !ok {
+		return nil, false
+	}
+	switch presetID {
+	case "vscode", "cursor":
+		return []string{"--remote", "wsl+" + distro, linuxPath}, true
 	default:
-		if inWSL {
-			if bin, err := lookPathFn("wslview"); err == nil {
-				return bin, []string{targetPath}
-			}
-			if bin, err := lookPathFn("xdg-open"); err == nil {
-				return bin, []string{targetPath}
-			}
-			if bin, err := lookPathFn("explorer.exe"); err == nil && wslPathFn != nil {
-				if winPath, err := wslPathFn(targetPath); err == nil {
-					return bin, []string{winPath}
-				}
-			}
-		}
-		return "xdg-open", []string{targetPath}
-	}
-}
-
-func resolveWSLOpenFolder(
-	dir string,
-	lookPathFn func(string) (string, error),
-	wslPathFn func(string) (string, error),
-) (string, []string) {
-	if bin, err := lookPathFn("explorer.exe"); err == nil && wslPathFn != nil {
-		if winDir, err := wslPathFn(dir); err == nil {
-			return bin, []string{winDir}
-		}
-	}
-	if bin, err := lookPathFn("wslview"); err == nil {
-		return bin, []string{dir}
-	}
-	return "xdg-open", []string{dir}
-}
-
-func resolveRevealCommand(
-	goos, path string,
-	isDir, inWSL bool,
-	lookPathFn func(string) (string, error),
-	wslPathFn func(string) (string, error),
-) (string, []string) {
-	switch goos {
-	case "darwin":
-		return "open", []string{"-R", path}
-	case "windows":
-		return "explorer", []string{"/select,", path}
-	default:
-		dir := path
-		if !isDir {
-			dir = filepath.Dir(path)
-		}
-		if inWSL {
-			if bin, err := lookPathFn("explorer.exe"); err == nil && wslPathFn != nil {
-				if winPath, err := wslPathFn(path); err == nil {
-					return bin, []string{"/select,", winPath}
-				}
-			}
-			return resolveWSLOpenFolder(dir, lookPathFn, wslPathFn)
-		}
-		return "xdg-open", []string{dir}
-	}
-}
-
-func resolveOpenFolderCommand(
-	goos, dir string,
-	inWSL bool,
-	lookPathFn func(string) (string, error),
-	wslPathFn func(string) (string, error),
-) (string, []string) {
-	switch goos {
-	case "darwin":
-		return "open", []string{dir}
-	case "windows":
-		return "explorer", []string{dir}
-	default:
-		if inWSL {
-			return resolveWSLOpenFolder(dir, lookPathFn, wslPathFn)
-		}
-		return "xdg-open", []string{dir}
-	}
-}
-
-func resolveTerminalCommand(
-	goos, abs, termEnv string,
-	inWSL bool,
-	distro string,
-	lookPathFn func(string) (string, error),
-	wslPathFn func(string) (string, error),
-) (bin string, args []string, cmdDir string, err error) {
-	switch goos {
-	case "darwin":
-		return "open", []string{"-a", "Terminal", abs}, "", nil
-	case "windows":
-		return "cmd", []string{"/c", "start", "cmd.exe"}, abs, nil
-	default:
-		if term := strings.TrimSpace(termEnv); term != "" {
-			return term, nil, abs, nil
-		}
-		for _, name := range []string{"x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "alacritty", "xterm"} {
-			if p, err := lookPathFn(name); err == nil {
-				return p, nil, abs, nil
-			}
-		}
-		if inWSL {
-			wslArgs := []string{"wsl.exe"}
-			if distro != "" {
-				wslArgs = append(wslArgs, "-d", distro)
-			}
-			wslArgs = append(wslArgs, "--cd", abs)
-			if p, err := lookPathFn("wt.exe"); err == nil {
-				if distro != "" || wslPathFn == nil {
-					return p, wslArgs, "", nil
-				}
-				if winDir, err := wslPathFn(abs); err == nil {
-					return p, []string{"-d", winDir}, "", nil
-				}
-				return p, wslArgs, "", nil
-			}
-			if p, err := lookPathFn("cmd.exe"); err == nil {
-				return p, append([]string{"/c", "start"}, wslArgs...), "", nil
-			}
-		}
-		return "", nil, "", errors.New("未找到可用的终端应用")
+		return nil, false
 	}
 }

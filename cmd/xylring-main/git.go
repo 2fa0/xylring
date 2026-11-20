@@ -130,6 +130,22 @@ func runGitLimit(ctx context.Context, dir string, limit int, args ...string) ([]
 	return runGitExtra(ctx, dir, limit, nil, args...)
 }
 
+func prepareGitCommand(ctx context.Context, dir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
+	if distro, linuxPath, ok := parseWSLUNCPath(dir); ok {
+		return wslCommand(ctx, distro, linuxPath, extraEnv, fullArgs...)
+	}
+	bin, err := gitPath()
+	if err != nil {
+		return nil, "", err
+	}
+	cmd := exec.CommandContext(ctx, bin, fullArgs...)
+	hideConsoleWindow(cmd)
+	cmd.WaitDelay = 2 * time.Second
+	cmd.Dir = dir
+	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, extraEnv))
+	return cmd, bin, nil
+}
+
 func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, args ...string) ([]byte, error) {
 	// 车道先于全局槽，defer 逆序释放。
 	releaseLane := acquireGitLane(ctx, canonicalRepoDir(dir), gitCommandWrites(args))
@@ -138,19 +154,14 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 		return nil, err
 	}
 	defer func() { <-gitSlots }()
-	bin, err := gitPath()
+	commandCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd, bin, err := prepareGitCommand(commandCtx, dir, extraEnv, gitArgs(args...)...)
 	if err != nil {
 		// Git 不可执行时没有命令可记，应用日志里已经有这一条。
 		logGitFailure(dir, args, err)
 		return nil, err
 	}
-	commandCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	cmd := exec.CommandContext(commandCtx, bin, gitArgs(args...)...)
-	hideConsoleWindow(cmd)
-	cmd.WaitDelay = 2 * time.Second
-	cmd.Dir = dir
-	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, extraEnv))
 	stdout := limitedBuffer{limit: limit, cancel: cancel}
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stdout = &stdout
@@ -238,11 +249,14 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 		}
 		return "", errors.New("不是 Git 仓库")
 	}
-	root := filepath.FromSlash(strings.TrimSpace(string(out)))
-	if root == "" {
+	rawRoot := strings.TrimSpace(string(out))
+	if rawRoot == "" {
 		return "", errors.New("不是 Git 仓库")
 	}
-	return root, nil
+	if distro, _, ok := parseWSLUNCPath(dir); ok {
+		return formatWSLUNCPath(distro, rawRoot), nil
+	}
+	return filepath.FromSlash(rawRoot), nil
 }
 
 // notARepository reports whether Git ran fine and said this directory is not a
@@ -407,17 +421,11 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 		return err
 	}
 	defer slot.release()
-	bin, err := gitPath()
+	cmd, bin, err := prepareGitCommand(ctx, dir, []string{"LC_ALL=C"}, gitArgs(args...)...)
 	if err != nil {
 		logGitFailure(dir, args, err)
 		return err
 	}
-	cmd := exec.CommandContext(ctx, bin, gitArgs(args...)...)
-	hideConsoleWindow(cmd)
-	cmd.WaitDelay = 2 * time.Second
-	cmd.Dir = dir
-	// 流式解析依赖英文 shortstat 词汇；LANGUAGE 不在默认剔除列表里，这里显式锁死。
-	cmd.Env = gitBinaryEnv(bin, repoGitEnv(dir, []string{"LC_ALL=C"}))
 	cmd.Stdin = strings.NewReader(input)
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stderr = &stderr
@@ -753,7 +761,7 @@ func listWorktrees(ctx context.Context, dir string) ([]repoWorktree, error) {
 	if err != nil {
 		return nil, err
 	}
-	all := parseWorktreeList(raw)
+	all := parseWorktreeListForRepo(dir, raw)
 	self := canonicalRepoDir(dir)
 	linked := make([]repoWorktree, 0, len(all))
 	for i, wt := range all {
@@ -770,12 +778,20 @@ func listWorktrees(ctx context.Context, dir string) ([]repoWorktree, error) {
 // parseWorktreeList 解析 `git worktree list --porcelain -z`：字段以 \0 分隔，
 // 条目之间多一个空的 \0。路径可以含空格，所以只有第一个空格是字段分隔符。
 func parseWorktreeList(raw []byte) []repoWorktree {
+	return parseWorktreeListForRepo("", raw)
+}
+
+func parseWorktreeListForRepo(repoDir string, raw []byte) []repoWorktree {
+	wslDistro, _, isWSLRepo := parseWSLUNCPath(repoDir)
 	var out []repoWorktree
 	var cur repoWorktree
 	started := false
 	flush := func() {
 		if !started {
 			return
+		}
+		if isWSLRepo && strings.HasPrefix(cur.path, "/") {
+			cur.path = formatWSLUNCPath(wslDistro, cur.path)
 		}
 		cur.path = canonicalRepoDir(cur.path)
 		out = append(out, cur)

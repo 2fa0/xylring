@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -328,16 +327,11 @@ func runGitInput(ctx context.Context, dir, input string, args ...string) ([]byte
 		return nil, err
 	}
 	defer func() { <-gitSlots }()
-	bin, err := gitPath()
+	cmd, bin, err := prepareGitCommand(ctx, dir, nil, gitArgs(args...)...)
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, bin, gitArgs(args...)...)
-	hideConsoleWindow(cmd)
-	cmd.Dir = dir
-	cmd.Env = gitBinaryEnv(bin, gitEnv())
 	cmd.Stdin = strings.NewReader(input)
-	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.Output()
 	return out, gitExecError(bin, err)
 }

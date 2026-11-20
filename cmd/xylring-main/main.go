@@ -693,6 +693,11 @@ func (a *app) emptyState(c *ui.Context) {
 					}).Clicked() {
 						a.pickRepo()
 					}
+					if runtime.GOOS == "windows" {
+						if ui.Button(c.Key("import-wsl-empty"), tr("导入 WSL 仓库")).Clicked() {
+							a.pickWSLRepo()
+						}
+					}
 					if a.activeTab() != nil || len(a.found) > 1 {
 						if ui.Button(c.Key("return-open-repo"), tr("返回当前仓库")).Clicked() {
 							a.showHome = false

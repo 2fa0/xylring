@@ -12,18 +12,25 @@ func (a *app) installMenu() {
 		{ID: "import", Label: tr("导入仓库…"), Accelerator: "CmdOrCtrl+O", Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.pickRepo()
 		}},
+	}
+	if runtime.GOOS == "windows" {
+		file = append(file, &mygo.MenuItem{ID: "import-wsl", Label: tr("导入 WSL 仓库…"), Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.pickWSLRepo()
+		}})
+	}
+	file = append(file,
 		mygo.Separator(),
-		{ID: "install-cli", Label: tr("在 PATH 中安装 'xylring' 命令行工具…"), Click: func(*mygo.MenuItem, *mygo.Window) {
+		&mygo.MenuItem{ID: "install-cli", Label: tr("在 PATH 中安装 'xylring' 命令行工具…"), Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.installCLIMenu()
 		}},
-		{ID: "uninstall-cli", Label: tr("从 PATH 中卸载 'xylring' 命令行工具"), Click: func(*mygo.MenuItem, *mygo.Window) {
+		&mygo.MenuItem{ID: "uninstall-cli", Label: tr("从 PATH 中卸载 'xylring' 命令行工具"), Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.uninstallCLIMenu()
 		}},
 		mygo.Separator(),
-		{ID: "close-tab", Label: tr("关闭当前标签页或仓库"), Accelerator: "CmdOrCtrl+W", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
+		&mygo.MenuItem{ID: "close-tab", Label: tr("关闭当前标签页或仓库"), Accelerator: "CmdOrCtrl+W", Disabled: true, Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.closeCurrentTab()
 		}},
-	}
+	)
 	if runtime.GOOS != "darwin" {
 		if item := updatesMenuItem(); item != nil {
 			file = append(file, item)
