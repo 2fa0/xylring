@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -224,21 +223,12 @@ func (a *app) openFileHistoryForTab(t *repoTab, tab *fileDiffTab) {
 }
 
 func revealInFileManager(path string) error {
-	if _, err := os.Stat(path); err != nil {
+	info, err := os.Stat(path)
+	if err != nil {
 		return err
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", "-R", path).Start()
-	case "windows":
-		return exec.Command("explorer", "/select,", path).Start()
-	default:
-		info, err := os.Stat(path)
-		if err == nil && info.IsDir() {
-			return exec.Command("xdg-open", path).Start()
-		}
-		return exec.Command("xdg-open", filepath.Dir(path)).Start()
-	}
+	bin, args := resolveRevealCommand(runtime.GOOS, path, info.IsDir(), isWSL(), exec.LookPath, wslPathToWindows)
+	return exec.Command(bin, args...).Start()
 }
 
 func openFolderInFileManager(dir string) error {
@@ -249,14 +239,8 @@ func openFolderInFileManager(dir string) error {
 	if !info.IsDir() {
 		dir = filepath.Dir(dir)
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", dir).Start()
-	case "windows":
-		return exec.Command("explorer", dir).Start()
-	default:
-		return exec.Command("xdg-open", dir).Start()
-	}
+	bin, args := resolveOpenFolderCommand(runtime.GOOS, dir, isWSL(), exec.LookPath, wslPathToWindows)
+	return exec.Command(bin, args...).Start()
 }
 
 func openInTerminal(dir string) error {
@@ -271,29 +255,15 @@ func openInTerminal(dir string) error {
 	if err != nil {
 		abs = dir
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", "-a", "Terminal", abs).Start()
-	case "windows":
-		cmd := exec.Command("cmd", "/c", "start", "cmd.exe")
-		cmd.Dir = abs
-		return cmd.Start()
-	default:
-		term := os.Getenv("TERMINAL")
-		if term != "" {
-			cmd := exec.Command(term)
-			cmd.Dir = abs
-			return cmd.Start()
-		}
-		for _, name := range []string{"x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "alacritty", "xterm"} {
-			if p, err := exec.LookPath(name); err == nil {
-				cmd := exec.Command(p)
-				cmd.Dir = abs
-				return cmd.Start()
-			}
-		}
-		return errors.New("未找到可用的终端应用")
+	bin, args, cmdDir, err := resolveTerminalCommand(runtime.GOOS, abs, os.Getenv("TERMINAL"), isWSL(), wslDistroName(), exec.LookPath, wslPathToWindows)
+	if err != nil {
+		return err
 	}
+	cmd := exec.Command(bin, args...)
+	if cmdDir != "" {
+		cmd.Dir = cmdDir
+	}
+	return cmd.Start()
 }
 
 func (a *app) closeCurrentTab() {
