@@ -80,11 +80,7 @@ func gitFile(ctx context.Context, dir, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dir, path)
-	}
-	return path, nil
+	return resolveRepoGitPath(dir, string(out)), nil
 }
 func readStamp(ctx context.Context, dir string) (ringStamp, error) {
 	var s ringStamp

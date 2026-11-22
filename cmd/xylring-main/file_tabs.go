@@ -277,6 +277,7 @@ func openInTerminal(dir string) error {
 	case "windows":
 		if bin, args, ok := resolveWindowsWSLTerminalCommand(abs, exec.LookPath); ok {
 			cmd := exec.Command(bin, args...)
+			hideConsoleWindow(cmd)
 			return cmd.Start()
 		}
 		cmd := exec.Command("cmd", "/c", "start", "cmd.exe")

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf16"
 )
 
 // parseWSLUNCPath parses a Windows WSL UNC path such as
@@ -86,13 +90,56 @@ func wslGitEnv(distro, linuxDir string, extra []string) []string {
 	return out
 }
 
-func wslCommand(ctx context.Context, distro, linuxDir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
-	wslBin, err := exec.LookPath("wsl.exe")
+var (
+	wslPathMu  sync.Mutex
+	wslPathVal string
+)
+
+func wslPath() (string, error) {
+	wslPathMu.Lock()
+	cached := wslPathVal
+	wslPathMu.Unlock()
+	if cached != "" {
+		return cached, nil
+	}
+	bin, err := exec.LookPath("wsl.exe")
 	if err != nil {
-		return nil, "", &gitUnavailableError{
+		return "", &gitUnavailableError{
 			message: "未找到 wsl.exe，无法访问 WSL 仓库",
 			err:     err,
 		}
+	}
+	wslPathMu.Lock()
+	wslPathVal = bin
+	wslPathMu.Unlock()
+	return bin, nil
+}
+
+// resolveRepoGitPath maps a path returned by Git (e.g. from
+// `rev-parse --absolute-git-dir` or `--git-path`) into a host-accessible path.
+// For WSL repositories, Linux paths are mapped back to `\\wsl.localhost\...`.
+func resolveRepoGitPath(repoDir, gitOutPath string) string {
+	p := strings.TrimSpace(gitOutPath)
+	if p == "" {
+		return ""
+	}
+	if distro, repoLinux, ok := parseWSLUNCPath(repoDir); ok {
+		clean := strings.ReplaceAll(p, `\`, "/")
+		if strings.HasPrefix(clean, "/") {
+			return formatWSLUNCPath(distro, clean)
+		}
+		return formatWSLUNCPath(distro, path.Join(repoLinux, clean))
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Join(repoDir, filepath.FromSlash(p))
+}
+
+func wslCommand(ctx context.Context, distro, linuxDir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
+	wslBin, err := wslPath()
+	if err != nil {
+		return nil, "", err
 	}
 	if linuxDir == "" {
 		linuxDir = "/"
@@ -107,8 +154,23 @@ func wslCommand(ctx context.Context, distro, linuxDir string, extraEnv []string,
 	return cmd, wslBin, nil
 }
 
+func decodeWSLOutput(raw []byte) string {
+	hasUTF16BOM := len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE
+	if hasUTF16BOM || (len(raw)%2 == 0 && bytes.IndexByte(raw, 0) >= 0) {
+		if hasUTF16BOM {
+			raw = raw[2:]
+		}
+		u16 := make([]uint16, len(raw)/2)
+		for i := range u16 {
+			u16[i] = uint16(raw[2*i]) | uint16(raw[2*i+1])<<8
+		}
+		return string(utf16.Decode(u16))
+	}
+	return string(raw)
+}
+
 func parseWSLDistroList(raw []byte) []string {
-	cleaned := strings.ReplaceAll(string(raw), "\x00", "")
+	cleaned := strings.TrimPrefix(decodeWSLOutput(raw), "\uFEFF")
 	var out []string
 	for _, line := range strings.Split(cleaned, "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
@@ -120,7 +182,7 @@ func parseWSLDistroList(raw []byte) []string {
 }
 
 func listWSLDistros() []string {
-	wslBin, err := exec.LookPath("wsl.exe")
+	wslBin, err := wslPath()
 	if err != nil {
 		return nil
 	}
@@ -152,7 +214,7 @@ func resolveWindowsWSLTerminalCommand(abs string, lookPathFn func(string) (strin
 	if wt, err := lookPathFn("wt.exe"); err == nil {
 		return wt, wslArgs, true
 	}
-	return "cmd", append([]string{"/c", "start"}, wslArgs...), true
+	return "cmd", append([]string{"/c", "start", ""}, wslArgs...), true
 }
 
 func resolveWindowsWSLEditorArgs(presetID, targetPath string) ([]string, bool) {

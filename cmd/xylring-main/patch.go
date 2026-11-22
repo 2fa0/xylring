@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -58,26 +57,14 @@ func applyIndexHunk(ctx context.Context, dir, path, original string, cached bool
 	if hunk < 0 || hunk >= len(hunks) {
 		return errors.New("请选择改动块")
 	}
-	f, e := os.CreateTemp("", "xylring-patch-*")
-	if e != nil {
-		return e
-	}
-	defer os.Remove(f.Name())
-	if _, e = f.WriteString(hunks[hunk].patch); e != nil {
-		f.Close()
-		return e
-	}
-	if e = f.Close(); e != nil {
-		return e
-	}
 	args := []string{"apply", "--cached", "--whitespace=nowarn"}
 	if cached {
 		args = append(args, "--reverse")
 	}
-	check := append(append([]string{}, args...), "--check", f.Name())
-	if _, e = runGit(ctx, dir, check...); e != nil {
+	check := append(append([]string{}, args...), "--check", "-")
+	if _, e = runGitExtraInput(ctx, dir, 16<<20, nil, hunks[hunk].patch, check...); e != nil {
 		return fmt.Errorf("改动块不能应用：%w", e)
 	}
-	_, e = runGit(ctx, dir, append(args, f.Name())...)
+	_, e = runGitExtraInput(ctx, dir, 16<<20, nil, hunks[hunk].patch, append(args, "-")...)
 	return e
 }

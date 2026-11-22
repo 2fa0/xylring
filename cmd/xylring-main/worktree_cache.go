@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -40,10 +39,7 @@ func pollWorktreeStatus(ctx context.Context, dir string, previous *worktreeStatu
 		if err != nil {
 			return nil, previous, err
 		}
-		next.indexPath = strings.TrimSpace(string(path))
-		if !filepath.IsAbs(next.indexPath) {
-			next.indexPath = filepath.Join(dir, next.indexPath)
-		}
+		next.indexPath = resolveRepoGitPath(dir, string(path))
 	}
 	next.index, _ = os.Stat(next.indexPath)
 	if previous != nil && next.raw == previous.raw && time.Since(previous.checked) < 30*time.Second && sameFileVersion(previous.index, next.index) {

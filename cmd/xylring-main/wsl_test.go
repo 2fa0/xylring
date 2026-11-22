@@ -79,6 +79,24 @@ func TestParseWSLDistroList(t *testing.T) {
 	if !slices.Equal(got, []string{"Ubuntu", "Debian"}) {
 		t.Fatalf("parseWSLDistroList = %v", got)
 	}
+	// With UTF-16LE BOM:
+	withBOM := append([]byte{0xFF, 0xFE}, raw...)
+	if got := parseWSLDistroList(withBOM); !slices.Equal(got, []string{"Ubuntu", "Debian"}) {
+		t.Fatalf("parseWSLDistroList(BOM) = %v", got)
+	}
+}
+
+func TestResolveRepoGitPath(t *testing.T) {
+	repo := `\\wsl.localhost\Ubuntu\home\u\repo`
+	if got := resolveRepoGitPath(repo, "/home/u/repo/.git\n"); got != `\\wsl.localhost\Ubuntu\home\u\repo\.git` {
+		t.Fatalf("abs linux git-dir = %q", got)
+	}
+	if got := resolveRepoGitPath(repo, ".git/index\n"); got != `\\wsl.localhost\Ubuntu\home\u\repo\.git\index` {
+		t.Fatalf("rel linux git-path = %q", got)
+	}
+	if got := resolveRepoGitPath(repo, "/home/u/main/.git/worktrees/wt/index"); got != `\\wsl.localhost\Ubuntu\home\u\main\.git\worktrees\wt\index` {
+		t.Fatalf("worktree linux git-path = %q", got)
+	}
 }
 
 func TestWindowsWSLTerminalAndEditor(t *testing.T) {
@@ -88,7 +106,7 @@ func TestWindowsWSLTerminalAndEditor(t *testing.T) {
 	}
 
 	bin, args, ok = resolveWindowsWSLTerminalCommand(`\\wsl$\Ubuntu\home\u\repo`, fakeLookPath(nil))
-	if !ok || bin != "cmd" || !slices.Equal(args, []string{"/c", "start", "wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/repo"}) {
+	if !ok || bin != "cmd" || !slices.Equal(args, []string{"/c", "start", "", "wsl.exe", "-d", "Ubuntu", "--cd", "/home/u/repo"}) {
 		t.Fatalf("cmd fallback terminal: got (%q, %v, %v)", bin, args, ok)
 	}
 

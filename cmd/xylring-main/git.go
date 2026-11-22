@@ -147,6 +147,10 @@ func prepareGitCommand(ctx context.Context, dir string, extraEnv []string, fullA
 }
 
 func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, args ...string) ([]byte, error) {
+	return runGitExtraInput(ctx, dir, limit, extraEnv, "", args...)
+}
+
+func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []string, input string, args ...string) ([]byte, error) {
 	// 车道先于全局槽，defer 逆序释放。
 	releaseLane := acquireGitLane(ctx, canonicalRepoDir(dir), gitCommandWrites(args))
 	defer releaseLane()
@@ -161,6 +165,9 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 		// Git 不可执行时没有命令可记，应用日志里已经有这一条。
 		logGitFailure(dir, args, err)
 		return nil, err
+	}
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
 	}
 	stdout := limitedBuffer{limit: limit, cancel: cancel}
 	stderr := limitedBuffer{limit: 64 << 10}

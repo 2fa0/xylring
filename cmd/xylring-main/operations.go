@@ -52,7 +52,7 @@ func operationState(ctx context.Context, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	gitDir := strings.TrimSpace(string(b))
+	gitDir := resolveRepoGitPath(dir, string(b))
 	for _, p := range []struct{ file, op string }{{"rebase-merge", "rebase"}, {"rebase-apply", "rebase"}, {"MERGE_HEAD", "merge"}, {"CHERRY_PICK_HEAD", "cherry-pick"}, {"REVERT_HEAD", "revert"}} {
 		path := filepath.Join(gitDir, p.file)
 		if _, err = os.Stat(path); err == nil {

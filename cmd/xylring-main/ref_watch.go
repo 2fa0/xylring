@@ -15,17 +15,11 @@ type refWatch map[string]os.FileInfo
 func newRefWatch(ctx context.Context, path string) refWatch {
 	gitDir := filepath.Join(path, ".git")
 	if b, err := os.ReadFile(gitDir); err == nil {
-		gitDir = strings.TrimSpace(strings.TrimPrefix(string(b), "gitdir:"))
-		if !filepath.IsAbs(gitDir) {
-			gitDir = filepath.Join(path, gitDir)
-		}
+		gitDir = resolveRepoGitPath(path, strings.TrimPrefix(string(b), "gitdir:"))
 	}
 	common := gitDir
 	if b, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
-		common = strings.TrimSpace(string(b))
-		if !filepath.IsAbs(common) {
-			common = filepath.Join(gitDir, common)
-		}
+		common = resolveRepoGitPath(gitDir, string(b))
 	}
 	w := refWatch{}
 	for _, p := range []string{filepath.Join(path, ".git"), filepath.Join(gitDir, "HEAD"), filepath.Join(gitDir, "commondir"), filepath.Join(common, "packed-refs"), filepath.Join(common, "shallow"), filepath.Join(common, "info", "grafts"), filepath.Join(common, "reftable"), filepath.Join(common, "reftable", "tables.list")} {

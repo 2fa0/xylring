@@ -259,7 +259,7 @@ func rewordGitDir(ctx context.Context, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	gitDir := strings.TrimSpace(string(out))
+	gitDir := resolveRepoGitPath(dir, string(out))
 	for _, state := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer"} {
 		if _, err := os.Stat(filepath.Join(gitDir, state)); err == nil {
 			return "", errors.New("仓库正在进行 rebase、合并或拣选等操作，请先完成或取消后再修改说明")
@@ -271,30 +271,17 @@ func rewordGitDir(ctx context.Context, dir string) (string, error) {
 }
 
 func commitTreeMessage(ctx context.Context, dir string, info rewordInfo, message string) ([20]byte, error) {
-	f, err := os.CreateTemp("", "xylring-msg-")
-	if err != nil {
-		return zeroHash, err
-	}
-	path := f.Name()
-	defer os.Remove(path)
-	if _, err := f.WriteString(message + "\n"); err != nil {
-		f.Close()
-		return zeroHash, err
-	}
-	if err := f.Close(); err != nil {
-		return zeroHash, err
-	}
 	args := []string{"commit-tree", hashHex(info.tree)}
 	for _, p := range info.parents {
 		args = append(args, "-p", hashHex(p))
 	}
-	args = append(args, "-F", path)
+	args = append(args, "-F", "-")
 	env := []string{
 		"GIT_AUTHOR_NAME=" + info.author,
 		"GIT_AUTHOR_EMAIL=" + info.email,
 		"GIT_AUTHOR_DATE=" + info.date,
 	}
-	out, err := runGitExtra(ctx, dir, 16<<20, env, args...)
+	out, err := runGitExtraInput(ctx, dir, 16<<20, env, message+"\n", args...)
 	if err != nil {
 		return zeroHash, err
 	}
