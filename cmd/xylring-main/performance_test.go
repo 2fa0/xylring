@@ -283,34 +283,34 @@ func TestReferenceWatchDetectsGitChangesAndIgnoresIndexNoise(t *testing.T) {
 	dir, git := initTestRepo(t)
 	git("commit", "--allow-empty", "-m", "base")
 	w := newRefWatch(context.Background(), dir)
-	if w.changed() {
+	if w.changed(context.Background()) {
 		t.Fatal("unchanged refs reported as modified")
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".git", "unrelated"), []byte("noise"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if w.changed() {
+	if w.changed(context.Background()) {
 		t.Fatal("unrelated .git write forces a full ref enumeration")
 	}
 	git("branch", "feature/nested")
-	if !w.changed() {
+	if !w.changed(context.Background()) {
 		t.Fatal("new nested branch was missed")
 	}
 	w = newRefWatch(context.Background(), dir)
 	git("commit", "--allow-empty", "-m", "next")
-	if !w.changed() {
+	if !w.changed(context.Background()) {
 		t.Fatal("branch update was missed")
 	}
 	w = newRefWatch(context.Background(), dir)
 	git("pack-refs", "--all")
-	if !w.changed() {
+	if !w.changed(context.Background()) {
 		t.Fatal("packed refs update was missed")
 	}
 	worktree := filepath.Join(t.TempDir(), "linked")
 	git("worktree", "add", "-b", "linked", worktree)
 	w = newRefWatch(context.Background(), worktree)
 	git("branch", "shared")
-	if !w.changed() {
+	if !w.changed(context.Background()) {
 		t.Fatal("linked worktree missed a shared ref update")
 	}
 }

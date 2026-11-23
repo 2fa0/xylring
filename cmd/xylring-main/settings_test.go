@@ -519,7 +519,7 @@ func TestGitSettingsRejectsCheckoutShorthandAsDefaultBranch(t *testing.T) {
 // 切页签时对话框高度不变：读取中的 Git 页只剩一行提示，若让面板跟着内容收缩，
 // 内容回来时就会闪一下。
 func TestSettingsDialogKeepsHeightAcrossPages(t *testing.T) {
-	a := &app{settings: settingsState{open: true, repo: "/work/repo", global: gitSettingsScope{busy: true}}}
+	a := &app{settings: settingsState{open: true, repo: "/work/repo", global: gitSettingsScope{busy: true}, local: gitSettingsScope{busy: true}}}
 	tt := ui.NewTester(a.view, 1100, 720)
 	defer retireTester(tt)
 	tt.Frame()

@@ -137,6 +137,10 @@ func gitSettingsHasEmptyOverride(s *gitSettingsScope) bool {
 
 func (a *app) loadSettingsGit(local, save bool) {
 	d := a.settingsScope(local)
+	if local && isDockerRepoPath(a.settings.repo) {
+		d.err = tr("容器仓库暂不支持修改 Git 配置")
+		return
+	}
 	if save && a.settingsGitWriteBlocked() {
 		d.err = "请等待当前 Git 操作完成后再应用设置"
 		return
@@ -146,12 +150,15 @@ func (a *app) loadSettingsGit(local, save bool) {
 	}
 	d.busy, d.err, d.notice = true, "", ""
 	gen, repo := a.settings.gen, a.settings.repo
+	if !local && isDockerRepoPath(repo) {
+		repo = ""
+	}
 	scope := "--global"
 	if local {
 		scope = "--local"
 	}
 	fields := slices.Clone(d.fields)
-	refreshProject := save && !local && a.settings.local.loaded
+	refreshProject := save && !local && a.settings.local.loaded && !isDockerRepoPath(a.settings.repo)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -474,6 +481,10 @@ func (a *app) projectSettings(c *ui.Context) {
 		ui.Column(c).FillWidth().Padding(18).Center().Children(func() {
 			ui.Text(c, tr("打开一个仓库后，可以设置项目覆盖。")).FontSize(12).TextColor(c.Theme().TextMuted).TextAlign(ui.Center)
 		})
+		return
+	}
+	if isDockerRepoPath(d.repo) {
+		settingsNotice(c, "docker-project-config", tr("容器仓库暂不支持修改 Git 配置"), c.Theme().TextMuted)
 		return
 	}
 	t := c.Theme()

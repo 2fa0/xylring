@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -53,9 +54,32 @@ func operationState(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	gitDir := resolveRepoGitPath(dir, string(b))
-	for _, p := range []struct{ file, op string }{{"rebase-merge", "rebase"}, {"rebase-apply", "rebase"}, {"MERGE_HEAD", "merge"}, {"CHERRY_PICK_HEAD", "cherry-pick"}, {"REVERT_HEAD", "revert"}} {
-		path := filepath.Join(gitDir, p.file)
-		if _, err = os.Stat(path); err == nil {
+	states := []struct{ file, op string }{
+		{"rebase-merge", "rebase"},
+		{"rebase-apply", "rebase"},
+		{"MERGE_HEAD", "merge"},
+		{"CHERRY_PICK_HEAD", "cherry-pick"},
+		{"REVERT_HEAD", "revert"},
+	}
+	if isDockerRepoPath(dir) {
+		paths := make([]string, len(states))
+		for i, p := range states {
+			paths[i] = path.Join(gitDir, p.file)
+		}
+		metas, err := dockerStatPaths(ctx, dir, paths)
+		if err != nil {
+			return "", err
+		}
+		for i, meta := range metas {
+			if meta.present() {
+				return states[i].op, nil
+			}
+		}
+		return "", nil
+	}
+	for _, p := range states {
+		statePath := filepath.Join(gitDir, p.file)
+		if _, err = os.Stat(statePath); err == nil {
 			return p.op, nil
 		} else if !os.IsNotExist(err) {
 			return "", err

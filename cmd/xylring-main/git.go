@@ -132,6 +132,9 @@ func runGitLimit(ctx context.Context, dir string, limit int, args ...string) ([]
 }
 
 func prepareGitCommand(ctx context.Context, dir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
+	if target, ok := parseDockerRepoKey(dir); ok {
+		return dockerGitCommand(ctx, target, extraEnv, fullArgs...)
+	}
 	if distro, linuxPath, ok := parseWSLUNCPath(dir); ok {
 		return wslCommand(ctx, distro, linuxPath, extraEnv, fullArgs...)
 	}
@@ -182,11 +185,19 @@ func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []str
 	}()
 	err = cmd.Run()
 	exit = gitExitCode(err)
-	err = gitExecError(bin, err)
+	if target, ok := parseDockerRepoKey(dir); ok {
+		err = dockerRunError(target, bin, err, stderr.Bytes())
+	} else {
+		err = gitExecError(bin, err)
+	}
 	decodedErr := decodeWSLCommandOutput(dir, stderr.Bytes())
 	if stdout.overflow {
 		log.Printf("git output limit exceeded repo=%q limit=%d", dir, limit)
-		return nil, fmt.Errorf("Git 输出超过 %d 字节，请缩小读取范围", limit)
+		err := fmt.Errorf("Git 输出超过 %d 字节，请缩小读取范围", limit)
+		if isDockerRepoPath(dir) && gitCommandWrites(args) {
+			return nil, &dockerUnknownResultError{err: err}
+		}
+		return nil, err
 	}
 	if ctx.Err() != nil {
 		status = gitCallCancelled
@@ -209,6 +220,11 @@ func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []str
 		// Git 缺席或不可执行时保住错误类型：上层据此区分“缺 Git”和“仓库有问题”。
 		if isGitUnavailable(err) {
 			return nil, err
+		}
+		// 容器层失败已经翻译过（缺 Docker、容器停了、路径不存在），
+		// 不能再用原始 stderr 覆盖成一句 daemon 内部错误。
+		if isDockerUnavailable(err) || dockerTargetMessage(err) {
+			return stdout.Bytes(), err
 		}
 		msg := strings.TrimSpace(string(decodedErr))
 		if msg == "" {
@@ -238,6 +254,13 @@ func trimMsg(s string) string {
 }
 
 func repoRoot(ctx context.Context, dir string) (string, error) {
+	if target, ok := parseDockerRepoKey(dir); ok {
+		root, err := dockerRepoRoot(ctx, target)
+		if err != nil {
+			return "", err
+		}
+		return dockerRepoKey(root), nil
+	}
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -301,6 +324,10 @@ func skipRepoDir(name string) bool {
 }
 
 func isGitWorkTree(dir string) bool {
+	// 容器仓库没法用本机文件系统判断，交给容器 Git；这里不假称仓库不可用。
+	if isDockerRepoPath(dir) {
+		return true
+	}
 	info, err := os.Lstat(filepath.Join(dir, ".git"))
 	if err != nil {
 		return false
@@ -471,7 +498,11 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	stopRead := context.AfterFunc(ctx, func() { _ = stdout.Close() })
 	defer stopRead()
 	if err := cmd.Start(); err != nil {
-		err = gitExecError(bin, err)
+		if target, ok := parseDockerRepoKey(dir); ok {
+			err = dockerRunError(target, bin, err, nil)
+		} else {
+			err = gitExecError(bin, err)
+		}
 		logGitFailure(dir, args, err, nil)
 		return err
 	}
@@ -508,7 +539,17 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 		}
 		return fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
-	if waitErr = gitExecError(bin, waitErr); waitErr != nil {
+	dockerTarget, isDocker := parseDockerRepoKey(dir)
+	if isDocker {
+		waitErr = dockerRunError(dockerTarget, bin, waitErr, decodedErr)
+	} else {
+		waitErr = gitExecError(bin, waitErr)
+	}
+	if waitErr != nil {
+		if isDocker && (isDockerUnavailable(waitErr) || dockerTargetMessage(waitErr)) {
+			logGitFailure(dir, args, waitErr, decodedErr)
+			return waitErr
+		}
 		if isGitUnavailable(waitErr) {
 			logGitFailure(dir, args, waitErr, decodedErr)
 			return waitErr
@@ -788,8 +829,11 @@ func loadMeta(ctx context.Context, dir string) (repoMeta, error) {
 	// 工作树只是附加信息：读不到就当没有，不阻断仓库加载。非 nil 的空切片
 	// 表示「确实没有」，分页重建的 meta 用 nil 表示「不知道，别覆盖」。
 	m.worktrees = []repoWorktree{}
-	if linked, werr := listWorktrees(ctx, dir); werr == nil {
-		m.worktrees = linked
+	// 第一版不打开 linked worktree，也不把容器内的工作树路径映射成本机路径。
+	if !isDockerRepoPath(dir) {
+		if linked, werr := listWorktrees(ctx, dir); werr == nil {
+			m.worktrees = linked
+		}
 	}
 	m.operation, err = operationState(ctx, dir)
 	if err != nil {

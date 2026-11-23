@@ -122,6 +122,10 @@ func wslPath() (string, error) {
 // `rev-parse --absolute-git-dir` or `--git-path`) into a host-accessible path.
 // For WSL repositories, Linux paths are mapped back to `\\wsl.localhost\...`.
 func resolveRepoGitPath(repoDir, gitOutPath string) string {
+	if target, ok := parseDockerRepoKey(repoDir); ok {
+		// 容器内的路径就是容器内的路径，不映射成主机路径。
+		return containerPath(target.path, strings.TrimSuffix(gitOutPath, "\n"))
+	}
 	p := strings.TrimSpace(gitOutPath)
 	if p == "" {
 		return ""

@@ -89,7 +89,7 @@ func (a *app) resumeAfterGit() {
 	// 缺 Git 期间失败的每个仓库都重新读；只补活动标签会留下别的标签的旧错误。
 	retried := false
 	for _, t := range a.tabs {
-		if t.err == "" {
+		if t.err == "" || isDockerRepoPath(t.path) {
 			continue
 		}
 		t.err = ""

@@ -293,7 +293,7 @@ func checkoutBranch(ctx context.Context, dir, name string) error {
 	if name == "" {
 		return errors.New("请输入分支名")
 	}
-	_, err := runGit(ctx, dir, "checkout", name)
+	_, err := runGit(ctx, dir, "switch", "--no-guess", "--", name)
 	return err
 }
 

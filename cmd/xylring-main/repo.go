@@ -168,6 +168,23 @@ func (a *app) pickWSLRepo() {
 }
 
 func (a *app) openRepo(path string) {
+	if isDockerRepoPath(path) {
+		go func() {
+			// 容器仓库的恢复要多花几条 docker 命令：容器检查、端点核对、Git 探测。
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			root, err := repoRoot(ctx, path)
+			a.post(func() {
+				if err != nil {
+					log.Printf("openRepo failed repo=%q err=%q", repoLocation(path), err)
+					a.setBanner(trimMsg(err.Error()), path)
+					return
+				}
+				a.openRoot(root)
+			})
+		}()
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -190,7 +207,11 @@ func (a *app) openRepo(path string) {
 }
 
 func (a *app) openPath(path string) {
-	crashlog.Breadcrumb("打开路径 " + path)
+	if isDockerRepoPath(path) {
+		a.openRepo(path)
+		return
+	}
+	crashlog.Breadcrumb("打开路径 " + repoLocation(path))
 	a.scanRepos(path, true)
 }
 
@@ -212,7 +233,8 @@ func (a *app) rescanFound() {
 }
 
 func (a *app) scanRepos(path string, open bool) {
-	if a.closed {
+	if a.closed || isDockerRepoPath(path) {
+		// 容器仓库没有可递归扫描的本机目录，也不允许把容器键当主机路径用。
 		return
 	}
 	// Repeated refreshes share the in-flight scan; a new import supersedes it.
@@ -454,6 +476,9 @@ func (a *app) setFound(from string, roots []string) {
 }
 
 func workspaceDir(path string) string {
+	if isDockerRepoPath(path) {
+		return path
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return path
@@ -466,7 +491,7 @@ func workspaceDir(path string) string {
 }
 
 func (a *app) openRoot(root string) {
-	crashlog.Breadcrumb("打开仓库 " + root)
+	crashlog.Breadcrumb("打开仓库 " + repoLocation(root))
 	if a.closed {
 		return
 	}
@@ -649,6 +674,7 @@ func (a *app) reload(t *repoTab) {
 			t.loading, t.loaded = false, true
 			if err != nil {
 				log.Printf("reload failed repo=%q err=%q", path, err)
+				a.probeDockerReplacement(t)
 				if p != nil {
 					p.close()
 				}

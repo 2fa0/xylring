@@ -130,11 +130,14 @@ type app struct {
 	showBoard      bool
 	board          boardState
 	quitGuard      closeGuardState
+	docker         dockerDialogState
+	dockerWrites   dockerWriteState
 	writes         map[int]string // 正在跑的 Git 写操作，见 startGitWrite
 	writeSeq       int
 }
 
 type discardDialog struct {
+	repo string
 	open bool
 	file fileChange
 }
@@ -190,6 +193,7 @@ func newApp() *app {
 	if session.BottomFullWidth != nil {
 		a.bottomFullWidth = *session.BottomFullWidth
 	}
+	a.initDockerWrites()
 	return a
 }
 
@@ -274,6 +278,8 @@ func (a *app) view(c *ui.Context) {
 	a.gitLogModal(c)
 	a.boardModals(c)
 	a.folderImportModal(c)
+	a.dockerRepoModal(c)
+	a.dockerRecoveryModal(c)
 	a.closeGuardModal(c)
 }
 
@@ -453,7 +459,7 @@ func (a *app) unifiedTopToolbar(c *ui.Context, tab *repoTab) bool {
 
 func (a *app) chromeBranchButton(c *ui.Context, tab *repoTab, sidebarOpen, unified bool) {
 	th := c.Theme()
-	label := tab.title
+	label := a.dockerTabLabel(tab)
 	branchText := displayBranch(tab.branch)
 	if tab.branch != "" {
 		if sidebarOpen {
@@ -465,7 +471,7 @@ func (a *app) chromeBranchButton(c *ui.Context, tab *repoTab, sidebarOpen, unifi
 			label += " " + sync
 		}
 	}
-	tip := tab.path
+	tip := repoLocationTooltip(tab.path)
 	if tab.branch != "" {
 		tip += "\n" + branchText
 	}
@@ -509,7 +515,7 @@ func (a *app) chromeBranchButton(c *ui.Context, tab *repoTab, sidebarOpen, unifi
 		if len(branches) > 0 {
 			m.Separator()
 		}
-		if m.Item(tr("新建分支…")).Disabled(disabled || tab.head == zeroHash).Chosen() {
+		if m.Item(tr("新建分支…")).Disabled(disabled || tab.head == zeroHash || isDockerRepoPath(tab.path)).Chosen() {
 			a.openCommitWrite(tab, writeBranch, commit{hash: tab.head})
 		}
 		if tab.branch != "" && !strings.HasPrefix(tab.branch, "分离头指针") && tab.branch != "尚无提交" {
@@ -561,9 +567,19 @@ func (a *app) chrome(c *ui.Context) {
 						a.goHome()
 					}
 					ui.Box(c).Grow(1)
-					if chromeIconButton(c, "sidebar-import-btn", "导入仓库", iconFolderPlus).
-						Tooltip(tr("导入本地仓库 (⌘O)")).
-						Clicked() {
+					importBtn := chromeIconButton(c, "sidebar-import-btn", "导入仓库", iconFolderPlus).
+						Tooltip(tr("导入本地仓库 (⌘O)"))
+					if dockerReposSupported() {
+						importBtn.ContextMenu(func(m *ui.Menu) {
+							if m.Item(tr("导入本地仓库…")).Chosen() {
+								a.pickRepo()
+							}
+							if m.Item(tr("打开容器仓库…")).Chosen() {
+								a.openDockerRepoDialog()
+							}
+						})
+					}
+					if importBtn.Clicked() {
 						a.pickRepo()
 					}
 					if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Clicked() {
@@ -640,8 +656,20 @@ func (a *app) chrome(c *ui.Context) {
 				ui.Box(c).Grow(1).MinWidth(8)
 			}
 			disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
+			container := isDockerRepoPath(tab.path)
+			if container {
+				// 远程同步在容器仓库里暂不开放，按钮保留位置但不触发操作。
+				disabled = true
+			}
+			pullTip := tr("拉取或获取远程更新")
+			pushTip := tr("推送当前分支")
+			if container {
+				pullTip = tr("容器仓库暂不支持远程同步")
+				pushTip = tr("容器仓库暂不支持远程同步")
+			}
 			// 拉取会改本地代码，藏在菜单里点两下不亏；推送最常用，一颗按钮一步到位（再一次确认）。
 			chromeIconButton(c, "topbar-pull", "拉取或获取远程更新", iconDownload).
+				Tooltip(pullTip).
 				Menu(func(m *ui.Menu) {
 					if m.Item(tr("获取远程更新")).Disabled(disabled).
 						Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
@@ -661,6 +689,7 @@ func (a *app) chrome(c *ui.Context) {
 					}
 				}).Disabled(disabled)
 			if chromeIconButton(c, "topbar-push", "推送当前分支", iconUpload).
+				Tooltip(pushTip).
 				Disabled(disabled).Clicked() {
 				a.requestPush(tab)
 			}
@@ -694,6 +723,11 @@ func (a *app) emptyState(c *ui.Context) {
 						ui.Text(c, tr("导入仓库"))
 					}).Clicked() {
 						a.pickRepo()
+					}
+					if dockerReposSupported() {
+						if ui.Button(c.Key("import-docker-empty"), tr("打开容器仓库…")).Clicked() {
+							a.openDockerRepoDialog()
+						}
 					}
 					if runtime.GOOS == "windows" {
 						if ui.Button(c.Key("import-wsl-empty"), tr("导入 WSL 仓库")).Clicked() {
@@ -766,7 +800,7 @@ func (a *app) emptyState(c *ui.Context) {
 
 func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 	t := c.Theme()
-	title := repoTitle(path)
+	title := dockerRepoDisplayLabel(path, a.recent)
 	row := ui.ButtonBase(c.Key(fmt.Sprintf("recent-%d", i))).Label(title).FillWidth().Padding(8, 10).Gap(10).Radius(t.Radius).Justify(ui.Start).AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
 	hovered := row.Hovered()
 	switch {
@@ -777,29 +811,36 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 	}
 	remove := false
 	row.ContextMenu(func(m *ui.Menu) {
-		revealName := "在访达中显示"
-		if runtime.GOOS == "windows" {
-			revealName = "在资源管理器中显示"
-		} else if runtime.GOOS != "darwin" {
-			revealName = "在文件管理器中显示"
-		}
-		if m.Item(tr(revealName)).Chosen() {
-			if err := revealInFileManager(path); err != nil {
-				a.setBanner("定位失败: "+err.Error(), path)
+		a.dockerTerminalMenu(m, path)
+		if !isDockerRepoPath(path) {
+			revealName := "在访达中显示"
+			if runtime.GOOS == "windows" {
+				revealName = "在资源管理器中显示"
+			} else if runtime.GOOS != "darwin" {
+				revealName = "在文件管理器中显示"
+			}
+			if m.Item(tr(revealName)).Chosen() {
+				if err := revealInFileManager(path); err != nil {
+					a.setBanner("定位失败: "+err.Error(), path)
+				}
+			}
+			if m.Item(tr("在终端中打开")).Chosen() {
+				if err := openInTerminal(path); err != nil {
+					a.setBanner("打开终端失败: "+err.Error(), path)
+				}
+			}
+			if m.Item(a.openEditorMenuLabel()).Chosen() {
+				if err := a.openInEditor(path); err != nil {
+					a.setBanner("打开失败: "+err.Error(), path)
+				}
 			}
 		}
-		if m.Item(tr("在终端中打开")).Chosen() {
-			if err := openInTerminal(path); err != nil {
-				a.setBanner("打开终端失败: "+err.Error(), path)
-			}
+		copyLabel := tr("复制路径")
+		if isDockerRepoPath(path) {
+			copyLabel = tr("复制容器内路径")
 		}
-		if m.Item(a.openEditorMenuLabel()).Chosen() {
-			if err := a.openInEditor(path); err != nil {
-				a.setBanner("打开失败: "+err.Error(), path)
-			}
-		}
-		if m.Item(tr("复制路径")).Chosen() {
-			c.Services().WriteClipboard(path)
+		if m.Item(copyLabel).Chosen() {
+			c.Services().WriteClipboard(repoCopyPath(path))
 			c.Toast(tr("已复制路径"))
 		}
 		m.Separator()
@@ -816,7 +857,7 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 			// 路径看得全就不弹黑框；只有副行被裁掉时才把整条路径放上去。
 			if hovered || row.Focused() {
 				w, _ := c.MeasureText(0, ui.Span{Text: shown, Size: 12})
-				if tip := cutTip(path, w, sub.Bounds().W); tip != "" {
+				if tip := cutTip(repoLocationTooltip(path), w, sub.Bounds().W); tip != "" {
 					sub.Tooltip(tip)
 				}
 			}
@@ -863,7 +904,7 @@ func matchRecentRepo(path, query string) bool {
 	words := strings.Fields(q)
 	title := strings.ToLower(repoTitle(path))
 	home := strings.ToLower(homePath(path))
-	full := strings.ToLower(path)
+	full := strings.ToLower(repoLocation(path))
 	for _, word := range words {
 		if !strings.Contains(title, word) && !strings.Contains(home, word) && !strings.Contains(full, word) {
 			return false
@@ -957,29 +998,36 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 		// 工作树子行沿用仓库行的菜单：都是同一个目录上的动作。
 		contextMenu := func(p string) func(m *ui.Menu) {
 			return func(m *ui.Menu) {
-				revealName := "在访达中显示"
-				if runtime.GOOS == "windows" {
-					revealName = "在资源管理器中显示"
-				} else if runtime.GOOS != "darwin" {
-					revealName = "在文件管理器中显示"
-				}
-				if m.Item(tr(revealName)).Chosen() {
-					if err := revealInFileManager(p); err != nil {
-						a.setBanner("定位失败: "+err.Error(), p)
+				a.dockerTerminalMenu(m, p)
+				if !isDockerRepoPath(p) {
+					revealName := "在访达中显示"
+					if runtime.GOOS == "windows" {
+						revealName = "在资源管理器中显示"
+					} else if runtime.GOOS != "darwin" {
+						revealName = "在文件管理器中显示"
+					}
+					if m.Item(tr(revealName)).Chosen() {
+						if err := revealInFileManager(p); err != nil {
+							a.setBanner("定位失败: "+err.Error(), p)
+						}
+					}
+					if m.Item(tr("在终端中打开")).Chosen() {
+						if err := openInTerminal(p); err != nil {
+							a.setBanner("打开终端失败: "+err.Error(), p)
+						}
+					}
+					if m.Item(a.openEditorMenuLabel()).Chosen() {
+						if err := a.openInEditor(p); err != nil {
+							a.setBanner("打开失败: "+err.Error(), p)
+						}
 					}
 				}
-				if m.Item(tr("在终端中打开")).Chosen() {
-					if err := openInTerminal(p); err != nil {
-						a.setBanner("打开终端失败: "+err.Error(), p)
-					}
+				copyLabel := tr("复制路径")
+				if isDockerRepoPath(p) {
+					copyLabel = tr("复制容器内路径")
 				}
-				if m.Item(a.openEditorMenuLabel()).Chosen() {
-					if err := a.openInEditor(p); err != nil {
-						a.setBanner("打开失败: "+err.Error(), p)
-					}
-				}
-				if m.Item(tr("复制路径")).Chosen() {
-					c.Services().WriteClipboard(p)
+				if m.Item(copyLabel).Chosen() {
+					c.Services().WriteClipboard(repoCopyPath(p))
 					c.Toast(tr("已复制路径"))
 				}
 				m.Separator()
@@ -1017,7 +1065,11 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
 			row.ContextMenu(contextMenu(p))
 			row.Children(func() {
-				ui.Text(c, label).FontSize(13).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
+				if isDockerRepoPath(p) {
+					// 类型标记只出现一次：名字已经说明是哪个容器。
+					ui.Icon(c, iconContainer).Size(12, 12).TextColor(c.Theme().TextMuted).Shrink(0).Tooltip(tr("容器仓库"))
+				}
+				ui.Text(c, label).FontSize(13).SingleLine().MinWidth(0).Grow(1).Tooltip(repoLocationTooltip(p))
 				if branchName != "" || branchStatus != "" {
 					// 分支名可以被截断，状态标记不参与收缩：侧栏再窄也留得下状态。
 					ui.Row(c).Gap(3).AlignItems(ui.Center).Shrink(0).MaxWidth(130).Tooltip(tip).Children(func() {
@@ -1309,6 +1361,7 @@ func (a *app) graphMain(c *ui.Context, includeBottom bool) {
 	if tab.comparison != nil {
 		a.comparisonBanner(c, tab)
 	}
+	a.dockerWriteGuardBanner(c, tab)
 	a.operationBanner(c, tab)
 	a.historyToolbar(c, tab)
 	a.commitPane(c, tab, includeBottom)
@@ -1326,6 +1379,9 @@ func (a *app) graphMain(c *ui.Context, includeBottom bool) {
 
 func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	t := c.Theme()
+	if len(tab.commits) > 0 {
+		a.dockerReconnectButton(c, tab)
+	}
 	if tab.loading && len(tab.commits) == 0 && tab.err == "" {
 		busyBlock(c, "history-loading", tr("正在读取提交图谱…"), "").Grow(1)
 		return
@@ -1333,8 +1389,14 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	if tab.err != "" && len(tab.commits) == 0 {
 		ui.Column(c).Grow(1).Center().Padding(24).Gap(12).Children(func() {
 			ui.Text(c, trMessage(tab.err)).TextColor(t.Danger).TextAlign(ui.Center)
+			if isDockerRepoPath(tab.path) {
+				a.dockerReconnectButton(c, tab)
+				if ui.PrimaryButton(c.Key("docker-retry-pane"), tr("重试")).Disabled(tab.loading).Clicked() {
+					a.reload(tab)
+				}
+			}
 			// 仓库读不出来是因为 Git 本身不可用时，这里直接给重试入口。
-			if !a.gitReady() {
+			if !a.gitReady() && !isDockerRepoPath(tab.path) {
 				if ui.PrimaryButton(c.Key("git-retry-pane"), tr("重新检测")).Disabled(a.git.checking).Clicked() {
 					a.checkGit(true)
 				}

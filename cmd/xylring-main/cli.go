@@ -33,7 +33,8 @@ func normalizePaths(args []string, workingDir string) []string {
 	var paths []string
 	for _, arg := range args {
 		arg = strings.TrimSpace(arg)
-		if arg == "" || strings.HasPrefix(arg, "-") {
+		if arg == "" || strings.HasPrefix(arg, "-") || isDockerRepoPath(arg) {
+			// 第一版不通过命令行打开容器仓库。
 			continue
 		}
 		target := arg

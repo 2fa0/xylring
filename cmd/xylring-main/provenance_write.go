@@ -84,16 +84,12 @@ func gitFile(ctx context.Context, dir, name string) (string, error) {
 }
 func readStamp(ctx context.Context, dir string) (ringStamp, error) {
 	var s ringStamp
-	path, err := gitFile(ctx, dir, "xylring-stamp")
+	b, err := readRepoGitFile(ctx, dir, "xylring-stamp")
 	if err != nil {
 		return s, err
 	}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if b == nil {
 		return s, nil
-	}
-	if err != nil {
-		return s, err
 	}
 	for _, line := range strings.Split(string(b), "\n") {
 		k, v, _ := strings.Cut(line, "=")
@@ -114,7 +110,42 @@ func readStamp(ctx context.Context, dir string) (ringStamp, error) {
 	s.p.attribution = "stamp"
 	return s, nil
 }
+
+// readRepoGitFile 读取由 Git 解析出的仓库内文件。容器仓库只能通过容器读，
+// 缺失返回 nil, nil，真实错误（容器离线等）必须原样上报。
+func readRepoGitFile(ctx context.Context, dir, name string) ([]byte, error) {
+	if isDockerRepoPath(dir) {
+		data, ok, err := dockerReadGitPathFile(ctx, dir, name)
+		if err != nil || !ok {
+			return nil, err
+		}
+		return data, nil
+	}
+	path, err := gitFile(ctx, dir, name)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func dockerProvenanceWriteBlocked(dir string) error {
+	if isDockerRepoPath(dir) {
+		return errors.New("容器仓库暂不支持修改年轮设置")
+	}
+	return nil
+}
+
 func writeStamp(ctx context.Context, dir string, s ringStamp) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
 	if err := validateProvenanceModel(s.p); err != nil {
 		return err
 	}
@@ -146,6 +177,9 @@ func writeStamp(ctx context.Context, dir string, s ringStamp) error {
 	return os.Rename(f.Name(), path)
 }
 func clearStamp(ctx context.Context, dir string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
 	path, err := gitFile(ctx, dir, "xylring-stamp")
 	if err != nil {
 		return err
@@ -181,9 +215,21 @@ func ringHookStatus(ctx context.Context, dir string) string {
 	if err != nil {
 		return err.Error()
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "未开启"
+	var b []byte
+	if isDockerRepoPath(dir) {
+		// 容器读不到时要给出真实原因，不能伪装成「未安装」。
+		b, err = readRepoGitFile(ctx, dir, "hooks/prepare-commit-msg")
+		if err != nil {
+			return "无法读取：" + err.Error()
+		}
+		if b == nil {
+			return "未开启"
+		}
+	} else {
+		b, err = os.ReadFile(path)
+		if err != nil {
+			return "未开启"
+		}
 	}
 	if strings.Contains(string(b), ringHookMarker) {
 		return "已开启（v1）"
@@ -194,9 +240,15 @@ func ringHookStatus(ctx context.Context, dir string) string {
 	return "未开启"
 }
 func installRingHook(ctx context.Context, dir string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
 	return installProvenanceHook(ctx, dir, "prepare-commit-msg", ringHookMarker, ringHookScript())
 }
 func installProvenanceHook(ctx context.Context, dir, name, marker, script string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
 	path, err := provenanceHookPath(ctx, dir, name)
 	if err != nil {
 		return err
@@ -232,9 +284,15 @@ func installProvenanceHook(ctx context.Context, dir, name, marker, script string
 	return nil
 }
 func uninstallRingHook(ctx context.Context, dir string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
 	return uninstallProvenanceHook(ctx, dir, "prepare-commit-msg", "# xylring-ring-hook")
 }
 func uninstallProvenanceHook(ctx context.Context, dir, name, marker string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
 	path, err := provenanceHookPath(ctx, dir, name)
 	if err != nil {
 		return err
@@ -328,8 +386,18 @@ func runGitInput(ctx context.Context, dir, input string, args ...string) ([]byte
 		return nil, err
 	}
 	cmd.Stdin = strings.NewReader(input)
+	stderr := limitedBuffer{limit: 64 << 10}
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	return out, gitExecError(bin, err)
+	if err != nil {
+		// 这是除 runGit/streamLog 之外的第三个命令行入口，必须同样区分
+		// 「Docker 没跑起来」和「容器里的 Git 报错」。
+		if target, ok := parseDockerRepoKey(dir); ok {
+			return out, dockerRunError(target, bin, err, stderr.Bytes())
+		}
+		return out, gitExecError(bin, err)
+	}
+	return out, nil
 }
 func messageProvenance(ctx context.Context, dir, msg string) (provenance, error) {
 	out, err := runGitInput(ctx, dir, msg, "interpret-trailers", "--parse")

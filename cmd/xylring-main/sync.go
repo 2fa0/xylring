@@ -90,6 +90,9 @@ func gitPush(ctx context.Context, dir string) (string, error) {
 }
 
 func (a *app) quickPull(tab *repoTab) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if tab == nil || tab.unavailable {
 		return
 	}
@@ -171,6 +174,9 @@ func (a *app) quickPush(tab *repoTab) {
 // requestPush 是顶栏那颗推送按钮：推之前先问一句。没有上游分支时没有可核对的目标，
 // 交给「推送分支」对话框去选远程；落后远端就先挡回去，别让人确认完才被拒。
 func (a *app) requestPush(tab *repoTab) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if tab == nil || tab.unavailable {
 		return
 	}

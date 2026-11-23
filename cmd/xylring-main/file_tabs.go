@@ -410,7 +410,7 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 									if m.Item(tr("复制相对路径")).Chosen() {
 										copyFilePath(c, t.path, tab.file.path, 0)
 									}
-									if m.Item(tr("复制绝对路径")).Chosen() {
+									if m.Item(absolutePathMenuLabel(t.path)).Chosen() {
 										copyFilePath(c, t.path, tab.file.path, ui.Alt)
 									}
 
@@ -420,6 +420,11 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 										if m.Item(tr("查看文件历史")).Chosen() {
 											action = func() { a.openFileHistoryForTab(t, tab) }
 										}
+									}
+									// 容器里的文件没有本机外部编辑器或访达位置。
+									if isDockerRepoPath(t.path) {
+										a.dockerTerminalMenu(m, t.path)
+										return
 									}
 									if m.Item(a.openEditorMenuLabel()).Chosen() {
 										if _, err := os.Stat(fullPath); err != nil {
@@ -616,7 +621,7 @@ func (a *app) openFullFileTab(t *repoTab, filePath, rev, revLabel string) {
 		var note string
 		var err error
 		if rev == "" || rev == "worktree" {
-			content, note, err = readWorktreeFile(repoPath, filePath)
+			content, note, err = readWorktreeFile(ctx, repoPath, filePath)
 		} else {
 			content, note, err = readBlob(ctx, repoPath, rev, filePath)
 		}

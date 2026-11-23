@@ -14,6 +14,12 @@ type worktreeStatusCache struct {
 	indexPath string
 	index     os.FileInfo
 	checked   time.Time
+
+	// 容器分支：本机 os.FileInfo 在容器里没有意义，改用批量元数据。
+	docker         bool
+	indexMeta      dockerFileMeta
+	metaVersions   []string
+	contentChecked time.Time
 }
 
 func sameFileVersion(a, b os.FileInfo) bool {
@@ -26,6 +32,9 @@ func sameFileVersion(a, b os.FileInfo) bool {
 // Metadata checks avoid reading every dirty file on every tick. A periodic full
 // check still detects edits made with restored timestamps, including index edits.
 func pollWorktreeStatus(ctx context.Context, dir string, previous *worktreeStatusCache) ([]fileChange, *worktreeStatusCache, error) {
+	if isDockerRepoPath(dir) {
+		return dockerPollWorktreeStatus(ctx, dir, previous)
+	}
 	out, err := runGit(ctx, dir, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	if err != nil {
 		return nil, previous, err

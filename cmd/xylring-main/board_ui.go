@@ -494,6 +494,10 @@ func (a *app) verifyBoardTaskCommits(task boardTask) {
 }
 
 func (a *app) openBoardCommit(link boardCommitLink) {
+	if isDockerRepoPath(link.Repo) {
+		a.setBanner(tr("容器仓库暂不支持从看板打开"), link.Repo)
+		return
+	}
 	h, ok := parseBoardHash20(link.Hash)
 	if !ok {
 		a.setBanner(fmt.Sprintf("无法解析哈希 %q", link.Hash), link.Repo)
@@ -562,6 +566,10 @@ func (a *app) boardKnownRepos() []string {
 	var out []string
 	seen := map[string]bool{}
 	add := func(p string) {
+		if isDockerRepoPath(p) {
+			// 看板与容器仓库的关联暂不开放；已有本机数据保持不变。
+			return
+		}
 		norm := normalizeBoardRepo(p)
 		if norm == "" || seen[norm] {
 			return
@@ -3223,6 +3231,9 @@ func (a *app) boardDeleteNoteModal(c *ui.Context) {
 }
 
 func (a *app) linkCommitToBoardTask(tab *repoTab, cm commit, taskID string) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if tab == nil || cm.hash == zeroHash || cm.hash == worktreeHash {
 		return
 	}
@@ -3262,6 +3273,9 @@ func (a *app) rememberBoardCommit(link boardCommitLink) {
 }
 
 func (a *app) createBoardTaskWithCommit(tab *repoTab, cm commit) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if tab == nil || cm.hash == zeroHash || cm.hash == worktreeHash {
 		return
 	}

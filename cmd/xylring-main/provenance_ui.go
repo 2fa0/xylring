@@ -31,7 +31,10 @@ func (a *app) refreshRing(t *repoTab) {
 		defer cancel()
 		status := ringHookStatus(ctx, path)
 		stamp, err := readStamp(ctx, path)
-		statuses := inspectRuleFiles(path)
+		var statuses []ruleFileStatus
+		if !isDockerRepoPath(path) {
+			statuses = inspectRuleFiles(path)
+		}
 		// Expired stamps are ignored by both readers; do not remove a file that
 		// another process may have replaced between reading and cleanup.
 		a.post(func() {
@@ -54,6 +57,10 @@ func (a *app) refreshRingRules(t *repoTab) {
 	if t.ring.rulesBusy {
 		return
 	}
+	// 容器仓库不读取本机规则文件：路径不是主机路径，也不开放规则写入。
+	if isDockerRepoPath(t.path) {
+		return
+	}
 	t.ring.rulesBusy = true
 	path := t.path
 	go func() {
@@ -69,6 +76,13 @@ func (a *app) refreshRingRules(t *repoTab) {
 }
 func (a *app) ringAction(t *repoTab, action string) {
 	if t.ring.busy {
+		return
+	}
+	if a.dockerActionBlocked(t) {
+		return
+	}
+	if isDockerRepoPath(t.path) {
+		t.ring.err = tr("容器仓库暂不支持修改年轮设置")
 		return
 	}
 	t.ring.busy = true
@@ -299,10 +313,14 @@ func (a *app) ringModal(c *ui.Context) {
 	isOutdated := t.ring.status == "版本过旧"
 	isManual := strings.HasPrefix(t.ring.status, "需手动集成")
 	hasStamp := t.ring.stamp.p.agent != "" && t.ring.stamp.expires > time.Now().Unix()
+	container := isDockerRepoPath(t.path)
 
 	appModal(c.Key("ring-settings-modal"), &t.ring.open, tr("本仓库年轮记录"), 560, t.ring.busy, func() {
 		if reason := provenanceReadStatus(); reason != "" {
 			settingsNotice(c, "ring-read-status", reason, th.Warning)
+		}
+		if container {
+			settingsNotice(c, "ring-docker-readonly", tr("容器仓库只读取年轮状态，暂不支持开启 Hook、设置印章或写入规则文件。"), th.TextMuted)
 		}
 		if t.ring.err != "" {
 			settingsNotice(c, "ring-error", t.ring.err, th.Danger)
@@ -326,6 +344,9 @@ func (a *app) ringModal(c *ui.Context) {
 						ui.Checkbox(c.Key("ring-skip-notice"), &a.ringSkipNotice, tr("以后开启其他仓库时不再提示"))
 					}
 				})
+				if container {
+					return
+				}
 				ui.Row(c).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
 					switch {
 					case isManual:
@@ -363,14 +384,19 @@ func (a *app) ringModal(c *ui.Context) {
 						})
 						ui.Text(c, ttlText).FontSize(11.5).TextColor(th.TextMuted)
 					})
-					if ui.Button(c.Key("ring-clear-stamp"), tr("清除印章")).Disabled(t.ring.busy).Shrink(0).Clicked() {
-						a.ringAction(t, "clear")
+					if !container {
+						if ui.Button(c.Key("ring-clear-stamp"), tr("清除印章")).Disabled(t.ring.busy).Shrink(0).Clicked() {
+							a.ringAction(t, "clear")
+						}
 					}
 				})
 			}
 		})
 
 		// Card 2: Project rules
+		if container {
+			return
+		}
 		ui.Column(c.Key("ring-rules-card")).FillWidth().Radius(10).Clip().Background(th.Surface).Border(1, th.Border).Children(func() {
 			ui.Row(c.Key("ring-rules-header")).FillWidth().Padding(10, 14).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, tr("项目规则")).FontSize(13.5).FontWeight(600).TextColor(th.Text).Grow(1).MinWidth(0)

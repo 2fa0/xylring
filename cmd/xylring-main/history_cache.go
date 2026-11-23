@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"unsafe"
@@ -193,8 +194,14 @@ func (t *repoTab) evictHistory() {
 	t.incoming, t.outgoing = nil, nil
 	// Keep only the repository identity so a rebuild while evicted resets old queries.
 	if t.refWatch != nil {
-		marker := filepath.Join(t.path, ".git")
-		t.refWatch = refWatch{marker: t.refWatch[marker]}
+		if t.refWatch.docker != nil {
+			// 容器仓库只保留身份和已知摘要；重建时旧摘要仍然算数。
+			sig := *t.refWatch.docker
+			t.refWatch = &refWatch{docker: &sig}
+		} else {
+			marker := filepath.Join(t.path, ".git")
+			t.refWatch = &refWatch{files: map[string]os.FileInfo{marker: t.refWatch.files[marker]}}
+		}
 	}
 	t.metaKey = ""
 	t.graph = graph{}

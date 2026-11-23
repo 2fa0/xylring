@@ -17,6 +17,7 @@ type savedRepo struct {
 	Amend            bool
 	Commit           string
 	File             string
+	DockerName       string          `json:"docker_name,omitempty"`
 	Provenance       savedProvenance `json:"provenance,omitempty"`
 	ProvenanceEdited bool            `json:"provenance_edited,omitempty"`
 }
@@ -43,6 +44,11 @@ type savedSession struct {
 // stay: its draft and tab belong to the user, and dropping it would also drop
 // them from the session file written on the next save.
 func restoredRepoUsable(root, want string, err error) bool {
+	// 容器仓库离线、停止或被删除时仍保留标签和草稿：重开标签会显示真实原因，
+	// 用户启动容器后可以重试。同名新容器不会被自动当成旧仓库。
+	if isDockerRepoPath(want) {
+		return true
+	}
 	if isGitUnavailable(err) {
 		return true
 	}
@@ -110,8 +116,12 @@ func (a *app) queueSession() {
 			commit = t.pendingSession.Commit
 			f = t.pendingSession.File
 		}
+		name := ""
+		if isDockerRepoPath(t.path) {
+			name = repoTitle(t.path)
+		}
 		s.Repos = append(s.Repos, savedRepo{
-			Path: t.path, Draft: t.commitMsg, Amend: t.commitAmend, Commit: commit, File: f,
+			Path: t.path, Draft: t.commitMsg, Amend: t.commitAmend, Commit: commit, File: f, DockerName: name,
 			Provenance:       savedProvenance{Agent: t.commitProv.agent, Model: t.commitProv.model, Attribution: t.commitProv.attribution},
 			ProvenanceEdited: t.commitProvEdited,
 		})
@@ -216,6 +226,16 @@ func (a *app) restoreSession() {
 		for _, r := range s.Repos {
 			if !restoreRepos {
 				break
+			}
+			if isDockerRepoPath(r.Path) {
+				// 容器可能尚未启动；不要在恢复会话时把它当成失效记录丢掉。
+				if r.DockerName != "" {
+					if t, ok := parseDockerRepoKey(r.Path); ok {
+						rememberDockerContainer(t.container, r.DockerName)
+					}
+				}
+				valid = append(valid, r)
+				continue
 			}
 			root, e := repoRoot(ctx, r.Path)
 			if restoredRepoUsable(root, r.Path, e) {

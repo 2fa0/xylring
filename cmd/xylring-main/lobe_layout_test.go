@@ -50,7 +50,7 @@ func TestLobeModalLayouts(t *testing.T) {
 			a.op.output = strings.Repeat("user.name=Example\n", 40)
 		}, (*app).operationModal},
 		{"ring", "本仓库年轮记录", "关闭", func(a *app) { a.tabs[0].ring.open = true; a.tabs[0].ring.status = "未开启" }, (*app).ringModal},
-		{"discard", "确定丢弃文件修改？", "确定丢弃", func(a *app) { a.showDiscard = true; a.discard.file = fileChange{path: "src/example.go"} }, (*app).discardModal},
+		{"discard", "确定丢弃文件修改？", "确定丢弃", func(a *app) { a.promptDiscardWorktreeFile(a.tabs[0], fileChange{path: "src/example.go"}) }, (*app).discardModal},
 		{"push", "推送当前分支？", "推送", func(a *app) {
 			a.showPush = true
 			a.push = pushDialog{path: a.tabs[0].path, branch: "main", upstream: "origin/main"}

@@ -55,33 +55,36 @@ const (
 
 // repoTab 是一个已导入的仓库。当前只保留读历史和画图谱需要的状态。
 type repoTab struct {
-	ring             ringUI
-	commitProv       provenance
-	commitRingOpen   bool
-	commitProvEdited bool
-	provenance       provenanceTable
-	pendingSession   *savedRepo
-	operation        string
-	id               int
-	path             string
-	title            string
-	generation       int
-	loading          bool
-	loaded           bool
-	err              string
-	unavailable      bool
-	holdAuto         bool
-	closed           bool
-	checking         bool
-	metaKey          string
-	refWatch         refWatch
-	refsChecked      time.Time
-	usedAt           time.Time
-	notice           string
-	lastFetch        time.Time
-	fetching         bool
-	fetchGen         int
-	fetchCancel      context.CancelFunc
+	dockerProbing     bool
+	dockerProbed      time.Time
+	dockerReplacement string
+	ring              ringUI
+	commitProv        provenance
+	commitRingOpen    bool
+	commitProvEdited  bool
+	provenance        provenanceTable
+	pendingSession    *savedRepo
+	operation         string
+	id                int
+	path              string
+	title             string
+	generation        int
+	loading           bool
+	loaded            bool
+	err               string
+	unavailable       bool
+	holdAuto          bool
+	closed            bool
+	checking          bool
+	metaKey           string
+	refWatch          *refWatch
+	refsChecked       time.Time
+	usedAt            time.Time
+	notice            string
+	lastFetch         time.Time
+	fetching          bool
+	fetchGen          int
+	fetchCancel       context.CancelFunc
 
 	historyCancel      context.CancelFunc
 	historyStarted     time.Time
@@ -252,10 +255,16 @@ func newTab(id int, path string) *repoTab {
 }
 
 func repoTitle(path string) string {
+	if t, ok := parseDockerRepoKey(path); ok {
+		return dockerNameOf(t.container)
+	}
 	return filepath.Base(path)
 }
 
 func homePath(path string) string {
+	if t, ok := parseDockerRepoKey(path); ok {
+		return dockerTargetLocation(t)
+	}
 	home, err := os.UserHomeDir()
 	if err == nil {
 		if path == home {
@@ -270,6 +279,9 @@ func homePath(path string) string {
 }
 
 func repoChoiceLabel(from, path string) string {
+	if isDockerRepoPath(path) {
+		return repoTitle(path)
+	}
 	if from == "" {
 		return repoTitle(path)
 	}
@@ -284,12 +296,32 @@ func repoChoiceLabel(from, path string) string {
 }
 
 func repoContains(parent, child string) bool {
+	pt, parentDocker := parseDockerRepoKey(parent)
+	ct, childDocker := parseDockerRepoKey(child)
+	if parentDocker || childDocker {
+		// 容器之间、本机与容器之间不推断包含关系：同一个路径可能完全是两个仓库。
+		if !parentDocker || !childDocker {
+			return false
+		}
+		if pt.context != ct.context || pt.endpoint != ct.endpoint || pt.container != ct.container {
+			return false
+		}
+		return containerPathContains(pt.path, ct.path)
+	}
 	parent = filepath.Clean(parent)
 	child = filepath.Clean(child)
 	if parent == child {
 		return false
 	}
 	return strings.HasPrefix(child, parent+string(filepath.Separator))
+}
+
+// containerPathContains 只在同一个容器内按 Linux 路径段比较。
+func containerPathContains(parent, child string) bool {
+	if parent == child {
+		return false
+	}
+	return strings.HasPrefix(child, parent+"/")
 }
 
 func repoNestLevel(items []string, path string) int {
@@ -317,6 +349,9 @@ func worktreeRowLabel(wt repoWorktree) string {
 }
 
 func repoListLabel(from string, items []string, path string) string {
+	if isDockerRepoPath(path) {
+		return dockerRepoDisplayLabel(path, items)
+	}
 	parent := ""
 	for _, other := range items {
 		if repoContains(other, path) && (parent == "" || len(other) > len(parent)) {
@@ -324,9 +359,15 @@ func repoListLabel(from string, items []string, path string) string {
 		}
 	}
 	if parent != "" {
-		rel, err := filepath.Rel(parent, path)
-		if err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-			return rel
+		if pt, ok := parseDockerRepoKey(parent); ok {
+			if ct, cok := parseDockerRepoKey(path); cok && containerPathContains(pt.path, ct.path) {
+				return ct.path[len(pt.path)+1:]
+			}
+		} else {
+			rel, err := filepath.Rel(parent, path)
+			if err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+				return rel
+			}
 		}
 	}
 	return repoChoiceLabel(from, path)

@@ -14,6 +14,10 @@ import (
 )
 
 func worktreeStatus(ctx context.Context, dir string) ([]fileChange, error) {
+	if isDockerRepoPath(dir) {
+		files, _, err := dockerPollWorktreeStatus(ctx, dir, nil)
+		return files, err
+	}
 	out, err := runGit(ctx, dir, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	if err != nil {
 		return nil, err
@@ -302,7 +306,27 @@ func openWorktreeFile(dir, rel string) (*os.File, int64, string, error) {
 	return f, limit, "", nil
 }
 
-func readWorktreeFile(dir, rel string) ([]byte, string, error) {
+func readWorktreeFile(ctx context.Context, dir, rel string) ([]byte, string, error) {
+	if isDockerRepoPath(dir) {
+		clean, err := safeRepoRelPath(rel)
+		if err != nil {
+			return nil, "", err
+		}
+		data, note, err := dockerReadPath(ctx, dir, clean)
+		if err != nil || data == nil {
+			return nil, note, err
+		}
+		if note != "" {
+			return nil, note, nil
+		}
+		if isImageFile(rel) {
+			return data, "", nil
+		}
+		if bytes.IndexByte(data, 0) >= 0 {
+			return nil, fmt.Sprintf("二进制文件（%d 字节）", len(data)), nil
+		}
+		return data, "", nil
+	}
 	f, limit, note, err := openWorktreeFile(dir, rel)
 	if f == nil {
 		return nil, note, err

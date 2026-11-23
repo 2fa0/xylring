@@ -39,6 +39,9 @@ type gitSettingsScope struct {
 
 // Keep exit codes: config uses 1 for an absent key and 5 for an absent unset.
 func configCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	if isDockerRepoPath(dir) {
+		return nil, errors.New(tr("容器仓库暂不支持修改 Git 配置"))
+	}
 	if err := acquireGit(ctx); err != nil {
 		return nil, err
 	}
@@ -124,6 +127,9 @@ func gitSettingsDirty(s *gitSettingsScope) bool {
 	return false
 }
 func saveGitSettings(ctx context.Context, dir, scope string, fields []gitSetting) error {
+	if isDockerRepoPath(dir) {
+		return errors.New(tr("容器仓库暂不支持修改 Git 配置"))
+	}
 	// Check every changed key before writing, so stale forms do not overwrite edits.
 	for i, f := range fields {
 		if !f.changed() {

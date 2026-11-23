@@ -271,11 +271,19 @@ func unstageAll(ctx context.Context, dir string) error {
 
 func discardFile(ctx context.Context, dir string, f fileChange) error {
 	if f.extra == "未跟踪" {
+		if isDockerRepoPath(dir) {
+			rel, err := safeRepoRelPath(f.path)
+			if err != nil {
+				return err
+			}
+			_, err = runGit(ctx, dir, "--literal-pathspecs", "clean", "-fd", "--", rel)
+			return err
+		}
 		fullPath := filepath.Join(dir, filepath.FromSlash(f.path))
 		return os.RemoveAll(fullPath)
 	}
 	_, err := runGit(ctx, dir, "--literal-pathspecs", "restore", "--worktree", "--", f.path)
-	if err != nil {
+	if err != nil && !dockerCommandGone(err, "") {
 		_, err = runGit(ctx, dir, "--literal-pathspecs", "checkout", "--", f.path)
 	}
 	return err
@@ -309,13 +317,19 @@ func (a *app) stageWorktreeFile(t *repoTab, path string) {
 		return
 	}
 	t.commitBusy = true
+	rec, ok := a.beginRepoWrite(t, "暂存文件")
+	if !ok {
+		return
+	}
 	w := a.startGitWrite("正在暂存文件")
 	repoPath := t.path
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := writeContext(repoPath, 10*time.Second)
 		defer cancel()
-		if err := stageFile(ctx, repoPath, path); err != nil {
+		err := stageFile(ctx, repoPath, path)
+		if err != nil {
 			a.post(func() {
+				a.finishDockerWrite(rec, err)
 				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("暂存失败: "+err.Error(), "")
@@ -323,6 +337,7 @@ func (a *app) stageWorktreeFile(t *repoTab, path string) {
 			return
 		}
 		a.post(func() {
+			a.finishDockerWrite(rec, nil)
 			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
@@ -345,13 +360,19 @@ func (a *app) unstageWorktreeFile(t *repoTab, f fileChange) {
 		paths = append(paths, f.oldPath)
 	}
 	t.commitBusy = true
+	rec, ok := a.beginRepoWrite(t, "取消暂存")
+	if !ok {
+		return
+	}
 	w := a.startGitWrite("正在取消暂存")
 	repoPath := t.path
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := writeContext(repoPath, 10*time.Second)
 		defer cancel()
-		if err := unstageFile(ctx, repoPath, paths...); err != nil {
+		err := unstageFile(ctx, repoPath, paths...)
+		if err != nil {
 			a.post(func() {
+				a.finishDockerWrite(rec, err)
 				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("取消暂存失败: "+err.Error(), "")
@@ -359,6 +380,7 @@ func (a *app) unstageWorktreeFile(t *repoTab, f fileChange) {
 			return
 		}
 		a.post(func() {
+			a.finishDockerWrite(rec, nil)
 			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
@@ -377,13 +399,19 @@ func (a *app) stageAllWorktree(t *repoTab) {
 		return
 	}
 	t.commitBusy = true
+	rec, ok := a.beginRepoWrite(t, "全部暂存")
+	if !ok {
+		return
+	}
 	w := a.startGitWrite("正在暂存文件")
 	repoPath := t.path
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := writeContext(repoPath, 15*time.Second)
 		defer cancel()
-		if err := stageAll(ctx, repoPath); err != nil {
+		err := stageAll(ctx, repoPath)
+		if err != nil {
 			a.post(func() {
+				a.finishDockerWrite(rec, err)
 				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("全部暂存失败: "+err.Error(), "")
@@ -391,6 +419,7 @@ func (a *app) stageAllWorktree(t *repoTab) {
 			return
 		}
 		a.post(func() {
+			a.finishDockerWrite(rec, nil)
 			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
@@ -409,13 +438,19 @@ func (a *app) unstageAllWorktree(t *repoTab) {
 		return
 	}
 	t.commitBusy = true
+	rec, ok := a.beginRepoWrite(t, "全部取消暂存")
+	if !ok {
+		return
+	}
 	w := a.startGitWrite("正在取消暂存")
 	repoPath := t.path
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := writeContext(repoPath, 15*time.Second)
 		defer cancel()
-		if err := unstageAll(ctx, repoPath); err != nil {
+		err := unstageAll(ctx, repoPath)
+		if err != nil {
 			a.post(func() {
+				a.finishDockerWrite(rec, err)
 				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("全部取消暂存失败: "+err.Error(), "")
@@ -423,6 +458,7 @@ func (a *app) unstageAllWorktree(t *repoTab) {
 			return
 		}
 		a.post(func() {
+			a.finishDockerWrite(rec, nil)
 			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.refreshWorktree(t)
@@ -434,21 +470,29 @@ func (a *app) unstageAllWorktree(t *repoTab) {
 }
 
 func (a *app) promptDiscardWorktreeFile(t *repoTab, f fileChange) {
-	if t == nil {
+	if t == nil || t.unavailable {
 		return
 	}
 	a.discard = discardDialog{
 		open: true,
+		repo: t.path,
 		file: f,
 	}
 	a.showDiscard = true
 }
 
 func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
+	if t == nil || t.unavailable {
+		return
+	}
 	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
 		return
 	}
 	if t == nil {
+		return
+	}
+	rec, ok := a.beginRepoWrite(t, "丢弃改动")
+	if !ok {
 		return
 	}
 	a.showDiscard = false
@@ -457,10 +501,11 @@ func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
 	w := a.startGitWrite("正在放弃改动")
 	repoPath := t.path
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := writeContext(repoPath, 10*time.Second)
 		defer cancel()
 		if err := discardFile(ctx, repoPath, f); err != nil {
 			a.post(func() {
+				a.finishDockerWrite(rec, err)
 				a.finishGitWrite(w)
 				t.commitBusy = false
 				a.setBanner("丢弃失败: "+err.Error(), "")
@@ -468,6 +513,7 @@ func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
 			return
 		}
 		a.post(func() {
+			a.finishDockerWrite(rec, nil)
 			a.finishGitWrite(w)
 			t.commitBusy = false
 			a.pendingToast = "已丢弃改动: " + filepath.Base(f.path)
@@ -501,15 +547,27 @@ func (a *app) runCommitWorktree(t *repoTab) {
 		t.commitErr = "请先暂存要提交的改动"
 		return
 	}
-	t.commitBusy = true
-	w := a.startGitWrite("正在提交")
-	t.commitErr = ""
 	repoPath := t.path
 	amend := t.commitAmend
+	if amend && isDockerRepoPath(repoPath) {
+		t.commitErr = "容器仓库暂不支持修改上次提交"
+		return
+	}
+	if reason := a.dockerWriteBlockReason(repoPath); reason != "" {
+		t.commitErr = "上次操作结果未确认，请先核对容器状态"
+		return
+	}
+	t.commitBusy = true
+	rec, ok := a.beginRepoWrite(t, "提交")
+	if !ok {
+		return
+	}
+	w := a.startGitWrite("正在提交")
+	t.commitErr = ""
 	prov := t.commitProv
 	provEdited := t.commitProvEdited
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := writeContext(repoPath, 30*time.Second)
 		defer cancel()
 		var err error
 		if !provEdited && prov.agent == "" && prov.model == "" {
@@ -519,10 +577,19 @@ func (a *app) runCommitWorktree(t *repoTab) {
 		if err == nil {
 			finalMsg, err = applyProvenanceTrailers(ctx, repoPath, msg, prov)
 		}
+		sent := false
 		if err == nil {
+			sent = true
 			err = commitWorktree(ctx, repoPath, finalMsg, amend)
 		}
 		a.post(func() {
+			// 写操作记录和界面状态一样只在界面线程改。
+			if sent {
+				a.finishDockerWrite(rec, err)
+			} else {
+				// 归因合成失败时提交命令根本没发出去，不能把记录留成「结果未知」。
+				a.clearDockerWriteRecord(rec)
+			}
 			a.finishGitWrite(w)
 			t.commitBusy = false
 			if err != nil {
@@ -610,7 +677,8 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 				Height(54).
 				Disabled(t.commitBusy)
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
-				if t.head != zeroHash {
+				// 普通提交卡在容器仓库里不显示 amend 控件：修改提交说明不在第一版范围。
+				if t.head != zeroHash && !isDockerRepoPath(t.path) {
 					if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, tr("修改上次提交")).
 						Disabled(t.commitBusy).Changed() {
 						t.amendGen++
@@ -642,7 +710,7 @@ func (a *app) discardModal(c *ui.Context) {
 	if !a.showDiscard {
 		return
 	}
-	tab := a.activeTab()
+	tab := a.tabByPath(a.discard.repo)
 	if tab == nil {
 		a.showDiscard = false
 		return
@@ -759,8 +827,16 @@ func (a *app) worktreeStageHoverButtons(c *ui.Context, t *repoTab, f fileChange)
 }
 
 func (a *app) worktreeFileMenu(c *ui.Context, m *ui.Menu, t *repoTab, f fileChange) {
+	// 容器仓库仍只开放整文件操作。
+	container := isDockerRepoPath(t.path)
 	if f.side == sideStaged {
 		// 已暂存的行只能往后退：屏幕上的 diff 就是 HEAD→索引，块序号对得上。
+		if container {
+			if m.Item(tr("取消暂存")).Chosen() {
+				a.unstageWorktreeFile(t, f)
+			}
+			return
+		}
 		if m.Item("审阅并取消暂存…").Chosen() {
 			a.openOperation("审阅并取消暂存", "", f.path)
 		}
@@ -771,16 +847,20 @@ func (a *app) worktreeFileMenu(c *ui.Context, m *ui.Menu, t *repoTab, f fileChan
 		return
 	}
 	if f.extra == "冲突" {
-		if m.Item(tr("使用外部合并工具解决…")).Chosen() {
-			a.openOperation("外部合并工具", "", f.path)
+		if !container {
+			if m.Item(tr("使用外部合并工具解决…")).Chosen() {
+				a.openOperation("外部合并工具", "", f.path)
+			}
 		}
 		if m.Item(tr("标记已解决")).Chosen() {
 			a.stageWorktreeFile(t, f.path)
 		}
 		return
 	}
-	if m.Item("审阅并暂存…").Chosen() {
-		a.openOperation("审阅并暂存", "", f.path)
+	if !container {
+		if m.Item("审阅并暂存…").Chosen() {
+			a.openOperation("审阅并暂存", "", f.path)
+		}
 	}
 	m.Separator()
 	if m.Item(tr("暂存文件")).Chosen() {

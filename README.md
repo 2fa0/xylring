@@ -56,6 +56,7 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 - 🖼️ **全量文件语法高亮与图片 Diff**：支持查看任意历史快照的完整只读文件，支持多格式图片并排对比。
 - ⚖️ **快照与分叉点任意比对**：任意选择两个提交或分支比对，支持两点快照比较或三点（`...` 分叉点起）改动审查。
 - 🛡️ **本地仓库操作**：本地操作调用系统 Git；获取、拉取和推送会连接配置的 Git 远程仓库。
+- 🐳 **直接打开容器里的仓库**：选择本机运行中的 Linux 容器，输入容器内路径，就能像本机仓库一样查看历史、比较差异、暂存和提交；Git、提交身份和 Hook 都使用容器里的环境。
 - 🎨 **原生跨平台界面**：原生运行于 macOS 与 Windows，内置深色、浅色与高对比度主题。
 
 ---
@@ -129,6 +130,19 @@ xylring board link <ID> <COMMIT_HASH>
 xylring board note <ID> "定位到 token 刷新逻辑"
 ```
 
+---
+
+## 🐳 容器仓库（第一版）
+
+首页的「打开容器仓库…」或菜单「文件 → 打开容器仓库…」可以选择本机 Docker 里运行中的 Linux 容器，并填写容器内的仓库路径（例如 `/workspace/api`）。选中容器后会推荐默认工作目录和挂载目录，并探测 Git 仓库。仓库可以位于容器自身文件系统或已挂载的 volume 中，不要求本机能直接读取该目录。
+
+容器重建后，离线标签会检测同一连接中的同名新容器；验证原路径后，可一键切换并保留提交草稿。未确认的写操作仍须先核对；已有新标签的草稿不会被覆盖。
+
+- **可用**：历史、搜索与筛选、文件历史、提交详情、任意版本比较、文本/图片预览、暂存/取消暂存单文件与全部文件、丢弃文件改动、切换已有分支、普通提交、进入容器终端。年轮只读取已有印章与 Hook 状态，容器内已有 Hook 照常执行。
+- **暂不提供**：分支创建/删除、标签写入、amend、reset/stash/merge/rebase/cherry-pick、fetch/pull/push、外部编辑器、看板关联、命令行打开、容器 Git 配置编辑、Hook 与印章写入、linked worktree / bare / submodule 作为独立仓库、远程 Docker 与 Windows 容器。
+- 仅连接本机 Docker（Unix socket），首版先验收 macOS；容器名只用于显示，身份始终使用完整容器 ID。
+- 容器文件读取需要 `sh`、`env`、`stat`、`head`、`base64`、`tr`、`readlink` 和 `/proc` 文件句柄支持；不自动安装工具。
+
 ### 将命令行工具添加到 PATH
 
 - **通过界面菜单**：`File` → `Install 'xylring' Command Line Tool in PATH...`
@@ -149,6 +163,7 @@ xylring board note <ID> "定位到 token 刷新逻辑"
 - [x] 语法高亮全文件预览与图片 Diff 对比
 - [x] 终端 `xylring .` 联动及 macOS / Windows 双端支持
 - [x] 跨项目协作看板与命令行同步
+- [x] 本机 Docker 容器仓库（查看、暂存、普通提交）
 - [ ] 交互式 Rebase 界面（Squash、Reorder、Drop）
 - [ ] Linux 桌面端支持（X11 / Wayland）
 - [ ] 更多内置配色主题（Solarized、Nord、Catppuccin）

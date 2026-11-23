@@ -13,8 +13,20 @@ func (a *app) openOperation(action, target, path string) {
 	if a.write.busy || a.fetch.busy || a.op.busy {
 		return
 	}
+	// 容器仓库只开放第一版范围：历史类只读操作。克隆/初始化针对本机目录，照常可用。
+	containerOp := false
+	if t := a.activeTab(); t != nil && isDockerRepoPath(t.path) {
+		if action != "克隆仓库" && action != "初始化仓库" {
+			if !dockerOperationAllowedInContainer(action) {
+				a.setBanner(tr("容器仓库暂不支持这个操作"), t.path)
+				return
+			}
+			containerOp = true
+		}
+	}
 	// 没有可用的 Git 时先说明原因，不必让每个操作各自报错。
-	if !a.gitReady() {
+	// 容器仓库里的只读历史操作用的是容器 Git，不受本机 Git 状态影响。
+	if !containerOp && !a.gitReady() {
 		a.setBanner(a.git.err, "")
 		return
 	}
@@ -348,6 +360,10 @@ func (a *app) runOperation() {
 	d := a.op
 	if t := a.tabByPath(d.repo); t != nil && (t.commitBusy || t.syncBusy) {
 		a.op.err = "请等待当前仓库操作完成"
+		return
+	}
+	if d.repo != "" && isDockerRepoPath(d.repo) && !dockerOperationAllowedInContainer(d.action) {
+		a.op.err = "容器仓库暂不支持这个操作"
 		return
 	}
 	d.busy = true

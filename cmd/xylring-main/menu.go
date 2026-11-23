@@ -17,6 +17,10 @@ func (a *app) installMenu() {
 		file = append(file, &mygo.MenuItem{ID: "import-wsl", Label: tr("导入 WSL 仓库…"), Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.pickWSLRepo()
 		}})
+	} else {
+		file = append(file, &mygo.MenuItem{ID: "import-docker", Label: tr("打开容器仓库…"), Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.openDockerRepoDialog()
+		}})
 	}
 	file = append(file,
 		mygo.Separator(),

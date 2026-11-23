@@ -56,6 +56,7 @@ So Xylring was stitched together as a lightweight, Go-native desktop companion�
 - 🖼️ **Full-File Source View & Image Diff**: Read full-file snapshots with syntax highlighting and compare images side by side.
 - ⚖️ **Arbitrary Snapshots & Merge-Base Comparison**: Compare any two commits, branches, or tags—two-dot snapshot diffing or three-dot (`...`) fork-point diffing.
 - 🛡️ **Local Repository Workflows**: Local operations use the system Git installation. Fetch, pull, and push communicate with the configured Git remote.
+- 🐳 **Open repositories inside containers**: pick a running Linux container on this machine and enter the path inside it. History, diffs, staging and commits work as with a local repository, using the container's Git, identity and hooks.
 - 🎨 **Native Cross-Platform UI**: Runs natively on macOS and Windows with dark, light, and high-contrast themes.
 
 ---
@@ -129,6 +130,19 @@ xylring board link <ID> <COMMIT_HASH>
 xylring board note <ID> "Traced it to the token refresh path"
 ```
 
+---
+
+## 🐳 Container repositories (first version)
+
+"Open Container Repository…" on the home screen (or File → Open Container Repository…) lists running Linux containers from the local Docker daemon and asks for a path inside the container, such as `/workspace/api`. Working and mount directories are suggested automatically, with Git repository detection. The repository may live on the container filesystem or a mounted volume; the host does not need to read that directory.
+
+After a rebuild, offline tabs can switch to a running container with the same name on the same connection once the original repository path is verified, keeping the commit draft. Unconfirmed writes require recovery first; drafts in an already open replacement tab are never overwritten.
+
+- **Available**: history, search and filters, file history, commit details, any two-version comparison, text/image preview, stage/unstage one or all files, discard file changes, switch existing branches, regular commits, and entering a container terminal. Ring status is read from existing stamps and hooks; hooks already inside the container run normally.
+- **Not available yet**: branch create/delete, tags, amend, reset/stash/merge/rebase/cherry-pick, fetch/pull/push, opening files in an external editor, board associations, opening from the CLI, editing container Git configuration, writing hooks or stamps, linked worktrees / bare repos / submodules as standalone repositories, remote Docker and Windows containers.
+- Only the local Docker daemon (Unix socket) is supported; macOS is the first verified platform. Container names are display-only; identities always use the full container ID.
+- Container file reads require `sh`, `env`, `stat`, `head`, `base64`, `tr`, `readlink`, and `/proc` file descriptors. Missing tools are never installed automatically.
+
 ### Install CLI Helper in PATH
 
 - **From the GUI menu**: `File` → `Install 'xylring' Command Line Tool in PATH...`
@@ -148,6 +162,7 @@ xylring board note <ID> "Traced it to the token refresh path"
 - [x] Dual-point and triple-point (`...`) commit comparisons
 - [x] Syntax-highlighted full-file viewer and image diffing
 - [x] CLI `xylring .` terminal integration & macOS/Windows support
+- [x] Local Docker container repositories (browse, stage, commit)
 - [ ] Interactive Rebase UI (Squash, Reorder, Drop)
 - [ ] Linux desktop support (X11 / Wayland)
 - [ ] Custom themes (Solarized, Nord, Catppuccin)

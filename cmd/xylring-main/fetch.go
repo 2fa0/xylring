@@ -65,6 +65,9 @@ func fetchAll(ctx context.Context, dir string, opts fetchOpts) error {
 }
 
 func (a *app) quickFetch(tab *repoTab) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if tab == nil || tab.unavailable {
 		return
 	}
@@ -117,6 +120,9 @@ func (a *app) quickFetch(tab *repoTab) {
 }
 
 func (a *app) openFetch(tab *repoTab) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if tab == nil || tab.unavailable {
 		return
 	}
@@ -270,6 +276,10 @@ func (t *repoTab) stopAutoFetch() {
 func (a *app) maybeAutoFetch() {
 	t := a.activeTab()
 	if a.closed || t == nil || t.closed || t.unavailable || t.loading || t.fetching || !t.loaded {
+		return
+	}
+	// 容器仓库不自动获取远程更新：第一版没有开放任何远程同步动作。
+	if isDockerRepoPath(t.path) {
 		return
 	}
 	if a.fetch.busy || a.showFetch || a.write.busy || a.settings.open {

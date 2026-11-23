@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -599,7 +600,7 @@ func readFileDiffSource(ctx context.Context, dir, fromRev, toRev string, f fileC
 	}
 	var note string
 	if worktree {
-		s.new, note, err = readWorktreeFile(dir, newPath)
+		s.new, note, err = readWorktreeFile(ctx, dir, newPath)
 	} else {
 		s.new, note, err = readBlob(ctx, dir, toRev, newPath)
 	}
@@ -635,7 +636,7 @@ func readWorktreeSideSource(ctx context.Context, dir, fromRev string, side fileS
 		return nil, err
 	}
 	var note string
-	s.new, note, err = readWorktreeFile(dir, newPath)
+	s.new, note, err = readWorktreeFile(ctx, dir, newPath)
 	if note != "" {
 		s.note = note
 	}
@@ -733,6 +734,10 @@ func (a *app) loadFileDiff(t *repoTab, i int) {
 		toRev = hashHex(t.diffTo)
 	}
 	path, worktree, ignoreWhitespace := t.path, t.worktree, a.diffIgnoreWhitespace
+	// 忽略空白依赖本机临时目录里的 git diff --no-index；本机缺 Git 时容器仓库仍可看差异。
+	if ignoreWhitespace && isDockerRepoPath(path) && !a.gitReady() {
+		ignoreWhitespace = false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.compareCancel = cancel
 	go func() {
@@ -1301,6 +1306,15 @@ func (a *app) diffLayoutToggle(c *ui.Context) {
 
 func (a *app) diffIgnoreWhitespaceToggle(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
+	if t != nil && isDockerRepoPath(t.path) && !a.gitReady() {
+		// 这一项用的是本机 Git；容器仓库可以照常看差异，只是这个算法暂时不可用。
+		ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label(tr("忽略空白")).
+			Tooltip(tr("忽略空白差异需要本机 Git")).Padding(0, 8).Radius(theme.Radius).
+			Shrink(0).Center().Disabled(true).Children(func() {
+			ui.Text(c, tr("忽略空白")).FontSize(11).SingleLine()
+		})
+		return
+	}
 	btn := ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label(tr("忽略空白")).Tooltip(tr("忽略空白字符改动")).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
 	if a.diffIgnoreWhitespace {
 		btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
@@ -1486,6 +1500,10 @@ func repoFilePath(repo, rel string, abs bool) string {
 	if !abs {
 		return rel
 	}
+	if t, ok := parseDockerRepoKey(repo); ok {
+		// 容器内的绝对路径就是用户能拿去用的路径，不映射成本机路径。
+		return path.Join(t.path, rel)
+	}
 	p := filepath.Join(repo, filepath.FromSlash(rel))
 	if a, err := filepath.Abs(p); err == nil {
 		return a
@@ -1493,12 +1511,22 @@ func repoFilePath(repo, rel string, abs bool) string {
 	return p
 }
 
+func absolutePathMenuLabel(repo string) string {
+	if isDockerRepoPath(repo) {
+		return tr("复制容器内路径")
+	}
+	return tr("复制绝对路径")
+}
+
 func copyFilePath(c *ui.Context, repo, rel string, mods ui.Modifiers) {
 	abs := mods&ui.Alt != 0
 	c.Services().WriteClipboard(repoFilePath(repo, rel, abs))
-	if abs {
+	switch {
+	case abs && isDockerRepoPath(repo):
+		c.Toast(tr("已复制容器内路径"))
+	case abs:
 		c.Toast(tr("已复制绝对路径"))
-	} else {
+	default:
 		c.Toast(tr("已复制相对路径"))
 	}
 }
@@ -1892,7 +1920,12 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func()
 		a.worktreeFileMenu(c, m, t, f)
 	}
 	if !t.worktree {
-		for _, action := range []string{"Blame", "行历史", "恢复历史文件"} {
+		actions := []string{"Blame", "行历史", "恢复历史文件"}
+		if isDockerRepoPath(t.path) {
+			// 容器仓库只读历史，不提供恢复文件到工作区。
+			actions = actions[:2]
+		}
+		for _, action := range actions {
 			if m.Item(tr(action) + "…").Chosen() {
 				a.openOperation(action, hashHex(t.diffTo), f.path)
 			}
@@ -1916,8 +1949,12 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func()
 	if m.Item(tr("复制相对路径")).Chosen() {
 		copyFilePath(c, t.path, f.path, 0)
 	}
-	if m.Item(tr("复制绝对路径")).Chosen() {
+	if m.Item(absolutePathMenuLabel(t.path)).Chosen() {
 		copyFilePath(c, t.path, f.path, ui.Alt)
+	}
+	// 容器里的文件没有本机外部编辑器或访达位置；只保留复制容器内路径。
+	if isDockerRepoPath(t.path) {
+		return after
 	}
 	m.Separator()
 	fullPath := repoFilePath(t.path, f.path, true)

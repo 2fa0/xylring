@@ -247,6 +247,9 @@ func (a *app) tagBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, item commit,
 }
 
 func (a *app) runCheckoutBranch(tab *repoTab, name string) {
+	if tab == nil || tab.unavailable {
+		return
+	}
 	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
@@ -256,15 +259,20 @@ func (a *app) runCheckoutBranch(tab *repoTab, name string) {
 		a.pendingToast = "当前已处于分支 " + name
 		return
 	}
+	rec, ok := a.beginRepoWrite(tab, "切换分支")
+	if !ok {
+		return
+	}
 	w := a.startGitWrite("正在切换分支")
 	a.write.busy = true
 	a.write.gen++
 	gen, repo := a.write.gen, tab.path
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := writeContext(repo, 30*time.Second)
 		defer cancel()
 		err := checkoutBranch(ctx, repo, name)
 		a.post(func() {
+			a.finishDockerWrite(rec, err)
 			a.finishGitWrite(w)
 			if a.write.gen != gen {
 				return
@@ -283,6 +291,9 @@ func (a *app) runCheckoutBranch(tab *repoTab, name string) {
 }
 
 func (a *app) runCheckoutCommit(tab *repoTab, hash [20]byte) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
@@ -314,6 +325,9 @@ func (a *app) runCheckoutCommit(tab *repoTab, hash [20]byte) {
 }
 
 func (a *app) openRefWrite(tab *repoTab, kind string, item commit, refName string) {
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
@@ -359,6 +373,10 @@ func (a *app) copyCommitInfo(c *ui.Context, tab *repoTab, hash [20]byte) {
 }
 
 func (a *app) openCommitWrite(tab *repoTab, kind string, item commit) {
+	// 分支、标签、提交说明修改都在第一版范围之外。
+	if a.dockerActionBlocked(tab) {
+		return
+	}
 	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
 		a.setBanner("请等待正在执行的操作", "")
 		return

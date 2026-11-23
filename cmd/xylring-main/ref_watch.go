@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -10,9 +11,24 @@ import (
 // Git updates loose refs by renaming lock files: watching their directories
 // avoids peeling every tag on every tick. A periodic full check also covers
 // tools that edit ref files in place.
-type refWatch map[string]os.FileInfo
+//
+// 容器仓库没有本机目录可走，改成一条 `git for-each-ref` 的摘要；
+// 引用本身变了才触发完整检查，不会每两秒读一遍容器里的 .git。
+type refWatch struct {
+	files  map[string]os.FileInfo
+	docker *dockerRefSignature
+}
 
-func newRefWatch(ctx context.Context, path string) refWatch {
+type dockerRefSignature struct {
+	key     string
+	refs    string
+	gitMeta dockerFileMeta
+}
+
+func newRefWatch(ctx context.Context, path string) *refWatch {
+	if isDockerRepoPath(path) {
+		return newDockerRefWatch(ctx, path)
+	}
 	gitDir := filepath.Join(path, ".git")
 	if b, err := os.ReadFile(gitDir); err == nil {
 		gitDir = resolveRepoGitPath(path, strings.TrimPrefix(string(b), "gitdir:"))
@@ -21,11 +37,11 @@ func newRefWatch(ctx context.Context, path string) refWatch {
 	if b, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
 		common = resolveRepoGitPath(gitDir, string(b))
 	}
-	w := refWatch{}
+	w := &refWatch{files: map[string]os.FileInfo{}}
 	for _, p := range []string{filepath.Join(path, ".git"), filepath.Join(gitDir, "HEAD"), filepath.Join(gitDir, "commondir"), filepath.Join(common, "packed-refs"), filepath.Join(common, "shallow"), filepath.Join(common, "info", "grafts"), filepath.Join(common, "reftable"), filepath.Join(common, "reftable", "tables.list")} {
-		w[p], _ = os.Stat(p)
-		if w[p] != nil {
-			os.SameFile(w[p], w[p]) // Capture the file identity before it can be replaced on Windows.
+		w.files[p], _ = os.Stat(p)
+		if w.files[p] != nil {
+			os.SameFile(w.files[p], w.files[p]) // Capture the file identity before it can be replaced on Windows.
 		}
 	}
 	dirs := []string{filepath.Join(common, "refs")}
@@ -33,9 +49,9 @@ func newRefWatch(ctx context.Context, path string) refWatch {
 		dirs = append(dirs, filepath.Join(gitDir, "refs"))
 	}
 	for _, dir := range dirs {
-		w[dir], _ = os.Stat(dir)
-		if w[dir] != nil {
-			os.SameFile(w[dir], w[dir])
+		w.files[dir], _ = os.Stat(dir)
+		if w.files[dir] != nil {
+			os.SameFile(w.files[dir], w.files[dir])
 		}
 		err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -50,7 +66,7 @@ func newRefWatch(ctx context.Context, path string) refWatch {
 					return err
 				}
 				os.SameFile(info, info)
-				w[p] = info
+				w.files[p] = info
 			}
 			return nil
 		})
@@ -61,11 +77,32 @@ func newRefWatch(ctx context.Context, path string) refWatch {
 	return w
 }
 
-func (w refWatch) changed() bool {
+func newDockerRefWatch(ctx context.Context, key string) *refWatch {
+	sig := &dockerRefSignature{key: key}
+	if out, err := runGit(ctx, key, "for-each-ref", "--format=%(objectname) %(refname)"); err == nil {
+		sig.refs = string(out)
+	}
+	if target, ok := parseDockerRepoKey(key); ok {
+		sig.gitMeta, _ = dockerStatOne(ctx, key, path.Join(target.path, ".git"))
+	}
+	return &refWatch{docker: sig}
+}
+
+func (w *refWatch) changed(ctx context.Context) bool {
 	if w == nil {
 		return true
 	}
-	for path, old := range w {
+	if w.docker != nil {
+		if w.docker.key == "" {
+			return true
+		}
+		out, err := runGit(ctx, w.docker.key, "for-each-ref", "--format=%(objectname) %(refname)")
+		if err != nil {
+			return true
+		}
+		return string(out) != w.docker.refs
+	}
+	for path, old := range w.files {
 		now, err := os.Stat(path)
 		if os.IsNotExist(err) {
 			if old != nil {
@@ -88,9 +125,18 @@ func (w refWatch) changed() bool {
 }
 
 // A replacement can have the same refs as the old repository (including no refs).
-func (w refWatch) replaced(path string, next refWatch) bool {
+func (w *refWatch) replaced(path string, next *refWatch) bool {
+	if w == nil || next == nil {
+		return false
+	}
+	if w.docker != nil || next.docker != nil {
+		if w.docker == nil || next.docker == nil {
+			return false
+		}
+		return w.docker.key == next.docker.key && w.docker.gitMeta != next.docker.gitMeta
+	}
 	p := filepath.Join(path, ".git")
-	old, now := w[p], next[p]
+	old, now := w.files[p], next.files[p]
 	if old == nil || now == nil {
 		return false
 	}

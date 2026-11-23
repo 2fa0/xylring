@@ -73,7 +73,8 @@ func (a *app) checkActiveRepo() {
 		return
 	}
 	// 缺 Git 时不再每两秒白跑一次 Git，也不必反复改写同一条错误。
-	if !a.gitReady() {
+	// 容器仓库用的是容器里的 Git，本机缺 Git 不影响它。
+	if !a.gitReady() && !isDockerRepoPath(t.path) {
 		return
 	}
 	t.checking = true
@@ -85,7 +86,7 @@ func (a *app) checkActiveRepo() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		full := unavailable || watch.changed() || time.Since(lastCheck) >= 30*time.Second
+		full := unavailable || watch.changed(ctx) || time.Since(lastCheck) >= 30*time.Second
 		var meta repoMeta
 		var err error
 		var key string
@@ -112,6 +113,9 @@ func (a *app) checkActiveRepo() {
 			if a.closed || t.closed || t.generation != gen || a.activeTab() != t {
 				return
 			}
+			if err != nil {
+				a.probeDockerReplacement(t)
+			}
 			if isRepoUnavailable(err) {
 				a.markRepoUnavailable(t)
 				changed = true
@@ -121,6 +125,11 @@ func (a *app) checkActiveRepo() {
 				a.noteGitUnavailable(err)
 				msg := "检查仓库更新失败：" + err.Error()
 				changed, t.err = t.err != msg, msg
+				if isDockerRepoPath(t.path) {
+					// 容器离线时不要每两秒重连一次；退避到最长间隔，等用户手动重试。
+					t.repoCheckDelay = min(16*time.Second, max(2*time.Second, 2*t.repoCheckDelay))
+					t.nextRepoCheck = time.Now().Add(t.repoCheckDelay)
+				}
 				return
 			}
 			if unavailable || replaced {
