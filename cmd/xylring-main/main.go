@@ -111,8 +111,9 @@ type app struct {
 	showWrite bool
 	write     commitWrite
 
-	showFetch bool
-	fetch     fetchDialog
+	showFetch    bool
+	fetch        fetchDialog
+	folderImport folderImportDialog
 
 	sessionReady   bool
 	sessionDone    chan struct{}
@@ -272,6 +273,7 @@ func (a *app) view(c *ui.Context) {
 	a.settingsModal(c)
 	a.gitLogModal(c)
 	a.boardModals(c)
+	a.folderImportModal(c)
 	a.closeGuardModal(c)
 }
 
@@ -1144,11 +1146,20 @@ func listTheme(c *ui.Context) *ui.Theme {
 	return &theme
 }
 
+func (a *app) hasTabPath(path string) bool {
+	for _, t := range a.tabs {
+		if t.path == path {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *app) globalAlertBanner(c *ui.Context, tab *repoTab) {
 	if a.banner == "" {
 		return
 	}
-	if tab != nil && a.bannerPath != "" && a.bannerPath != tab.path {
+	if tab != nil && a.bannerPath != "" && a.bannerPath != tab.path && a.hasTabPath(a.bannerPath) {
 		return
 	}
 	t := c.Theme()

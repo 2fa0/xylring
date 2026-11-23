@@ -1,3 +1,21 @@
+## 0.10.0 - 2026-11-23
+
+### 更新内容
+
+- 新增 Windows WSL 仓库支持：可通过 `wsl.exe` 直接打开与运行 WSL 发行版中的 Git 仓库，支持 WSL 路径与 Linux 路径双向映射、UTF-16LE 输出解码以及通过文件管理器、终端和编辑器（VS Code / Cursor）打开 WSL 仓库。
+- 优化 WSL 仓库扫描：默认定位 WSL 用户主目录，通过 WSL 内 `find -xdev` 快速发现仓库并跳过常见依赖/缓存目录与系统挂载点，同时对 `wsl.exe` / `find` 异常退出做准确分类与回退。
+- 优化文件夹导入体验：打开非仓库目录时提供「初始化 Git 仓库」确认弹窗；打开包含多个 Git 仓库的目录时弹出列表供勾选导入（支持全选），取消后保持当前界面不变。
+- 修复看板界面不显示全局告警横幅以及看板详情抽屉在 Windows 标题栏下顶部被遮挡的问题；当前未打开的仓库加载失败时，告警横幅也会在当前窗口正常提示。
+- Git 失败日志与崩溃面包屑新增脱敏后的 stderr 摘要；新增 `build-dev.command` 用于快速构建开发测试包。
+
+### Changes
+
+- Added Windows WSL repository support: open and run Git repositories inside WSL distributions via `wsl.exe`, with bidirectional UNC/Linux path mapping, UTF-16LE output decoding, and WSL integration for file manager, terminal, and editors (VS Code / Cursor).
+- Improved WSL repository scanning: resolve the WSL user's home directory as the default root, discover repositories with `find -xdev` while pruning dependency/cache directories and root mount points, and classify `wsl.exe` / `find` failures cleanly.
+- Improved folder import workflow: prompt to initialize a Git repository when opening a non-repository directory, and present a selectable repository list (with Select All) when opening a folder containing multiple repositories.
+- Fixed the global alert banner not appearing on the board view and the board detail drawer overlapping custom Windows title bars; failed loads for repositories not yet in a tab now surface their banner properly.
+- Added redacted stderr summaries to Git failure logs and crash breadcrumbs, and added `build-dev.command` for quick local dev builds.
+
 ## 0.9.2 - 2026-11-19
 
 ### 更新内容

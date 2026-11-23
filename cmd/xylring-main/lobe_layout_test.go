@@ -55,6 +55,12 @@ func TestLobeModalLayouts(t *testing.T) {
 			a.showPush = true
 			a.push = pushDialog{path: a.tabs[0].path, branch: "main", upstream: "origin/main"}
 		}, (*app).pushModal},
+		{"folder-import-init", "当前目录不是 Git 仓库", "初始化 Git 仓库", func(a *app) {
+			a.openFolderImportInit("/work/empty-dir")
+		}, (*app).folderImportModal},
+		{"folder-import-repos", "导入 Git 仓库", "导入 (2)", func(a *app) {
+			a.openFolderImportRepos("/work/projects", []string{"/work/projects/alpha", "/work/projects/beta"})
+		}, (*app).folderImportModal},
 	}
 	for _, tc := range cases {
 		for _, size := range [][2]int{{420, 320}, {1100, 720}} {

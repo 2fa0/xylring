@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -136,22 +139,40 @@ func resolveRepoGitPath(repoDir, gitOutPath string) string {
 	return filepath.Join(repoDir, filepath.FromSlash(p))
 }
 
+func wslCommandArgs(distro, linuxDir string, extraEnv []string, fullArgs ...string) []string {
+	if linuxDir == "" {
+		linuxDir = "/"
+	}
+	wslArgs := []string{"-d", distro, "--cd", linuxDir, "--exec", "env"}
+	wslArgs = append(wslArgs, wslGitEnv(distro, linuxDir, extraEnv)...)
+	wslArgs = append(wslArgs, "git")
+	return append(wslArgs, fullArgs...)
+}
+
 func wslCommand(ctx context.Context, distro, linuxDir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
 	wslBin, err := wslPath()
 	if err != nil {
 		return nil, "", err
 	}
-	if linuxDir == "" {
-		linuxDir = "/"
-	}
-	wslArgs := []string{"-d", distro, "--cd", linuxDir, "env"}
-	wslArgs = append(wslArgs, wslGitEnv(distro, linuxDir, extraEnv)...)
-	wslArgs = append(wslArgs, "git")
-	wslArgs = append(wslArgs, fullArgs...)
-	cmd := exec.CommandContext(ctx, wslBin, wslArgs...)
+	cmd := exec.CommandContext(ctx, wslBin, wslCommandArgs(distro, linuxDir, extraEnv, fullArgs...)...)
 	hideConsoleWindow(cmd)
+	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
 	cmd.WaitDelay = 2 * time.Second
 	return cmd, wslBin, nil
+}
+
+func decodeWSLCommandOutput(dir string, raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+	if _, _, ok := parseWSLUNCPath(dir); !ok {
+		return raw
+	}
+	hasUTF16BOM := len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE
+	if !hasUTF16BOM && (len(raw)%2 != 0 || bytes.IndexByte(raw, 0) < 0) {
+		return raw
+	}
+	return []byte(strings.TrimPrefix(decodeWSLOutput(raw), "\uFEFF"))
 }
 
 func decodeWSLOutput(raw []byte) string {
@@ -198,11 +219,143 @@ func listWSLDistros() []string {
 	return parseWSLDistroList(out)
 }
 
-func defaultWSLRepoRoot() string {
-	if distros := listWSLDistros(); len(distros) > 0 {
-		return `\\wsl.localhost\` + distros[0]
+func parseWSLHomeOutput(raw []byte) string {
+	home := strings.TrimSpace(strings.TrimPrefix(decodeWSLOutput(raw), "\uFEFF"))
+	if !strings.HasPrefix(home, "/") {
+		return ""
 	}
-	return `\\wsl.localhost\`
+	return path.Clean(home)
+}
+
+func wslUserHome(distro string) string {
+	wslBin, err := wslPath()
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, wslBin, "-d", distro, "--cd", "~", "--exec", "pwd")
+	hideConsoleWindow(cmd)
+	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return parseWSLHomeOutput(out)
+}
+
+func resolveDefaultWSLRepoRoot(distros []string, homeFn func(string) string) string {
+	if len(distros) == 0 {
+		return `\\wsl.localhost\`
+	}
+	distro := distros[0]
+	if homeFn != nil {
+		if home := homeFn(distro); home != "" {
+			return formatWSLUNCPath(distro, home)
+		}
+	}
+	return `\\wsl.localhost\` + distro
+}
+
+func defaultWSLRepoRoot() string {
+	return resolveDefaultWSLRepoRoot(listWSLDistros(), wslUserHome)
+}
+
+func wslFindGitReposArgs(distro, linuxDir string) []string {
+	if linuxDir == "" {
+		linuxDir = "/"
+	}
+	args := []string{
+		"-d", distro, "--cd", linuxDir, "--exec",
+		"find", ".", "-xdev",
+		"-name", ".git", "(", "-type", "d", "-o", "-type", "f", ")", "-print", "-prune",
+		"-o", "(",
+	}
+	pruneDirs := skippedRepoDirs
+	if linuxDir == "/" {
+		pruneDirs = append(append([]string(nil), skippedRepoDirs...), "proc", "sys", "dev", "run", "mnt")
+	}
+	for i, name := range pruneDirs {
+		if i > 0 {
+			args = append(args, "-o")
+		}
+		args = append(args, "-name", name)
+	}
+	return append(args, ")", "-prune")
+}
+
+func parseWSLFindGitOutput(distro, linuxDir string, raw []byte) []string {
+	cleaned := strings.TrimPrefix(decodeWSLOutput(raw), "\uFEFF")
+	seen := make(map[string]struct{})
+	var roots []string
+	for _, line := range strings.Split(cleaned, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" {
+			continue
+		}
+		line = path.Clean(strings.ReplaceAll(line, `\`, "/"))
+		var relRepo string
+		switch {
+		case line == ".git":
+			relRepo = "."
+		case strings.HasSuffix(line, "/.git"):
+			relRepo = strings.TrimSuffix(line, "/.git")
+		default:
+			continue
+		}
+		unc := formatWSLUNCPath(distro, path.Join(linuxDir, relRepo))
+		if _, ok := seen[unc]; ok {
+			continue
+		}
+		seen[unc] = struct{}{}
+		roots = append(roots, unc)
+	}
+	sort.Strings(roots)
+	return roots
+}
+
+func classifyWSLFindError(err error) (bool, error) {
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false, err
+	}
+	code := exitErr.ExitCode()
+	if code == 126 || code == 127 {
+		return false, err
+	}
+	stderr := strings.TrimSpace(strings.TrimPrefix(decodeWSLOutput(exitErr.Stderr), "\uFEFF"))
+	if code == 1 && !strings.HasPrefix(strings.ToLower(stderr), "wsl:") {
+		// `find` exits 1 when any unreadable subdirectory causes permission denied.
+		return true, nil
+	}
+	if stderr != "" {
+		return true, errors.New(trimMsg(stderr))
+	}
+	return true, fmt.Errorf("WSL 扫描仓库失败（退出码 %d）", code)
+}
+
+func scanWSLGitRepos(ctx context.Context, distro, linuxDir string) ([]string, bool, error) {
+	wslBin, err := wslPath()
+	if err != nil {
+		return nil, false, err
+	}
+	cmd := exec.CommandContext(ctx, wslBin, wslFindGitReposArgs(distro, linuxDir)...)
+	hideConsoleWindow(cmd)
+	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, true, ctx.Err()
+	}
+	roots := parseWSLFindGitOutput(distro, linuxDir, out)
+	if len(roots) > 0 {
+		return roots, true, nil
+	}
+	handled, outErr := classifyWSLFindError(err)
+	return nil, handled, outErr
 }
 
 func resolveWindowsWSLTerminalCommand(abs string, lookPathFn func(string) (string, error)) (bin string, args []string, ok bool) {

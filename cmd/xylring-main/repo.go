@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -175,6 +177,7 @@ func (a *app) openRepo(path string) {
 		}
 		a.post(func() {
 			if err != nil {
+				log.Printf("openRepo failed path=%q err=%q", path, err)
 				a.setBanner(trimMsg(err.Error()), path)
 				return
 			}
@@ -188,8 +191,6 @@ func (a *app) openRepo(path string) {
 
 func (a *app) openPath(path string) {
 	crashlog.Breadcrumb("打开路径 " + path)
-	a.leaveBoard()
-	a.showHome = false
 	a.scanRepos(path, true)
 }
 
@@ -229,6 +230,9 @@ func (a *app) scanRepos(path string, open bool) {
 	go func() {
 		defer cancel()
 		from := workspaceDir(path)
+		statInfo, statErr := os.Stat(path)
+		isDir := statErr == nil && statInfo.IsDir()
+		isRepoDir := isGitWorkTree(from)
 		roots, cache, err := scanGitRepos(ctx, path, previous)
 		a.post(func() {
 			if a.closed || a.foundGen != gen {
@@ -236,19 +240,200 @@ func (a *app) scanRepos(path string, open bool) {
 			}
 			a.scanCancel, a.scanPath = nil, ""
 			if err != nil {
+				log.Printf("scanRepos failed path=%q open=%v err=%q", path, open, err)
 				if open {
+					if err.Error() == "没有找到 Git 仓库" && isDir {
+						a.setBanner("", "")
+						a.openFolderImportInit(from)
+						return
+					}
 					a.setBanner(trimMsg(err.Error()), path)
 				}
 				return
 			}
 			a.setBanner("", "")
 			a.scanCache = cache
+			if open && len(roots) > 1 && !isRepoDir {
+				a.openFolderImportRepos(from, roots)
+				return
+			}
 			a.setFound(from, roots)
 			if open && len(roots) > 0 {
 				a.openRoot(roots[0])
 			}
 		})
 	}()
+}
+
+type folderImportKind int
+
+const (
+	folderImportInit folderImportKind = iota
+	folderImportRepos
+)
+
+type folderImportDialog struct {
+	open     bool
+	kind     folderImportKind
+	dir      string
+	repos    []string
+	selected []bool
+	busy     bool
+	err      string
+	gen      int
+}
+
+func (a *app) openFolderImportInit(dir string) {
+	a.folderImport = folderImportDialog{
+		open: true,
+		kind: folderImportInit,
+		dir:  dir,
+		gen:  a.folderImport.gen + 1,
+	}
+}
+
+func (a *app) openFolderImportRepos(dir string, repos []string) {
+	selected := make([]bool, len(repos))
+	for i := range selected {
+		selected[i] = true
+	}
+	a.folderImport = folderImportDialog{
+		open:     true,
+		kind:     folderImportRepos,
+		dir:      dir,
+		repos:    slices.Clone(repos),
+		selected: selected,
+		gen:      a.folderImport.gen + 1,
+	}
+}
+
+func (a *app) confirmFolderImport() {
+	d := &a.folderImport
+	if !d.open || d.kind != folderImportRepos {
+		return
+	}
+	var selected []string
+	for i, repo := range d.repos {
+		if i < len(d.selected) && d.selected[i] {
+			selected = append(selected, repo)
+		}
+	}
+	if len(selected) == 0 {
+		return
+	}
+	dir := d.dir
+	d.open = false
+	a.setFound(dir, selected)
+	a.openRoot(selected[0])
+}
+
+func (a *app) runFolderImportInit() {
+	d := &a.folderImport
+	if !d.open || d.kind != folderImportInit || d.busy || d.dir == "" {
+		return
+	}
+	d.busy = true
+	d.err = ""
+	dir := d.dir
+	gen := d.gen
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := runGitExtra(ctx, dir, 1<<20, []string{"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true"}, "init")
+		a.post(func() {
+			if a.closed || a.folderImport.gen != gen {
+				return
+			}
+			a.folderImport.busy = false
+			if err != nil {
+				a.folderImport.err = trimMsg(err.Error())
+				return
+			}
+			a.folderImport.open = false
+			a.openRoot(dir)
+		})
+	}()
+}
+
+func folderImportRepoLabel(rootDir, repoPath string) string {
+	if rel, err := filepath.Rel(rootDir, repoPath); err == nil && rel != "" && rel != "." {
+		return rel
+	}
+	if base := filepath.Base(repoPath); base != "" && base != "." {
+		return base
+	}
+	return repoPath
+}
+
+func (a *app) folderImportModal(c *ui.Context) {
+	d := &a.folderImport
+	if !d.open {
+		return
+	}
+	wasOpen := d.open
+	theme := c.Theme()
+	switch d.kind {
+	case folderImportInit:
+		appModal(c.Key("folder-import-init-modal"), &d.open, tr("当前目录不是 Git 仓库"), 460, d.busy, func() {
+			ui.Text(c, d.dir).FontSize(12).Font("monospace").TextColor(theme.TextMuted)
+			if d.err != "" {
+				ui.Text(c, trMessage(d.err)).FontSize(12).TextColor(theme.Danger)
+			}
+			if d.busy {
+				busyRow(c, "folder-import-init-busy", tr("正在初始化 Git 仓库…"), "")
+			}
+		}, func() {
+			if ui.Button(c.Key("folder-import-init-cancel"), tr("取消")).Disabled(d.busy).Clicked() {
+				d.open = false
+			}
+			if ui.PrimaryButton(c.Key("folder-import-init-confirm"), tr("初始化 Git 仓库")).Disabled(d.busy).Clicked() {
+				a.runFolderImportInit()
+			}
+		})
+		if wasOpen && !d.open && d.busy {
+			d.open = true
+		}
+	case folderImportRepos:
+		selectedCount := 0
+		for _, ok := range d.selected {
+			if ok {
+				selectedCount++
+			}
+		}
+		allSelected := len(d.repos) > 0 && selectedCount == len(d.repos)
+		dirName := filepath.Base(d.dir)
+		if dirName == "" || dirName == "." || dirName == string(filepath.Separator) {
+			dirName = d.dir
+		}
+		appModal(c.Key("folder-import-repos-modal"), &d.open, tr("导入 Git 仓库"), 520, false, func() {
+			ui.Row(c.Key("folder-import-header")).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
+				ui.Text(c, fmt.Sprintf(tr("在「%s」下发现 %d 个 Git 仓库"), dirName, len(d.repos))).
+					FontSize(13).Grow(1).MinWidth(0)
+				ui.Checkbox(c.Key("folder-import-all"), &allSelected, tr("全选")).OnClick(func() {
+					for i := range d.selected {
+						d.selected[i] = allSelected
+					}
+				})
+			})
+			ui.Column(c.Key("folder-import-list")).FillWidth().Gap(6).Children(func() {
+				for i, repo := range d.repos {
+					if i >= len(d.selected) {
+						break
+					}
+					label := folderImportRepoLabel(d.dir, repo)
+					ui.Checkbox(c.Key(fmt.Sprintf("folder-import-repo-%d", i)), &d.selected[i], label)
+				}
+			})
+		}, func() {
+			if ui.Button(c.Key("folder-import-repos-cancel"), tr("取消")).Clicked() {
+				d.open = false
+			}
+			confirmLabel := fmt.Sprintf(tr("导入 (%d)"), selectedCount)
+			if ui.PrimaryButton(c.Key("folder-import-repos-confirm"), confirmLabel).Disabled(selectedCount == 0).Clicked() {
+				a.confirmFolderImport()
+			}
+		})
+	}
 }
 
 func (a *app) setFound(from string, roots []string) {
@@ -463,6 +648,7 @@ func (a *app) reload(t *repoTab) {
 			}
 			t.loading, t.loaded = false, true
 			if err != nil {
+				log.Printf("reload failed repo=%q err=%q", path, err)
 				if p != nil {
 					p.close()
 				}

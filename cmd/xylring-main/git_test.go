@@ -217,6 +217,13 @@ func TestOpenPathPresentsChoices(t *testing.T) {
 			tab.cancel()
 		}
 	}()
+	if len(a.tabs) != 0 || len(a.found) != 0 {
+		t.Fatalf("expected confirmation before importing: tabs=%d found=%v", len(a.tabs), a.found)
+	}
+	if !a.folderImport.open || a.folderImport.kind != folderImportRepos || len(a.folderImport.repos) != 2 {
+		t.Fatalf("expected folderImportRepos dialog, got %+v", a.folderImport)
+	}
+	a.confirmFolderImport()
 	if len(a.tabs) != 1 {
 		t.Fatalf("tabs=%d", len(a.tabs))
 	}
@@ -225,6 +232,50 @@ func TestOpenPathPresentsChoices(t *testing.T) {
 	}
 	if a.foundFrom != root {
 		t.Fatalf("foundFrom=%q want %q", a.foundFrom, root)
+	}
+}
+
+func TestOpenPathEmptyDirPromptsInit(t *testing.T) {
+	dir := t.TempDir()
+	ready := make(chan func(), 16)
+	a := &app{
+		persist:  false,
+		showHome: true,
+		dispatch: func(fn func()) { ready <- fn },
+	}
+	a.openPath(dir)
+	select {
+	case fn := <-ready:
+		fn()
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
+	}
+	if !a.folderImport.open || a.folderImport.kind != folderImportInit || a.folderImport.dir != dir {
+		t.Fatalf("expected folderImportInit for %q, got %+v", dir, a.folderImport)
+	}
+	if !a.showHome || len(a.tabs) != 0 {
+		t.Fatalf("expected home state unchanged before init: showHome=%v tabs=%d", a.showHome, len(a.tabs))
+	}
+	a.runFolderImportInit()
+	select {
+	case fn := <-ready:
+		fn()
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for git init")
+	}
+	defer func() {
+		for _, tab := range a.tabs {
+			tab.cancel()
+		}
+	}()
+	if a.folderImport.open {
+		t.Fatalf("expected folderImport dialog closed after init, err=%q", a.folderImport.err)
+	}
+	if !isGitWorkTree(dir) {
+		t.Fatalf("expected %q to be initialized as a git worktree", dir)
+	}
+	if len(a.tabs) != 1 || a.tabs[0].path != dir || a.showHome {
+		t.Fatalf("expected initialized repo opened: tabs=%d showHome=%v", len(a.tabs), a.showHome)
 	}
 }
 

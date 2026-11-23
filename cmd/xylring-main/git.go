@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -163,7 +164,7 @@ func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []str
 	cmd, bin, err := prepareGitCommand(commandCtx, dir, extraEnv, gitArgs(args...)...)
 	if err != nil {
 		// Git 不可执行时没有命令可记，应用日志里已经有这一条。
-		logGitFailure(dir, args, err)
+		logGitFailure(dir, args, err, nil)
 		return nil, err
 	}
 	if input != "" {
@@ -177,11 +178,12 @@ func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []str
 	started := time.Now()
 	status, exit := gitCallFailed, -1
 	defer func() {
-		gitLog.finish(callID, status, time.Since(started), exit, stdout.Bytes(), stderr.Bytes())
+		gitLog.finish(callID, status, time.Since(started), exit, stdout.Bytes(), decodeWSLCommandOutput(dir, stderr.Bytes()))
 	}()
 	err = cmd.Run()
 	exit = gitExitCode(err)
 	err = gitExecError(bin, err)
+	decodedErr := decodeWSLCommandOutput(dir, stderr.Bytes())
 	if stdout.overflow {
 		log.Printf("git output limit exceeded repo=%q limit=%d", dir, limit)
 		return nil, fmt.Errorf("Git 输出超过 %d 字节，请缩小读取范围", limit)
@@ -190,25 +192,25 @@ func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []str
 		status = gitCallCancelled
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status = gitCallFailed
-			logGitFailure(dir, args, ctx.Err())
+			logGitFailure(dir, args, ctx.Err(), decodedErr)
 		}
 		return stdout.Bytes(), fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
 	// git diff --no-index returns 1 for a successful comparison with changes.
 	if err != nil && len(args) > 1 && args[0] == "diff" && args[1] == "--no-index" {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && gitWarningsOnly(stderr.String()) {
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && gitWarningsOnly(string(decodedErr)) {
 			status = gitCallOK
 			return stdout.Bytes(), nil
 		}
 	}
 	if err != nil {
-		logGitFailure(dir, args, err)
+		logGitFailure(dir, args, err, decodedErr)
 		// Git 缺席或不可执行时保住错误类型：上层据此区分“缺 Git”和“仓库有问题”。
 		if isGitUnavailable(err) {
 			return nil, err
 		}
-		msg := strings.TrimSpace(stderr.String())
+		msg := strings.TrimSpace(string(decodedErr))
 		if msg == "" {
 			msg = err.Error()
 		}
@@ -272,13 +274,30 @@ func notARepository(err error) bool {
 	return strings.Contains(err.Error(), "not a git repository")
 }
 
+var skippedRepoDirs = []string{
+	".git",
+	"node_modules",
+	"vendor",
+	".venv",
+	"venv",
+	"__pycache__",
+	".mypy_cache",
+	".pytest_cache",
+	".ruff_cache",
+	"target",
+	"dist",
+	"build",
+	"out",
+	".next",
+	".nuxt",
+	".turbo",
+	".cache",
+	".gradle",
+	"Pods",
+}
+
 func skipRepoDir(name string) bool {
-	switch name {
-	case ".git", "node_modules":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(skippedRepoDirs, name)
 }
 
 func isGitWorkTree(dir string) bool {
@@ -430,7 +449,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	defer slot.release()
 	cmd, bin, err := prepareGitCommand(ctx, dir, []string{"LC_ALL=C"}, gitArgs(args...)...)
 	if err != nil {
-		logGitFailure(dir, args, err)
+		logGitFailure(dir, args, err, nil)
 		return err
 	}
 	cmd.Stdin = strings.NewReader(input)
@@ -441,7 +460,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	started := time.Now()
 	status, exit := gitCallFailed, -1
 	defer func() {
-		gitLog.finish(callID, status, time.Since(started), exit, nil, stderr.Bytes())
+		gitLog.finish(callID, status, time.Since(started), exit, nil, decodeWSLCommandOutput(dir, stderr.Bytes()))
 	}()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -453,7 +472,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	defer stopRead()
 	if err := cmd.Start(); err != nil {
 		err = gitExecError(bin, err)
-		logGitFailure(dir, args, err)
+		logGitFailure(dir, args, err, nil)
 		return err
 	}
 
@@ -469,14 +488,15 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	}
 	waitErr := cmd.Wait()
 	exit = gitExitCode(waitErr)
+	decodedErr := decodeWSLCommandOutput(dir, stderr.Bytes())
 	if parseErr != nil {
 		status = gitCallCancelled
 		if ctx.Err() == nil {
 			status = gitCallFailed
-			logGitFailure(dir, args, parseErr)
+			logGitFailure(dir, args, parseErr, decodedErr)
 		} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status = gitCallFailed
-			logGitFailure(dir, args, ctx.Err())
+			logGitFailure(dir, args, ctx.Err(), decodedErr)
 		}
 		return parseErr
 	}
@@ -484,16 +504,16 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 		status = gitCallCancelled
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status = gitCallFailed
-			logGitFailure(dir, args, ctx.Err())
+			logGitFailure(dir, args, ctx.Err(), decodedErr)
 		}
 		return fmt.Errorf("git 超时或已取消：%w", ctx.Err())
 	}
 	if waitErr = gitExecError(bin, waitErr); waitErr != nil {
 		if isGitUnavailable(waitErr) {
-			logGitFailure(dir, args, waitErr)
+			logGitFailure(dir, args, waitErr, decodedErr)
 			return waitErr
 		}
-		msg := strings.TrimSpace(stderr.String())
+		msg := strings.TrimSpace(string(decodedErr))
 		if msg == "" {
 			msg = waitErr.Error()
 		}
@@ -501,7 +521,7 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 			status = gitCallOK
 			return nil
 		}
-		logGitFailure(dir, args, waitErr)
+		logGitFailure(dir, args, waitErr, decodedErr)
 		return errors.New(trimMsg(msg))
 	}
 	status = gitCallOK
@@ -517,18 +537,35 @@ var gitFailureLog struct {
 
 const gitFailureLogInterval = time.Minute
 
-func logGitFailure(dir string, args []string, err error) {
+func logGitFailure(dir string, args []string, err error, stderr []byte) {
 	operation := ""
 	if len(args) > 0 {
 		operation = args[0]
 	}
-	// Arguments and stderr may contain credentials, commit messages or file contents.
-	msg := fmt.Sprintf("git failed repo=%q operation=%q error=%q", dir, operation, err)
+	errText := summarizeLogStderr(stderr)
+	var msg string
+	if errText != "" {
+		msg = fmt.Sprintf("git failed repo=%q operation=%q error=%q stderr=%q", dir, operation, err, errText)
+	} else {
+		msg = fmt.Sprintf("git failed repo=%q operation=%q error=%q", dir, operation, err)
+	}
 	if !gitFailureLogAllowed(msg) {
 		return
 	}
 	log.Print(msg)
 	crashlog.Breadcrumb(msg)
+}
+
+func summarizeLogStderr(raw []byte) string {
+	const maxLogStderr = 512
+	s := strings.TrimSpace(redactGitText(string(raw)))
+	if s == "" {
+		return ""
+	}
+	if len(s) > maxLogStderr {
+		s = string(trimUTF8Prefix([]byte(s[:maxLogStderr]))) + "…"
+	}
+	return s
 }
 
 func gitFailureLogAllowed(key string) bool {

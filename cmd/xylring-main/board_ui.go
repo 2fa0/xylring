@@ -1555,6 +1555,7 @@ func (a *app) boardScreen(c *ui.Context) {
 			Background(canvasBg).
 			BorderWidth(1, 0, 0, 0).BorderColor(t.Border.Alpha(0.65)).
 			Transition(workspaceMainMotion()).Children(func() {
+			a.globalAlertBanner(c, nil)
 			if a.board.loadErr != "" {
 				ui.Row(c.Key("board-error-banner")).FillWidth().Padding(6, 16).Gap(8).AlignItems(ui.Center).
 					Background(t.Danger.Alpha(0.12)).Children(func() {
@@ -2154,8 +2155,9 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 	if t.Dark {
 		drawerShadow = ui.RGBA(0, 0, 0, 0.45)
 	}
+	h, _, _, _, _, _, _ := a.chromeMetrics(c)
 	ui.Column(c.Key("board-detail-drawer")).
-		Absolute().Top(12).Bottom(12).Right(12).WidthPercent(50).ZIndex(20).
+		Absolute().Top(h + 12).Bottom(12).Right(12).WidthPercent(50).ZIndex(20).
 		Radius(12).Background(t.Background).Border(1, t.Border).
 		Shadow(0, 12, 32, 0, drawerShadow).
 		Transition(boardDrawerMotion()).Children(func() {

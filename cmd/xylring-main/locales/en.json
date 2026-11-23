@@ -946,5 +946,12 @@
   "正在执行批量操作": "Batch operation in progress",
   "正在执行 Git 操作": "Git operation in progress",
   "导入 WSL 仓库": "Import WSL repository",
-  "导入 WSL 仓库…": "Import WSL Repository…"
+  "导入 WSL 仓库…": "Import WSL Repository…",
+  "当前目录不是 Git 仓库": "This folder is not a Git repository",
+  "正在初始化 Git 仓库…": "Initializing Git repository…",
+  "初始化 Git 仓库": "Initialize Git Repository",
+  "导入 Git 仓库": "Import Git Repositories",
+  "在「%s」下发现 %d 个 Git 仓库": "\"%s\": %d Git repositories found",
+  "全选": "Select All",
+  "导入 (%d)": "Import (%d)"
 }

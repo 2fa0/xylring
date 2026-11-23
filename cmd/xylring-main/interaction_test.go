@@ -245,6 +245,77 @@ func TestNotifySuccessDeliversToastAndNotice(t *testing.T) {
 	retireTester(tt)
 }
 
+func TestFolderImportModalInteraction(t *testing.T) {
+	root := t.TempDir()
+	alpha := filepath.Join(root, "alpha")
+	beta := filepath.Join(root, "beta")
+	_ = os.MkdirAll(alpha, 0o755)
+	_ = os.MkdirAll(beta, 0o755)
+	initBareAndWorktree(t, alpha)
+	initBareAndWorktree(t, beta)
+
+	updates := make(chan func(), 64)
+	a := &app{
+		persist:      false,
+		showHome:     true,
+		dispatch:     func(fn func()) { updates <- fn },
+		recentWrites: make(chan []string, 4),
+	}
+
+	tt := ui.NewTester(a.view, 1000, 700)
+	defer retireTester(tt)
+
+	a.openFolderImportRepos(root, []string{alpha, beta})
+	tt.Frame()
+
+	// Cancel keeps showHome intact and imports nothing.
+	if err := tt.Click("取消"); err != nil {
+		t.Fatalf("missing cancel button: %v", err)
+	}
+	tt.Frame()
+	if a.folderImport.open || !a.showHome || len(a.tabs) != 0 || len(a.found) != 0 {
+		t.Fatalf("cancel modified state: open=%v showHome=%v tabs=%d found=%v", a.folderImport.open, a.showHome, len(a.tabs), a.found)
+	}
+
+	// Re-open, toggle Select All off, pick only beta, and import.
+	a.openFolderImportRepos(root, []string{alpha, beta})
+	tt.Frame()
+	if err := tt.Click("全选"); err != nil {
+		t.Fatalf("missing select-all checkbox: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("导入 (0)") {
+		t.Fatalf("expected 导入 (0) after unchecking all, texts=%v", tt.Texts())
+	}
+	if err := tt.Click("beta"); err != nil {
+		t.Fatalf("missing beta checkbox: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("导入 (1)") {
+		t.Fatalf("expected 导入 (1) after selecting beta, texts=%v", tt.Texts())
+	}
+	if err := tt.Click("导入 (1)"); err != nil {
+		t.Fatalf("failed to click import button: %v", err)
+	}
+	tt.Frame()
+
+	if a.folderImport.open {
+		t.Fatal("expected dialog closed after import")
+	}
+	if a.showHome {
+		t.Fatal("expected showHome false after import")
+	}
+	if len(a.tabs) != 1 || a.tabs[0].path != beta {
+		t.Fatalf("expected only beta opened, got tabs=%+v", a.tabs)
+	}
+	if len(a.found) != 0 {
+		t.Fatalf("expected no sidebar multi-repo list when importing single selected repo, got found=%v", a.found)
+	}
+	for _, tab := range a.tabs {
+		tab.cancel()
+	}
+}
+
 func initBareAndWorktree(t *testing.T, dir string) {
 	t.Helper()
 	ctx := context.Background()

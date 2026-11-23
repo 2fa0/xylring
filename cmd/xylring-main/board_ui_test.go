@@ -787,7 +787,7 @@ func TestBoardNoteEditDeleteAndReorder(t *testing.T) {
 	a.ensureBoardLoaded()
 	a.selectBoardTask(created.ID)
 
-	tt := ui.NewTester(a.view, 1280, 820)
+	tt := ui.NewTester(a.view, 1280, 900)
 	defer retireTester(tt)
 	tt.Frame()
 
@@ -1462,5 +1462,48 @@ func TestBoardUIDueDateCalendarInteractions(t *testing.T) {
 	bf, err = loadBoardFile()
 	if err != nil || bf.Tasks[0].DueDate != "" {
 		t.Fatalf("expected cleared due date, got %+v err=%v", bf.Tasks, err)
+	}
+}
+
+func TestBoardDetailDrawerClearsTitleBar(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("XDG_DATA_HOME", home)
+
+	_, task, err := boardAddTask("Windows 标题栏避让", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bar := range []ui.TitleBar{
+		{Height: 40, Left: 0, Right: 138},
+		{Height: 52, Left: 0, Right: 138},
+	} {
+		a := &app{
+			showBoard: true,
+			dispatch:  func(fn func()) { fn() },
+		}
+		a.ensureBoardLoaded()
+		a.selectBoardTask(task.ID)
+
+		tt := ui.NewTester(a.view, 1280, 820)
+		tt.SetTitleBar(bar)
+		tt.Frame()
+
+		minY := max(bar.Height, chromeMinHeight)
+		closeBtn, ok := tt.AccessByRole(ui.RoleButton, "关闭详情")
+		if !ok {
+			t.Fatalf("missing drawer close button: %q", tt.Texts())
+		}
+		if closeBtn.Bounds.Y < minY {
+			t.Fatalf("drawer close button overlaps titlebar (bar=%+v): bounds=%+v minY=%v", bar, closeBtn.Bounds, minY)
+		}
+
+		tt.ClickAt(closeBtn.Bounds.X+closeBtn.Bounds.W/2, closeBtn.Bounds.Y+closeBtn.Bounds.H/2)
+		tt.Frame()
+		if a.board.selectedID != "" {
+			t.Fatalf("expected clicking close button to close drawer, selectedID=%q", a.board.selectedID)
+		}
 	}
 }

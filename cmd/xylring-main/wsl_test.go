@@ -3,7 +3,11 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"runtime"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -115,5 +119,152 @@ func TestWindowsWSLTerminalAndEditor(t *testing.T) {
 		fakeLookPath(map[string]string{"code": `C:\Users\u\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd`}))
 	if err != nil || !slices.Equal(args, []string{"--remote", "wsl+Ubuntu", "/home/u/repo"}) {
 		t.Fatalf("vscode wsl remote: got (%q, %v, %v)", bin, args, err)
+	}
+}
+
+func TestDecodeWSLCommandOutput(t *testing.T) {
+	// UTF-16LE with BOM from wsl.exe stderr should be decoded for WSL repos.
+	utf16Err := []byte{
+		0xFF, 0xFE,
+		'w', 0, 's', 0, 'l', 0, ':', 0, ' ', 0, 'n', 0, 'o', 0, 't', 0, ' ', 0, 'f', 0, 'o', 0, 'u', 0, 'n', 0, 'd', 0,
+	}
+	got := decodeWSLCommandOutput(`\\wsl.localhost\debian13\home\u\repo`, utf16Err)
+	if string(got) != "wsl: not found" {
+		t.Fatalf("decodeWSLCommandOutput = %q, want %q", got, "wsl: not found")
+	}
+
+	// Non-WSL paths leave raw bytes untouched.
+	nonWSL := decodeWSLCommandOutput(`C:\repo`, utf16Err)
+	if len(nonWSL) != len(utf16Err) {
+		t.Fatalf("non-WSL output should stay untouched")
+	}
+
+	// Normal UTF-8 stderr on WSL repos stays untouched.
+	utf8Err := []byte("fatal: detected dubious ownership\n")
+	if got := decodeWSLCommandOutput(`\\wsl.localhost\debian13\home\u\repo`, utf8Err); string(got) != string(utf8Err) {
+		t.Fatalf("utf8 stderr = %q, want %q", got, utf8Err)
+	}
+}
+
+func TestSummarizeLogStderr(t *testing.T) {
+	raw := []byte("fatal: unable to access 'https://user:secret@example.com/repo.git/': Failed")
+	got := summarizeLogStderr(raw)
+	if strings.Contains(got, "secret") {
+		t.Fatalf("summarizeLogStderr leaked credentials: %q", got)
+	}
+	if !strings.Contains(got, "https://***@example.com") {
+		t.Fatalf("summarizeLogStderr unexpected output: %q", got)
+	}
+}
+
+func TestWSLCommandArgs(t *testing.T) {
+	args := wslCommandArgs("Debian", "/home/u/repo", nil, "log", "--format=%(trailers:key=AI-Agent)")
+	wantPrefix := []string{"-d", "Debian", "--cd", "/home/u/repo", "--exec", "env"}
+	if len(args) < len(wantPrefix) || !slices.Equal(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("wslCommandArgs prefix = %v, want %v", args, wantPrefix)
+	}
+	if args[len(args)-2] != "log" || args[len(args)-1] != "--format=%(trailers:key=AI-Agent)" {
+		t.Fatalf("wslCommandArgs tail = %v", args[len(args)-2:])
+	}
+}
+
+func TestResolveDefaultWSLRepoRoot(t *testing.T) {
+	if got := resolveDefaultWSLRepoRoot(nil, nil); got != `\\wsl.localhost\` {
+		t.Fatalf("no distros = %q", got)
+	}
+	if got := resolveDefaultWSLRepoRoot([]string{"Debian"}, func(string) string { return "/root" }); got != `\\wsl.localhost\Debian\root` {
+		t.Fatalf("root user = %q", got)
+	}
+	if got := resolveDefaultWSLRepoRoot([]string{"Debian"}, func(string) string { return "/home/alice" }); got != `\\wsl.localhost\Debian\home\alice` {
+		t.Fatalf("normal user = %q", got)
+	}
+	if got := resolveDefaultWSLRepoRoot([]string{"Debian"}, func(string) string { return "" }); got != `\\wsl.localhost\Debian` {
+		t.Fatalf("fallback on empty home = %q", got)
+	}
+
+	// UTF-16LE with BOM and trailing CRLF from wsl.exe.
+	utf16Home := []byte{0xFF, 0xFE, '/', 0, 'h', 0, 'o', 0, 'm', 0, 'e', 0, '/', 0, 'a', 0, 'l', 0, 'i', 0, 'c', 0, 'e', 0, '\r', 0, '\n', 0}
+	if got := parseWSLHomeOutput(utf16Home); got != "/home/alice" {
+		t.Fatalf("parseWSLHomeOutput(UTF-16) = %q", got)
+	}
+	if got := parseWSLHomeOutput([]byte("relative/path\n")); got != "" {
+		t.Fatalf("parseWSLHomeOutput(relative) = %q, want empty", got)
+	}
+}
+
+func TestWSLFindGitReposArgsAndOutput(t *testing.T) {
+	args := wslFindGitReposArgs("Debian", "/home/alice/projects/demo-app")
+	wantPrefix := []string{"-d", "Debian", "--cd", "/home/alice/projects/demo-app", "--exec", "find", ".", "-xdev"}
+	if len(args) < len(wantPrefix) || !slices.Equal(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("wslFindGitReposArgs prefix = %v", args)
+	}
+	for _, dir := range []string{"node_modules", "vendor", ".venv", "target"} {
+		if !slices.Contains(args, dir) {
+			t.Fatalf("wslFindGitReposArgs missing prune dir %q: %v", dir, args)
+		}
+	}
+
+	rootArgs := wslFindGitReposArgs("Debian", "/")
+	for _, dir := range []string{"proc", "sys", "dev", "run", "mnt"} {
+		if !slices.Contains(rootArgs, dir) {
+			t.Fatalf("root wslFindGitReposArgs missing prune dir %q: %v", dir, rootArgs)
+		}
+	}
+
+	raw := []byte(".git\n./sub/nested/.git\r\n./sub/nested/.git\n")
+	got := parseWSLFindGitOutput("Debian", "/home/alice/projects/demo-app", raw)
+	want := []string{
+		`\\wsl.localhost\Debian\home\alice\projects\demo-app`,
+		`\\wsl.localhost\Debian\home\alice\projects\demo-app\sub\nested`,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parseWSLFindGitOutput = %v, want %v", got, want)
+	}
+}
+
+func makeExitError(t *testing.T, code int, stderr []byte) *exec.ExitError {
+	t.Helper()
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/c", "exit", strconv.Itoa(code))
+	} else {
+		cmd = exec.Command("sh", "-c", "exit "+strconv.Itoa(code))
+	}
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError for code %d, got %v", code, err)
+	}
+	exitErr.Stderr = stderr
+	return exitErr
+}
+
+func TestClassifyWSLFindError(t *testing.T) {
+	if handled, err := classifyWSLFindError(nil); !handled || err != nil {
+		t.Fatalf("nil: got (%v, %v)", handled, err)
+	}
+	if handled, err := classifyWSLFindError(os.ErrNotExist); handled || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("non-ExitError: got (%v, %v)", handled, err)
+	}
+
+	exit127 := makeExitError(t, 127, []byte("find: command not found\n"))
+	if handled, err := classifyWSLFindError(exit127); handled || err == nil {
+		t.Fatalf("exit 127: got (%v, %v), want fallback", handled, err)
+	}
+
+	exit1Perm := makeExitError(t, 1, []byte("find: './root': Permission denied\n"))
+	if handled, err := classifyWSLFindError(exit1Perm); !handled || err != nil {
+		t.Fatalf("exit 1 permission denied: got (%v, %v)", handled, err)
+	}
+
+	utf16WSL := []byte{0xFF, 0xFE, 'w', 0, 's', 0, 'l', 0, ':', 0, ' ', 0, 'b', 0, 'a', 0, 'd', 0}
+	exit1WSL := makeExitError(t, 1, utf16WSL)
+	if handled, err := classifyWSLFindError(exit1WSL); !handled || err == nil || !strings.Contains(err.Error(), "wsl: bad") {
+		t.Fatalf("exit 1 wsl error: got (%v, %v)", handled, err)
+	}
+
+	exit2 := makeExitError(t, 2, nil)
+	if handled, err := classifyWSLFindError(exit2); !handled || err == nil {
+		t.Fatalf("exit 2: got (%v, %v)", handled, err)
 	}
 }

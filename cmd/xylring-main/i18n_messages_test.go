@@ -114,6 +114,12 @@ func TestEnglishDialogsAndStoredErrorsContainNoChinese(t *testing.T) {
 			a.startGitWrite("正在提交")
 			a.quitGuard = closeGuardState{open: true}
 		}, (*app).closeGuardModal},
+		{"folder-import-init", func(a *app) {
+			a.openFolderImportInit("/work/empty-dir")
+		}, (*app).folderImportModal},
+		{"folder-import-repos", func(a *app) {
+			a.openFolderImportRepos("/work/projects", []string{"/work/projects/alpha", "/work/projects/beta"})
+		}, (*app).folderImportModal},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,4 +1,5 @@
 /release/
+/release-dev/
 /release-notes.md
 /cmd/xylring-main/build/
 /cmd/xylring-main/.mygo/
