@@ -1,18 +1,22 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -435,7 +439,7 @@ func readBoardFileAt(path string) (boardFile, error) {
 		}
 		return boardFile{}, err
 	}
-	if len(strings.TrimSpace(string(b))) == 0 {
+	if len(bytes.TrimSpace(b)) == 0 {
 		return boardFile{Version: 1, NextSeq: 1}, nil
 	}
 	var bf boardFile
@@ -540,6 +544,15 @@ func withBoardLock(path string, fn func() error) error {
 }
 
 func writeBytesAtomic(path string, data []byte, tmpPattern string, perm os.FileMode) error {
+	return writeAtomic(path, tmpPattern, perm, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+}
+
+// writeAtomic writes a file's replacement beside it and renames it into place,
+// so a reader sees the old file or the new one, never a partial write.
+func writeAtomic(path, tmpPattern string, perm os.FileMode, write func(io.Writer) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -555,7 +568,7 @@ func writeBytesAtomic(path string, data []byte, tmpPattern string, perm os.FileM
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if _, err := tmp.Write(data); err != nil {
+	if err := write(tmp); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -583,12 +596,65 @@ func writeBoardFileAtomic(path string, bf boardFile) error {
 	if bf.NextSeq <= 0 {
 		bf.NextSeq = maxBoardSeq(bf.Tasks) + 1
 	}
-	data, err := json.MarshalIndent(bf, "", "  ")
-	if err != nil {
+	return writeAtomic(path, ".board-*.tmp", 0o644, func(w io.Writer) error {
+		buf := bufio.NewWriterSize(w, 32<<10)
+		if err := renderBoardFile(buf, bf); err != nil {
+			return err
+		}
+		return buf.Flush()
+	})
+}
+
+// Board files are written whole, so encoding them is most of a write's cost.
+// Indenting the whole file with json.MarshalIndent allocates several times the
+// file and needs a second buffer that big; writing them one task at a time
+// keeps the indented form everyone reads and holds only a single task.
+var boardTaskEncodeBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+func renderBoardFile(w io.Writer, bf boardFile) error {
+	if _, err := fmt.Fprintf(w, "{\n  \"version\": %d,\n  \"next_seq\": %d,\n  \"tasks\": ", int64(bf.Version), int64(bf.NextSeq)); err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	return writeBytesAtomic(path, data, ".board-*.tmp", 0o644)
+	if bf.Tasks == nil {
+		_, err := io.WriteString(w, "null\n}\n")
+		return err
+	}
+	if _, err := io.WriteString(w, "["); err != nil {
+		return err
+	}
+	scratch := boardTaskEncodeBuffers.Get().(*bytes.Buffer)
+	defer func() {
+		scratch.Reset()
+		boardTaskEncodeBuffers.Put(scratch)
+	}()
+	for i := range bf.Tasks {
+		task, err := json.Marshal(bf.Tasks[i])
+		if err != nil {
+			return err
+		}
+		if i > 0 {
+			if _, err := io.WriteString(w, ","); err != nil {
+				return err
+			}
+		}
+		if _, err := io.WriteString(w, "\n    "); err != nil {
+			return err
+		}
+		scratch.Reset()
+		if err := json.Indent(scratch, task, "    ", "  "); err != nil {
+			return err
+		}
+		if _, err := w.Write(scratch.Bytes()); err != nil {
+			return err
+		}
+	}
+	if len(bf.Tasks) > 0 {
+		if _, err := io.WriteString(w, "\n  "); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(w, "]\n}\n")
+	return err
 }
 
 func mutateBoardFile(fn func(*boardFile) error) (boardFile, error) {

@@ -1464,3 +1464,27 @@ func TestBoardUIDueDateCalendarInteractions(t *testing.T) {
 		t.Fatalf("expected cleared due date, got %+v err=%v", bf.Tasks, err)
 	}
 }
+
+func TestLeaveBoardReleasesFilteredColumns(t *testing.T) {
+	withTempBoardConfig(t)
+	a := &app{showBoard: true, dispatch: func(func()) {}}
+	a.board.loaded = true
+	bf := boardFile{Version: 1, NextSeq: 3, Tasks: []boardTask{
+		{ID: "T-1", Title: "待办任务", Status: boardTodo},
+		{ID: "T-2", Title: "已完成任务", Status: boardDone},
+	}}
+	a.applyBoardFile(bf, nil)
+
+	cols, total := a.boardFilteredByStatus()
+	if total != len(bf.Tasks) || len(cols) != len(boardStatuses) {
+		t.Fatalf("columns not built: total=%d cols=%d", total, len(cols))
+	}
+
+	a.leaveBoard()
+	if a.board.filtered != nil || a.board.filteredTotal != 0 {
+		t.Fatalf("leaving the board should release the filtered copies")
+	}
+	if _, total := a.boardFilteredByStatus(); total != len(bf.Tasks) {
+		t.Fatalf("reopening should rebuild the columns, got total=%d", total)
+	}
+}

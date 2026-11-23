@@ -193,7 +193,14 @@ func (a *app) reloadBoardSync() {
 
 func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
 	a.board.writeGen++
-	prev := a.board.file
+	// The previous file is only needed to tell what the open drawer's drafts
+	// differ from, so keep that one task and let the rest go before the new
+	// file is held: the two files no longer sit side by side in memory.
+	var prevTask boardTask
+	var hasPrev bool
+	if a.board.selectedID != "" {
+		prevTask, hasPrev = boardTaskByID(a.board.file.Tasks, a.board.selectedID)
+	}
 	a.board.file = bf
 	a.board.loadErr = ""
 	a.board.filtered = nil
@@ -211,7 +218,6 @@ func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
 		a.syncBoardDrafts(t)
 		return
 	}
-	prevTask, hasPrev := boardTaskByID(prev.Tasks, t.ID)
 	// A snapshot can arrive from another process while the drawer is open. Keep
 	// anything the user typed but has not saved yet; refresh the rest.
 	titleDirty := !hasPrev || a.board.titleDraft != prevTask.Title
@@ -378,6 +384,10 @@ func (a *app) leaveBoard() {
 	if a.showBoard {
 		a.commitBoardDrafts()
 	}
+	// The filtered columns hold a copy of every task they show; the board page
+	// builds them again when it comes back, so let them go while it is away.
+	a.board.filtered = nil
+	a.board.filteredTotal = 0
 	a.showBoard = false
 }
 
