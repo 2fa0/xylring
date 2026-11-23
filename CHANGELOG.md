@@ -7,6 +7,7 @@
 - 优化文件夹导入体验：打开非仓库目录时提供「初始化 Git 仓库」确认弹窗；打开包含多个 Git 仓库的目录时弹出列表供勾选导入（支持全选），取消后保持当前界面不变。
 - 修复看板界面不显示全局告警横幅以及看板详情抽屉在 Windows 标题栏下顶部被遮挡的问题；当前未打开的仓库加载失败时，告警横幅也会在当前窗口正常提示。
 - Git 失败日志与崩溃面包屑新增脱敏后的 stderr 摘要；新增 `build-dev.command` 用于快速构建开发测试包。
+- 优化看板内存占用与写入效率：看板文件改为逐任务流式编码写入，加载时不再整份复制文件，离开看板时释放筛选后的列缓存。
 
 ### Changes
 
@@ -15,6 +16,7 @@
 - Improved folder import workflow: prompt to initialize a Git repository when opening a non-repository directory, and present a selectable repository list (with Select All) when opening a folder containing multiple repositories.
 - Fixed the global alert banner not appearing on the board view and the board detail drawer overlapping custom Windows title bars; failed loads for repositories not yet in a tab now surface their banner properly.
 - Added redacted stderr summaries to Git failure logs and crash breadcrumbs, and added `build-dev.command` for quick local dev builds.
+- Reduced board memory footprint and write overhead: board persistence now streams tasks during encoding, loads without copying the whole file, and releases filtered column caches when leaving the board.
 
 ## 0.9.2 - 2026-11-19
 
