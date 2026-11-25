@@ -1226,6 +1226,43 @@ func (a *app) sidebarColorFilterBar(c *ui.Context, usedColors []repoColorTag) {
 	})
 }
 
+func (a *app) sidebarWorktreeOwnership(items []string) (map[string]bool, map[string]string, map[string][]repoWorktree) {
+	worktrees := make(map[string][]repoWorktree, len(items))
+	inAnyWorktree := map[string]bool{}
+	for _, p := range items {
+		wts := a.repoWorktrees(p)
+		worktrees[p] = wts
+		for _, wt := range wts {
+			inAnyWorktree[wt.path] = true
+		}
+	}
+	topLevel := make(map[string]bool, len(items))
+	ownerOf := make(map[string]string, len(items))
+	claimed := make(map[string]bool, len(items))
+	claim := func(p string) {
+		topLevel[p] = true
+		claimed[p] = true
+		ownerOf[p] = p
+		for _, wt := range worktrees[p] {
+			if !claimed[wt.path] {
+				claimed[wt.path] = true
+				ownerOf[wt.path] = p
+			}
+		}
+	}
+	for _, p := range items {
+		if !inAnyWorktree[p] {
+			claim(p)
+		}
+	}
+	for _, p := range items {
+		if !claimed[p] {
+			claim(p)
+		}
+	}
+	return topLevel, ownerOf, worktrees
+}
+
 func (a *app) visibleRepoItems() []string {
 	items := a.repoItems()
 	if a.repoColorFilter == "" {
@@ -1235,12 +1272,28 @@ func (a *app) visibleRepoItems() []string {
 	if !slices.ContainsFunc(usedColors, func(tag repoColorTag) bool { return tag.id == a.repoColorFilter }) {
 		return items
 	}
+	topLevel, ownerOf, _ := a.sidebarWorktreeOwnership(items)
 	groups := buildRepoGroups(items)
+	visibleRoots := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		if topLevel[g.root] && a.repoColors[g.root] == a.repoColorFilter {
+			visibleRoots[g.root] = true
+		}
+	}
 	visible := make([]string, 0, len(items))
 	for _, g := range groups {
-		if a.repoColors[g.root] == a.repoColorFilter {
+		rootVisible := visibleRoots[g.root] || (!topLevel[g.root] && visibleRoots[ownerOf[g.root]])
+		if rootVisible {
 			visible = append(visible, g.root)
-			visible = append(visible, g.children...)
+		}
+		for _, child := range g.children {
+			if topLevel[child] {
+				if rootVisible {
+					visible = append(visible, child)
+				}
+			} else if visibleRoots[ownerOf[child]] {
+				visible = append(visible, child)
+			}
 		}
 	}
 	return visible
@@ -1257,38 +1310,13 @@ type sidebarRow struct {
 // sidebarRows 摊平仓库列表：每个仓库后面跟它的工作树子行。
 // 同一个 Git 仓库家族只选定唯一的展示父级（优先主工作树，其次列表里最靠前的项），
 // 避免两个已打开的兄弟工作树互相把对方标成子行而一起消失。
+// 先在完整仓库列表上确定归属，再按 items 筛选，防止筛选掉父仓库后把工作树误显示为普通仓库。
 func (a *app) sidebarRows(items []string) []sidebarRow {
-	worktrees := make(map[string][]repoWorktree, len(items))
-	inAnyWorktree := map[string]bool{}
-	for _, p := range items {
-		wts := a.repoWorktrees(p)
-		worktrees[p] = wts
-		for _, wt := range wts {
-			inAnyWorktree[wt.path] = true
-		}
+	fullItems := items
+	if all := a.repoItems(); len(all) > 0 {
+		fullItems = all
 	}
-	topLevel := make(map[string]bool, len(items))
-	claimed := make(map[string]bool, len(items))
-	for _, p := range items {
-		if inAnyWorktree[p] {
-			continue
-		}
-		topLevel[p] = true
-		claimed[p] = true
-		for _, wt := range worktrees[p] {
-			claimed[wt.path] = true
-		}
-	}
-	for _, p := range items {
-		if claimed[p] {
-			continue
-		}
-		topLevel[p] = true
-		claimed[p] = true
-		for _, wt := range worktrees[p] {
-			claimed[wt.path] = true
-		}
-	}
+	topLevel, _, worktrees := a.sidebarWorktreeOwnership(fullItems)
 	rows := make([]sidebarRow, 0, len(items))
 	for i, p := range items {
 		if !topLevel[p] {

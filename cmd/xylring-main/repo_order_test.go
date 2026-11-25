@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -208,5 +209,84 @@ func TestRepoSidebarDragReorderUI(t *testing.T) {
 	want := []string{"/tmp/work/beta", "/tmp/work/alpha", "/tmp/work/alpha/child"}
 	if !slices.Equal(newItems, want) {
 		t.Fatalf("reordered items mismatch:\nwant: %v\ngot:  %v", want, newItems)
+	}
+}
+
+func TestOrderRepoItemsSingleNestedGroupParentBeforeChild(t *testing.T) {
+	a := &app{}
+	items := []string{"/tmp/work/parent/child", "/tmp/work/parent"}
+	got := a.orderRepoItems(items)
+	want := []string{"/tmp/work/parent", "/tmp/work/parent/child"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("single nested group order mismatch:\nwant: %v\ngot:  %v", want, got)
+	}
+}
+
+func TestAttachedWorktreeDoesNotParticipateInTopLevelColorFiltering(t *testing.T) {
+	mainPath := "/tmp/work/main"
+	wtPath := "/tmp/work/wt-feature"
+	otherPath := "/tmp/work/other"
+
+	a := &app{
+		tabs: []*repoTab{
+			{id: 1, path: mainPath, loaded: true, worktrees: []repoWorktree{{path: wtPath, branch: "feature"}}},
+			{id: 2, path: wtPath, loaded: true},
+			{id: 3, path: otherPath, loaded: true},
+		},
+		repoColors: map[string]string{
+			wtPath:    "red",
+			otherPath: "blue",
+		},
+	}
+
+	items := a.repoItems()
+	used := a.usedRepoColors(items)
+	if len(used) != 1 || used[0].id != "blue" {
+		t.Fatalf("attached worktree color should not appear in usedRepoColors: got %+v", used)
+	}
+
+	// Filtering by the attached worktree's stale color must not hide main or promote wtPath.
+	a.repoColorFilter = "red"
+	visible := a.visibleRepoItems()
+	if !slices.Equal(visible, items) {
+		t.Fatalf("filtering by stale attached worktree color should not filter out main: got %v, want %v", visible, items)
+	}
+
+	// Filtering by blue shows only otherPath.
+	a.repoColorFilter = "blue"
+	visible = a.visibleRepoItems()
+	wantBlue := []string{otherPath}
+	if !slices.Equal(visible, wantBlue) {
+		t.Fatalf("blue filter mismatch: got %v, want %v", visible, wantBlue)
+	}
+}
+
+func TestSidebarColorFilterDoesNotPromoteNestedWorktreeOfFilteredOwner(t *testing.T) {
+	base := t.TempDir()
+	repoA := filepath.Join(base, "repo-a")
+	repoB := filepath.Join(base, "repo-b")
+	// wtB is a linked worktree of repoB physically located inside repoA's directory tree.
+	wtB := filepath.Join(repoA, "nested-wt-of-b")
+
+	a := &app{
+		tabs: []*repoTab{
+			{id: 1, path: repoA, loaded: true, branch: "main"},
+			{id: 2, path: repoB, loaded: true, branch: "main", worktrees: []repoWorktree{{path: wtB, branch: "feat/b"}}},
+			{id: 3, path: wtB, loaded: true, branch: "feat/b"},
+		},
+		repoColors: map[string]string{
+			repoA: "red",
+			repoB: "blue",
+		},
+		repoColorFilter: "red",
+	}
+
+	visible := a.visibleRepoItems()
+	if !slices.Equal(visible, []string{repoA}) {
+		t.Fatalf("nested worktree of filtered-out owner should not leak into visibleRepoItems: got %v", visible)
+	}
+	rows := a.sidebarRows(visible)
+	if len(rows) != 1 || rows[0].path != repoA {
+		t.Fatalf("expected only repoA row after filtering out repoB, got %+v", rows)
 	}
 }

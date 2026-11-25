@@ -421,10 +421,7 @@ func (a *app) orderRepoItems(items []string) []string {
 		return items
 	}
 	groups := buildRepoGroups(items)
-	if len(groups) <= 1 {
-		return items
-	}
-	if len(a.repoOrder) > 0 {
+	if len(groups) > 1 && len(a.repoOrder) > 0 {
 		orderMap := make(map[string]int, len(a.repoOrder))
 		for idx, path := range a.repoOrder {
 			orderMap[path] = idx

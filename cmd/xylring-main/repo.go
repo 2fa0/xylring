@@ -1069,8 +1069,12 @@ func (a *app) usedRepoColors(items []string) []repoColorTag {
 	if len(a.repoColors) == 0 || len(items) == 0 {
 		return nil
 	}
+	topLevel, _, _ := a.sidebarWorktreeOwnership(items)
 	used := make(map[string]bool)
 	for _, g := range buildRepoGroups(items) {
+		if !topLevel[g.root] {
+			continue
+		}
 		if tag, ok := a.repoColor(g.root); ok {
 			used[tag.id] = true
 		}
@@ -1088,12 +1092,20 @@ func (a *app) usedRepoColors(items []string) []repoColorTag {
 }
 
 func (a *app) sortReposByColor() {
-	groups := buildRepoGroups(a.repoItems())
+	items := a.repoItems()
+	groups := buildRepoGroups(items)
 	if len(groups) <= 1 {
 		return
 	}
+	_, ownerOf, _ := a.sidebarWorktreeOwnership(items)
+	colorKey := func(root string) int {
+		if owner := ownerOf[root]; owner != "" {
+			return repoColorIndex(a.repoColors[owner])
+		}
+		return repoColorIndex(a.repoColors[root])
+	}
 	sort.SliceStable(groups, func(i, j int) bool {
-		return repoColorIndex(a.repoColors[groups[i].root]) < repoColorIndex(a.repoColors[groups[j].root])
+		return colorKey(groups[i].root) < colorKey(groups[j].root)
 	})
 	order := make([]string, len(groups))
 	for i, g := range groups {
