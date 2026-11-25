@@ -1064,8 +1064,8 @@ func (a *app) usedRepoColors(items []string) []repoColorTag {
 		return nil
 	}
 	used := make(map[string]bool)
-	for _, p := range items {
-		if tag, ok := a.repoColor(p); ok {
+	for _, g := range buildRepoGroups(items) {
+		if tag, ok := a.repoColor(g.root); ok {
 			used[tag.id] = true
 		}
 	}
@@ -1082,15 +1082,18 @@ func (a *app) usedRepoColors(items []string) []repoColorTag {
 }
 
 func (a *app) sortReposByColor() {
-	items := a.repoItems()
-	if len(items) <= 1 {
+	groups := buildRepoGroups(a.repoItems())
+	if len(groups) <= 1 {
 		return
 	}
-	sorted := slices.Clone(items)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return repoColorIndex(a.repoColors[sorted[i]]) < repoColorIndex(a.repoColors[sorted[j]])
+	sort.SliceStable(groups, func(i, j int) bool {
+		return repoColorIndex(a.repoColors[groups[i].root]) < repoColorIndex(a.repoColors[groups[j].root])
 	})
-	a.repoOrder = sorted
+	order := make([]string, len(groups))
+	for i, g := range groups {
+		order[i] = g.root
+	}
+	a.repoOrder = order
 	a.queueSession()
 }
 

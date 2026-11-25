@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -539,5 +540,85 @@ func TestRepoColorMenuKeyboard(t *testing.T) {
 	tt.Key(0, ui.KeyEnter)
 	if got := a.repoColors[path]; got != "orange" {
 		t.Fatalf("expected keyboard to select orange, got %q", got)
+	}
+}
+
+func TestNestedRepoColorGroupFilterAndSort(t *testing.T) {
+	base := t.TempDir()
+	waf := filepath.Join(base, "demo-group")
+	child1 := filepath.Join(waf, "service-api")
+	child2 := filepath.Join(waf, "web-app")
+	other := filepath.Join(base, "xylring")
+	for _, p := range []string{waf, child1, child2, other} {
+		_ = os.MkdirAll(p, 0o755)
+	}
+
+	tabWaf := newTab(1, waf)
+	tabWaf.loaded = true
+	tabWaf.title = "demo-group"
+	tabWaf.branch = "main"
+
+	a := &app{
+		tabs:      []*repoTab{tabWaf},
+		active:    0,
+		foundFrom: base,
+		found:     []string{waf, child1, child2, other},
+		repoColors: map[string]string{
+			waf:    "blue",
+			child1: "green", // stale color on nested child should be ignored
+			other:  "red",
+		},
+		dispatch: func(fn func()) {},
+	}
+
+	// usedRepoColors only considers top-level group roots
+	used := a.usedRepoColors(a.repoItems())
+	if len(used) != 2 || used[0].id != "red" || used[1].id != "blue" {
+		t.Fatalf("expected used colors [red, blue], got %+v", used)
+	}
+
+	tt := ui.NewTester(a.view, 1200, 760)
+	defer retireTester(tt)
+	tt.Frame()
+
+	// Nested child repo should not show 标签颜色 in context menu
+	if err := tt.RightClick("service-api"); err != nil {
+		t.Fatalf("RightClick on nested repo failed: %v", err)
+	}
+	for _, it := range tt.Menu() {
+		if it == "标签颜色" {
+			t.Fatalf("nested child repo should not have 标签颜色 menu item, got %+v", tt.Menu())
+		}
+	}
+	tt.CloseMenu()
+	tt.Frame()
+
+	// Filtering by parent's blue tag should include parent + all nested children
+	if err := tt.Click("蓝色"); err != nil {
+		t.Fatalf("Click(蓝色) filter failed: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("demo-group") || !tt.HasText("service-api") || !tt.HasText("web-app") || tt.HasText("xylring") {
+		t.Fatalf("expected WAF group (parent + children) visible and xylring hidden, texts=%v", tt.Texts())
+	}
+
+	// Clearing filter restores all repos
+	if err := tt.Click("全部"); err != nil {
+		t.Fatalf("Click(全部) filter failed: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("xylring") {
+		t.Fatalf("expected xylring visible after clearing filter, texts=%v", tt.Texts())
+	}
+
+	// Sorting by color orders group roots only (red before blue) and keeps children attached
+	a.sortReposByColor()
+	wantOrder := []string{other, waf}
+	if !slices.Equal(a.repoOrder, wantOrder) {
+		t.Fatalf("expected repoOrder %v, got %v", wantOrder, a.repoOrder)
+	}
+	wantItems := []string{other, waf, child1, child2}
+	if got := a.repoItems(); !slices.Equal(got, wantItems) {
+		t.Fatalf("expected repoItems %v, got %v", wantItems, got)
 	}
 }

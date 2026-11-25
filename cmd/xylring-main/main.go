@@ -1025,8 +1025,8 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			closing = p
 		}
 		// 工作树子行按其状态区分菜单：失效工作树只提供清理记录与复制路径，正常工
-		// 作树支持目录操作与安全移除；颜色标签只属于仓库行。
-		contextMenu := func(p, parentRepo string, wt *repoWorktree) func(m *ui.Menu) {
+		// 作树支持目录操作与安全移除；颜色标签只属于顶层仓库行。
+		contextMenu := func(p, parentRepo string, wt *repoWorktree, allowColor bool) func(m *ui.Menu) {
 			return func(m *ui.Menu) {
 				if wt != nil && wt.prunable != "" {
 					if m.Item(tr("清理失效记录")).Chosen() {
@@ -1039,7 +1039,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 					}
 					return
 				}
-				if wt == nil {
+				if allowColor {
 					a.repoColorMenu(m, p)
 				}
 				a.dockerTerminalMenu(m, p)
@@ -1103,7 +1103,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			padL := float32(10) + float32(level)*c.Theme().Space(4)
 			if record.worktree != nil {
 				parentRepo := record.parentRepo
-				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, parentRepo, record.worktree))
+				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, parentRepo, record.worktree, false))
 				return
 			}
 			label := repoListLabel(a.foundFrom, visibleItems, p)
@@ -1120,10 +1120,12 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				tip += tr("（工作区有未提交或未跟踪的代码）")
 			}
 			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
-			row.ContextMenu(contextMenu(p, p, nil))
+			row.ContextMenu(contextMenu(p, p, nil, level == 0))
 			row.Children(func() {
-				if tag, ok := a.repoColor(p); ok {
-					ui.Box(c).Size(8, 8).Radius(4).Background(tag.color).Shrink(0)
+				if level == 0 {
+					if tag, ok := a.repoColor(p); ok {
+						ui.Box(c).Size(8, 8).Radius(4).Background(tag.color).Shrink(0)
+					}
 				}
 				if isDockerRepoPath(p) {
 					// 类型标记只出现一次：名字已经说明是哪个容器。
@@ -1228,10 +1230,12 @@ func (a *app) visibleRepoItems() []string {
 	if !slices.ContainsFunc(usedColors, func(tag repoColorTag) bool { return tag.id == a.repoColorFilter }) {
 		return items
 	}
+	groups := buildRepoGroups(items)
 	visible := make([]string, 0, len(items))
-	for _, p := range items {
-		if a.repoColors[p] == a.repoColorFilter {
-			visible = append(visible, p)
+	for _, g := range groups {
+		if a.repoColors[g.root] == a.repoColorFilter {
+			visible = append(visible, g.root)
+			visible = append(visible, g.children...)
 		}
 	}
 	return visible
