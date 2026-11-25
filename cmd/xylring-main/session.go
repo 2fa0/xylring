@@ -69,7 +69,22 @@ func loadSession() savedSession {
 	return s
 }
 func (a *app) queueSession() {
-	if !a.persist || !a.sessionReady || a.closed {
+	a.queueSessionWithPending(false)
+}
+
+func (a *app) flushSessionOnClose() {
+	a.queueSessionWithPending(true)
+	if a.sessionWrites != nil {
+		close(a.sessionWrites)
+		a.sessionWrites = nil
+	}
+}
+
+func (a *app) queueSessionWithPending(allowPendingRestore bool) {
+	if !a.persist || a.closed {
+		return
+	}
+	if !a.sessionReady && !(allowPendingRestore && a.sessionLoaded) {
 		return
 	}
 	select {
@@ -99,7 +114,9 @@ func (a *app) queueSession() {
 	for _, p := range a.recentProvenance {
 		s.RecentProvenance = append(s.RecentProvenance, savedProvenance{Agent: p.agent, Model: p.model})
 	}
+	livePaths := make(map[string]bool, len(a.tabs))
 	for _, t := range a.tabs {
+		livePaths[t.path] = true
 		f := ""
 		if t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
 			f = t.compareFiles[t.fileSel].path
@@ -128,8 +145,19 @@ func (a *app) queueSession() {
 			ProvenanceEdited: t.commitProvEdited,
 		})
 	}
+	for _, r := range a.preservedRepos {
+		if !livePaths[r.Path] {
+			s.Repos = append(s.Repos, r)
+		}
+	}
 	if t := a.activeTab(); t != nil {
 		s.Active = t.path
+	} else if a.preservedActive != "" {
+		s.Active = a.preservedActive
+	}
+	if len(s.Found) == 0 && s.FoundFrom == "" && (len(a.preservedFound) > 0 || a.preservedFoundFrom != "") {
+		s.Found = a.preservedFound
+		s.FoundFrom = a.preservedFoundFrom
 	}
 	bwEqual := (s.BottomFullWidth == nil && a.lastSession != nil && a.lastSession.BottomFullWidth == nil) ||
 		(s.BottomFullWidth != nil && a.lastSession != nil && a.lastSession.BottomFullWidth != nil && *s.BottomFullWidth == *a.lastSession.BottomFullWidth)
@@ -211,25 +239,98 @@ func writeSessionQueue(ch <-chan savedSession, results chan error, write func(sa
 }
 
 func (a *app) restoreSession() {
+	a.restoreSessionWithRepos(true)
+}
+
+func (a *app) applySharedSessionState(s savedSession) {
+	a.ringSkipNotice = s.RingSkipNotice
+	if len(a.recentProvenance) == 0 {
+		for _, p := range s.RecentProvenance {
+			if len(a.recentProvenance) >= 8 {
+				break
+			}
+			a.recentProvenance = append(a.recentProvenance, provenance{agent: p.Agent, model: p.Model})
+		}
+	}
+	if len(a.repoOrder) == 0 && len(s.RepoOrder) > 0 {
+		a.repoOrder = slices.Clone(s.RepoOrder)
+	}
+}
+
+func (a *app) preserveSessionRepos(s savedSession) {
+	a.preservedRepos = slices.Clone(s.Repos)
+	a.preservedActive = s.Active
+	a.preservedFound = slices.Clone(s.Found)
+	a.preservedFoundFrom = s.FoundFrom
+	for _, r := range s.Repos {
+		if isDockerRepoPath(r.Path) && r.DockerName != "" {
+			if t, ok := parseDockerRepoKey(r.Path); ok {
+				rememberDockerContainer(t.container, r.DockerName)
+			}
+		}
+	}
+}
+
+func (a *app) consumePreservedRepo(path string) (savedRepo, bool) {
+	for i, r := range a.preservedRepos {
+		if r.Path == path {
+			a.preservedRepos = slices.Delete(a.preservedRepos, i, i+1)
+			return r, true
+		}
+	}
+	return savedRepo{}, false
+}
+
+func mergeSavedRepoIntoTab(tab *repoTab, saved savedRepo) {
+	if tab == nil {
+		return
+	}
+	if tab.commitMsg == "" && saved.Draft != "" {
+		tab.commitMsg = saved.Draft
+	}
+	if !tab.commitAmend && saved.Amend {
+		tab.commitAmend = true
+	}
+	if !tab.commitProvEdited && tab.commitProv == (provenance{}) && (saved.Provenance != (savedProvenance{}) || saved.ProvenanceEdited) {
+		tab.commitProv = provenance{
+			agent:       saved.Provenance.Agent,
+			model:       saved.Provenance.Model,
+			attribution: saved.Provenance.Attribution,
+		}
+		tab.commitProvEdited = saved.ProvenanceEdited
+	}
+	if tab.pendingSession == nil && tab.inspecting == zeroHash && tab.restore == nil && (saved.Commit != "" || saved.File != "") {
+		savedCopy := saved
+		tab.pendingSession = &savedCopy
+	}
+}
+
+func (a *app) restoreSessionWithRepos(openRepos bool) {
 	s := loadSession()
-	restoreRepos := !a.restoreDisabled
+	a.applySharedSessionState(s)
+	a.preserveSessionRepos(s)
+	a.sessionLoaded = true
+	for _, t := range a.tabs {
+		if saved, ok := a.consumePreservedRepo(t.path); ok {
+			mergeSavedRepoIntoTab(t, saved)
+		}
+	}
+	restoreRepos := openRepos && !a.restoreDisabled
+	if !restoreRepos {
+		a.sessionReady = true
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var valid []savedRepo
 		var found []string
 		for _, path := range s.Found {
-			if !restoreRepos {
-				break
-			}
 			if isGitWorkTree(path) {
 				found = append(found, path)
 			}
 		}
 		for _, r := range s.Repos {
-			if !restoreRepos {
-				break
-			}
 			if isDockerRepoPath(r.Path) {
 				// 容器可能尚未启动；不要在恢复会话时把它当成失效记录丢掉。
 				if r.DockerName != "" {
@@ -246,36 +347,26 @@ func (a *app) restoreSession() {
 			}
 		}
 		a.post(func() {
-			a.ringSkipNotice = s.RingSkipNotice
-			for _, p := range s.RecentProvenance {
-				if len(a.recentProvenance) >= 8 {
-					break
-				}
-				a.recentProvenance = append(a.recentProvenance, provenance{agent: p.Agent, model: p.Model})
-			}
-			if len(s.RepoOrder) > 0 {
-				a.repoOrder = s.RepoOrder
-			}
-			if restoreRepos && len(a.tabs) == 0 {
+			if len(a.tabs) == 0 {
 				if a.foundFrom == "" {
 					a.found, a.foundFrom = found, s.FoundFrom
 				}
 				for _, r := range valid {
 					a.openRoot(r.Path)
-					t := a.tabByPath(r.Path)
-					if t == nil {
-						continue
+					if t := a.tabByPath(r.Path); t != nil {
+						mergeSavedRepoIntoTab(t, r)
 					}
-					t.commitMsg = r.Draft
-					t.commitAmend = r.Amend
-					t.commitProv = provenance{agent: r.Provenance.Agent, model: r.Provenance.Model, attribution: r.Provenance.Attribution}
-					t.commitProvEdited = r.ProvenanceEdited
-					t.pendingSession = &r
 				}
 				for i, t := range a.tabs {
 					if t.path == s.Active {
 						a.activate(i)
 						break
+					}
+				}
+			} else {
+				for _, t := range a.tabs {
+					if saved, ok := a.consumePreservedRepo(t.path); ok {
+						mergeSavedRepoIntoTab(t, saved)
 					}
 				}
 			}

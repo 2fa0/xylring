@@ -620,18 +620,55 @@ func configFile(name string) (string, error) {
 }
 
 func migrateConfigDir(legacy, cur string) error {
-	if _, err := os.Stat(cur); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if _, err := os.Stat(legacy); err != nil {
+	legacyInfo, err := os.Stat(legacy)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	return os.Rename(legacy, cur)
+	if !legacyInfo.IsDir() {
+		return nil
+	}
+	curInfo, err := os.Stat(cur)
+	if os.IsNotExist(err) {
+		return os.Rename(legacy, cur)
+	}
+	if err != nil {
+		return err
+	}
+	if !curInfo.IsDir() {
+		return nil
+	}
+	return migrateMissingConfigEntries(legacy, cur)
+}
+
+func migrateMissingConfigEntries(srcDir, dstDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		src := filepath.Join(srcDir, entry.Name())
+		dst := filepath.Join(dstDir, entry.Name())
+		dstInfo, err := os.Stat(dst)
+		if err == nil {
+			if entry.IsDir() && dstInfo.IsDir() {
+				if err := migrateMissingConfigEntries(src, dst); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return err
+		}
+	}
+	_ = os.Remove(srcDir)
+	return nil
 }
 
 func writeJSON(path string, value any) error {

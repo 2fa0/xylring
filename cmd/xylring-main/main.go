@@ -117,11 +117,16 @@ type app struct {
 	fetch        fetchDialog
 	folderImport folderImportDialog
 
+	sessionLoaded      bool
 	sessionReady       bool
 	sessionDone        chan struct{}
 	sessionWrites      chan savedSession
 	lastSession        *savedSession
 	sessionResults     chan error
+	preservedRepos     []savedRepo
+	preservedActive    string
+	preservedFound     []string
+	preservedFoundFrom string
 	showOperation      bool
 	op                 repoOperation
 	opCancel           context.CancelFunc
@@ -2409,11 +2414,7 @@ func main() {
 		})
 		configureWindowRendering(a.win)
 		paths := normalizePaths(os.Args[1:], "")
-		if len(paths) == 0 {
-			a.restoreSession()
-		} else {
-			a.sessionReady = true
-		}
+		a.restoreSessionWithRepos(len(paths) == 0)
 		// 先把 Git 探明白，缺 Git 时首页直接说清楚原因。
 		a.checkGit(false)
 		for _, path := range paths {
@@ -2424,11 +2425,7 @@ func main() {
 		a.win.OnClose(a.closeGuardHook)
 		a.win.OnClosed(func() {
 			a.commitBoardDrafts()
-			a.queueSession()
-			if a.sessionWrites != nil {
-				close(a.sessionWrites)
-				a.sessionWrites = nil
-			}
+			a.flushSessionOnClose()
 			a.closed = true
 			if a.scanCancel != nil {
 				a.scanCancel()
@@ -2453,11 +2450,7 @@ func main() {
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
-	if a.sessionWrites != nil {
-		a.queueSession()
-		close(a.sessionWrites)
-		a.sessionWrites = nil
-	}
+	a.flushSessionOnClose()
 	if a.sessionDone != nil {
 		<-a.sessionDone
 	}

@@ -517,6 +517,9 @@ func (a *app) openRoot(root string) {
 	a.showHome = false
 	for i, t := range a.tabs {
 		if t.path == root {
+			if saved, ok := a.consumePreservedRepo(root); ok {
+				mergeSavedRepoIntoTab(t, saved)
+			}
 			a.activate(i)
 			a.checkActiveRepo()
 			a.remember(root)
@@ -525,6 +528,9 @@ func (a *app) openRoot(root string) {
 	}
 	a.nextID++
 	tab := newTab(a.nextID, root)
+	if saved, ok := a.consumePreservedRepo(root); ok {
+		mergeSavedRepoIntoTab(tab, saved)
+	}
 	a.tabs = append(a.tabs, tab)
 	a.activate(len(a.tabs) - 1)
 	a.setBanner("", "")
