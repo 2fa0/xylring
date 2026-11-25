@@ -347,9 +347,14 @@ func TestRecentRepoRestoresRepoList(t *testing.T) {
 }
 
 func TestRepoRootMissing(t *testing.T) {
-	_, err := repoRoot(context.Background(), filepath.Join(t.TempDir(), "gone"))
-	if err == nil || err.Error() != "找不到这个仓库" {
+	missing := filepath.Join(t.TempDir(), "gone")
+	_, err := repoRoot(context.Background(), missing)
+	if !errors.Is(err, errRepoMissing) {
 		t.Fatalf("err=%v", err)
+	}
+	// 只说“找不到这个仓库”，用户无法判断是哪一个。
+	if !strings.Contains(err.Error(), missing) {
+		t.Fatalf("报错没有指明仓库：%v", err)
 	}
 }
 
@@ -357,9 +362,13 @@ func TestRepoRootNotGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip(err)
 	}
-	_, err := repoRoot(context.Background(), t.TempDir())
-	if err == nil || err.Error() != "不是 Git 仓库" {
+	dir := t.TempDir()
+	_, err := repoRoot(context.Background(), dir)
+	if !errors.Is(err, errNotGitRepo) {
 		t.Fatalf("err=%v", err)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Fatalf("报错没有指明目录：%v", err)
 	}
 }
 
@@ -378,7 +387,7 @@ func TestOpenMissingRecentRepo(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout")
 	}
-	if a.banner != "找不到这个仓库" || a.bannerPath != missing {
+	if a.banner != "找不到这个仓库："+missing || a.bannerPath != missing {
 		t.Fatalf("banner=%q path=%q", a.banner, a.bannerPath)
 	}
 	if len(a.tabs) != 0 {

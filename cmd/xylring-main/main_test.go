@@ -778,3 +778,22 @@ func TestRecentReposSearchSubmitOpensRepo(t *testing.T) {
 		t.Fatalf("回车未打开匹配的目标仓库：tabs=%d got=%q want=%q", len(a.tabs), a.tabs[0].path, want)
 	}
 }
+
+// 首次读取失败时一个提交都没有，错误区必须说明是哪一步失败，并给出就地重试。
+func TestHistoryLoadErrorOffersRetry(t *testing.T) {
+	tab := newTab(1, "/tmp/broken-repo")
+	tab.loaded = true
+	tab.err = "读取提交历史失败：fatal: your current branch 'main' does not have any commits yet"
+	a := &app{tabs: []*repoTab{tab}}
+	defer tab.cancel()
+	tt := ui.NewTester(a.view, 1100, 720)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if !tt.HasText("读取提交历史失败") {
+		t.Fatalf("错误没说明失败的是哪一步：%q", tt.Texts())
+	}
+	if !tt.HasText("重试") {
+		t.Fatalf("首次读取失败没有重试入口：%q", tt.Texts())
+	}
+}

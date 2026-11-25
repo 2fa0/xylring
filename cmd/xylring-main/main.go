@@ -862,7 +862,7 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 				}
 			}
 			if a.banner != "" && a.bannerPath == path {
-				ui.Text(c, trMessage(a.banner)).FontSize(12).TextColor(t.Danger)
+				ui.Text(c, trMessage(bannerWithoutLocation(a.banner, path))).FontSize(12).TextColor(t.Danger)
 			}
 		})
 		if closeIconButton(c, fmt.Sprintf("close-recent-%d", i), tr("关闭 ")+title).Clicked() {
@@ -1214,13 +1214,29 @@ func (a *app) globalAlertBanner(c *ui.Context, tab *repoTab) {
 	if tab != nil && a.bannerPath != "" && a.bannerPath != tab.path && a.hasTabPath(a.bannerPath) {
 		return
 	}
+	// 横幅也会出现在没有仓库上下文的页面（看板、主页）：那里只报错误不报位置，
+	// 用户无法判断说的是哪个仓库。当前标签页就是出事仓库、或消息里已经带了位置时，
+	// 同一屏不再重复。
+	location := ""
+	if a.bannerPath != "" && (tab == nil || tab.path != a.bannerPath) && !strings.Contains(a.banner, repoLocation(a.bannerPath)) {
+		location = repoLocation(a.bannerPath)
+	}
 	t := c.Theme()
 	ui.Row(c.Key("global-alert-banner")).FillWidth().Padding(8, 14).Gap(10).AlignItems(ui.Center).
 		Background(t.Danger.Alpha(0.1)).Border(1, t.Danger.Alpha(0.28)).Radius(t.Radius).Shrink(0).Transition(fadeEnter()).Children(func() {
 		ui.Icon(c, iconAlertCircle).Size(16, 16).TextColor(t.Danger).Shrink(0)
-		ui.Text(c, trMessage(a.banner)).FontSize(13).TextColor(t.Danger).Grow(1).MinWidth(0)
+		ui.Column(c.Key("global-alert-text")).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, trMessage(a.banner)).FontSize(13).TextColor(t.Danger).MinWidth(0)
+			if location != "" {
+				ui.Text(c, location).FontSize(11.5).Font("monospace").TextColor(t.Danger.Alpha(0.75)).SingleLine().MinWidth(0).Tooltip(repoLocationTooltip(a.bannerPath))
+			}
+		})
 		a.gitLogBannerButton(c)
-		copyIconButton(c, "banner-copy-err", tr("复制错误信息"), a.banner)
+		copyText := a.banner
+		if location != "" {
+			copyText = a.banner + "\n" + location
+		}
+		copyIconButton(c, "banner-copy-err", tr("复制错误信息"), copyText)
 		if closeBtn := closeIconButton(c, "banner-close", tr("关闭提示")); closeBtn.Clicked() {
 			a.setBanner("", "")
 		}
@@ -1399,6 +1415,12 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 			if !a.gitReady() && !isDockerRepoPath(tab.path) {
 				if ui.PrimaryButton(c.Key("git-retry-pane"), tr("重新检测")).Disabled(a.git.checking).Clicked() {
 					a.checkGit(true)
+				}
+			}
+			// Git 正常却读取失败时也要能就地重试，否则用户只能关掉标签再打开。
+			if a.gitReady() && !isDockerRepoPath(tab.path) {
+				if ui.PrimaryButton(c.Key("history-retry-pane"), tr("重试")).Disabled(tab.loading).Clicked() {
+					a.reload(tab)
 				}
 			}
 		})

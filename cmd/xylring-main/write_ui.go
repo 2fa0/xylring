@@ -415,7 +415,7 @@ func (a *app) openCommitWrite(tab *repoTab, kind string, item commit) {
 			}
 			a.write.preparing = false
 			if err != nil {
-				a.write.err = err.Error()
+				a.write.err = "读取提交说明失败：" + err.Error()
 				return
 			}
 			a.write.message = msg

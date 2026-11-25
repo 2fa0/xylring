@@ -515,3 +515,20 @@ func TestInspectRuleFilesAndRingModalFlow(t *testing.T) {
 		t.Fatalf("missing configured chip after save: %v", tt.Texts())
 	}
 }
+
+// 年轮弹窗用同一处显示错误，前缀必须说清是开启、停用还是清除失败。
+func TestRingActionErrorPrefixNamesStep(t *testing.T) {
+	cases := map[string]string{
+		"install":   "开启年轮 Hook 失败：",
+		"uninstall": "停用年轮 Hook 失败：",
+		"clear":     "清除印章失败：",
+	}
+	for action, want := range cases {
+		if got := ringActionErrorPrefix(action); got != want {
+			t.Errorf("%s -> %q, want %q", action, got, want)
+		}
+	}
+	if got := ringActionErrorPrefix("other"); got == "" {
+		t.Error("未知动作也要有前缀")
+	}
+}
