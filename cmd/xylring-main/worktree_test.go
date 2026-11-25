@@ -426,3 +426,148 @@ func TestWorktreeCommitCardExpandOnHoverAndPin(t *testing.T) {
 		t.Fatalf("点击固定后即使鼠标移开也应保持展开：%q", tt.Texts())
 	}
 }
+
+func TestWorktreeRemovalCheckChangedDetectsNewDirtyPath(t *testing.T) {
+	wt := repoWorktree{path: "/tmp/wt", head: hashN(1)}
+	prev := worktreeRemoveCheck{
+		dirty:        true,
+		dirtyEntries: []string{"?? a.txt"},
+	}
+	curSame := worktreeRemoveCheck{
+		dirty:        true,
+		dirtyEntries: []string{"?? a.txt"},
+	}
+	if worktreeRemovalCheckChanged(wt, wt, prev, curSame) {
+		t.Fatal("identical dirty entries should not trigger change")
+	}
+	curAdded := worktreeRemoveCheck{
+		dirty:        true,
+		dirtyEntries: []string{"?? a.txt", "?? b.txt"},
+	}
+	if !worktreeRemovalCheckChanged(wt, wt, prev, curAdded) {
+		t.Fatal("adding a new untracked file while already dirty must trigger re-confirmation")
+	}
+}
+
+func TestWorktreeRemovalDetectsInPlaceEditsAndPruneGuardsRecoverableState(t *testing.T) {
+	dir, git := initTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-m", "base")
+
+	wtDir := filepath.Join(t.TempDir(), "linked-wt")
+	git("worktree", "add", "-b", "feat/check", wtDir)
+
+	// Edit tracked file in place after initial inspection.
+	if err := os.WriteFile(filepath.Join(wtDir, "base.txt"), []byte("v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wt1, check1 := inspectWorktreeRemoval(context.Background(), dir, repoWorktree{path: wtDir})
+	if check1.err != "" || !check1.dirty || check1.stateDigest == "" {
+		t.Fatalf("unexpected initial check: %+v", check1)
+	}
+	if err := os.WriteFile(filepath.Join(wtDir, "base.txt"), []byte("v3-edited-again\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wt2, check2 := inspectWorktreeRemoval(context.Background(), dir, wt1)
+	if !worktreeRemovalCheckChanged(wt1, wt2, check1, check2) {
+		t.Fatal("in-place edit to the same dirty file must trigger re-confirmation")
+	}
+
+	// Stage a change, then remove the worktree directory to simulate an offline drive / missing dir.
+	if err := os.WriteFile(filepath.Join(wtDir, "staged.txt"), []byte("keep me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("-C", wtDir, "add", "staged.txt")
+	if err := os.RemoveAll(wtDir); err != nil {
+		t.Fatal(err)
+	}
+
+	prunableWt, prunableCheck := inspectWorktreeRemoval(context.Background(), dir, repoWorktree{path: wtDir})
+	if prunableWt.prunable == "" || prunableCheck.err != "" || !prunableCheck.prunableStaged {
+		t.Fatalf("expected prunable staged state detected, got wt=%+v check=%+v", prunableWt, prunableCheck)
+	}
+	if err := pruneWorktreeRecord(context.Background(), dir, wtDir, false); err == nil {
+		t.Fatal("expected non-forced prune to stop when staged changes exist in index")
+	}
+	if err := pruneWorktreeRecord(context.Background(), dir, wtDir, true); err != nil {
+		t.Fatalf("expected forced prune to succeed: %v", err)
+	}
+}
+
+func TestWorktreeRemovalDetectsReflogOnlyCommitsAndDraftAndPrunableChanges(t *testing.T) {
+	dir, git := initTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-m", "base")
+
+	wtDir := filepath.Join(t.TempDir(), "wt-reflog")
+	git("worktree", "add", "-b", "feat/reflog", wtDir)
+
+	// Create a commit in the linked worktree, then reset back to base so HEAD is merged
+	// while the abandoned commit still lives only in the worktree's HEAD reflog.
+	if err := os.WriteFile(filepath.Join(wtDir, "only-in-reflog.txt"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("-C", wtDir, "add", ".")
+	git("-C", wtDir, "commit", "-m", "abandoned work")
+	git("-C", wtDir, "reset", "--hard", "HEAD~1")
+
+	wt, check := inspectWorktreeRemoval(context.Background(), dir, repoWorktree{path: wtDir})
+	if check.err != "" {
+		t.Fatalf("unexpected check error: %s", check.err)
+	}
+	if check.unmerged {
+		t.Fatal("expected HEAD to be merged after reset")
+	}
+	if !check.reflogUnreachable {
+		t.Fatal("expected reflog-only unreachable commit to be flagged on normal worktree removal")
+	}
+
+	// In-app commit draft must be surfaced and require force confirmation.
+	updates := make(chan func(), 16)
+	a := &app{
+		dispatch: func(fn func()) { updates <- fn },
+		tabs:     []*repoTab{{path: wt.path, commitMsg: "wip commit message"}},
+	}
+	a.openWorktreeRemoveModal(dir, wt)
+	waitUpdates(t, updates, func() bool { return !a.wtRemove.check.checking })
+	if !a.wtRemove.check.hasDraft {
+		t.Fatal("expected in-app commit draft to be detected")
+	}
+	tt := ui.NewTester(a.worktreeRemoveModal, 700, 500)
+	defer retireTester(tt)
+	if !tt.HasText("应用内仍有未提交的提交说明草稿，移除后将一并清除。") {
+		t.Fatalf("expected commit draft warning in modal: %q", tt.Texts())
+	}
+
+	// Prunable worktree: force-prune must re-check index/reflog and abort if stateDigest changed.
+	if err := os.RemoveAll(wtDir); err != nil {
+		t.Fatal(err)
+	}
+	prunableWt, prunableCheck := inspectWorktreeRemoval(context.Background(), dir, repoWorktree{path: wtDir})
+	if prunableWt.prunable == "" || prunableCheck.err != "" || prunableCheck.stateDigest == "" {
+		t.Fatalf("unexpected prunable check: wt=%+v check=%+v", prunableWt, prunableCheck)
+	}
+	// Mutate the worktree's reflog after inspection to simulate a change before force-prune executes.
+	commonPath, match, err := resolveWorktreeAdminDir(context.Background(), dir, wtDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reflogPath := filepath.Join(commonPath, "worktrees", match, "logs", "HEAD")
+	origReflog, err := os.ReadFile(reflogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reflogPath, append(origReflog, []byte("\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prunableWt2, prunableCheck2 := inspectWorktreeRemoval(context.Background(), dir, prunableWt)
+	if !worktreeRemovalCheckChanged(prunableWt, prunableWt2, prunableCheck, prunableCheck2) {
+		t.Fatal("expected prunable reflog change to trigger re-confirmation via stateDigest")
+	}
+}

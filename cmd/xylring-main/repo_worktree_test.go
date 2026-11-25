@@ -153,7 +153,7 @@ func TestPruneAndRemoveWorktree(t *testing.T) {
 	if len(list) != 2 || list[0].prunable == "" || list[1].prunable == "" {
 		t.Fatalf("expected 2 prunable worktrees, got %+v", list)
 	}
-	if err := pruneWorktreeRecord(ctx, dir, gone); err != nil {
+	if err := pruneWorktreeRecord(ctx, dir, gone, false); err != nil {
 		t.Fatalf("pruneWorktreeRecord: %v", err)
 	}
 	list, err = listWorktrees(ctx, dir)
@@ -163,7 +163,7 @@ func TestPruneAndRemoveWorktree(t *testing.T) {
 	if len(list) != 1 || !sameWorktreePath(list[0].path, goneOther) {
 		t.Fatalf("expected only goneOther left after single-record prune, got %+v", list)
 	}
-	if err := pruneWorktreeRecord(ctx, dir, goneOther); err != nil {
+	if err := pruneWorktreeRecord(ctx, dir, goneOther, false); err != nil {
 		t.Fatalf("pruneWorktreeRecord second: %v", err)
 	}
 	list, err = listWorktrees(ctx, dir)
@@ -222,7 +222,7 @@ func TestPruneRestoredWhileWaitingForLane(t *testing.T) {
 	release := acquireGitLane(ctx, wt, true)
 	defer release()
 	done := make(chan error, 1)
-	go func() { done <- pruneWorktreeRecord(ctx, dir, wt) }()
+	go func() { done <- pruneWorktreeRecord(ctx, dir, wt, false) }()
 	for {
 		gitLanes.Lock()
 		waiting := len(gitLanes.byKey[wt].queue) > 0
@@ -262,7 +262,9 @@ func TestWorktreeSummaryAndModalUI(t *testing.T) {
 		t.Fatal("unexpected temp path match for normal directory")
 	}
 
+	updates := make(chan func(), 16)
 	a := &app{
+		dispatch: func(fn func()) { updates <- fn },
 		repoSummaries: map[string]repoSummary{
 			"/repo/main": {
 				branch: "main",
@@ -281,6 +283,7 @@ func TestWorktreeSummaryAndModalUI(t *testing.T) {
 		branch:   "fix/gone",
 		prunable: "gitdir missing",
 	})
+	a.wtRemove.check = worktreeRemoveCheck{}
 	tt := ui.NewTester(a.worktreeRemoveModal, 700, 500)
 	if !tt.HasText("清理失效工作树") || !tt.HasText("清理记录") {
 		t.Fatal("expected prunable modal title and confirm button")
@@ -346,7 +349,8 @@ func TestWorktreeWSLPathAndCheckErrorDisablesConfirm(t *testing.T) {
 		t.Fatal("expected error for mismatched WSL distros")
 	}
 
-	a := &app{}
+	updates := make(chan func(), 16)
+	a := &app{dispatch: func(fn func()) { updates <- fn }}
 	a.openWorktreeRemoveModal("/repo/main", repoWorktree{path: "/repo/wt", branch: "feat"})
 	a.wtRemove.check = worktreeRemoveCheck{err: "status failed"}
 	tt := ui.NewTester(a.worktreeRemoveModal, 700, 500)
