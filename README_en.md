@@ -15,8 +15,8 @@
   <a href="./README.md">简体中文</a>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.9.2-blue.svg?style=flat-square" alt="Release" />
-  <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
+  <a href="https://github.com/2fa0/xylring/releases/latest"><img src="https://img.shields.io/github/v/release/2fa0/xylring?style=flat-square&label=Release" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/Go-1.27.3+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License" />
@@ -65,10 +65,10 @@ So Xylring was stitched together as a lightweight, Go-native desktop companion�
 
 ### macOS
 
-Download the `.dmg` matching your architecture from [Release v0.9.2](https://github.com/2fa0/xylring/releases):
+Download the `.dmg` matching your architecture from the [latest Release](https://github.com/2fa0/xylring/releases/latest):
 
-- **Apple Silicon (M1/M2/M3/M4)**: `xylring-0.9.2-arm64.dmg`
-- **Intel x86_64**: `xylring-0.9.2-amd64.dmg`
+- **Apple Silicon (M1/M2/M3/M4)**: `xylring-<version>-arm64.dmg`
+- **Intel x86_64**: `xylring-<version>-amd64.dmg`
 
 Or grab the `.app.tar.gz` archive if you prefer to place the app yourself. Open the disk image and drag **Xylring** into your `Applications` folder.
 
@@ -82,14 +82,14 @@ Once installed, Xylring checks for new versions itself and offers to update in i
 
 ### Windows
 
-Download the `.exe` installer or the standalone `.zip` archive from [Releases](https://github.com/2fa0/xylring/releases):
+Download the `.exe` installer or the standalone `.zip` archive from the [latest Release](https://github.com/2fa0/xylring/releases/latest):
 
-- **Installer**: run `xylring-setup-0.9.2-amd64.exe` (installs to your user directory, no admin rights required).
-- **Portable**: extract `xylring-0.9.2-windows-x64.zip` and run `Xylring.exe`.
+- **Installer**: run `xylring-setup-<version>-amd64.exe` (installs to your user directory, no admin rights required).
+- **Portable**: extract `xylring-<version>-windows-x64.zip` and run `Xylring.exe`.
 
 ### Build from Source
 
-Requirements: **Go 1.27+**, system **Git**, and the Cgo dependencies needed by the Fyne/GLFW GUI bindings.
+Requirements: **Go 1.27.3+**, system **Git**, and the Cgo dependencies needed by the Fyne/GLFW GUI bindings.
 
 ```sh
 # Clone the repository, then run from its root

@@ -1,7 +1,7 @@
 <p align="center">
   <img src="cmd/xylring-main/resources/logo.png" alt="Xylring 图标" width="96" height="96" />
 </p>
-<h1 align="center">Xylring · 木年轮</h1>
+<h1 align="center">Xylring · 年轮</h1>
 <h3 align="center">AI 编程时代的轻量原生 Git 驾驶舱。</h3>
 <p align="center">
   不用打开重型 IDE，一眼看清 AI 提交量、模型/Agent 归属、跨项目看板与尚未清理的 Worktree。
@@ -15,8 +15,8 @@
   <a href="./README_en.md">English</a>
 </p>
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v0.9.2-blue.svg?style=flat-square" alt="Release" />
-  <img src="https://img.shields.io/badge/Go-1.27+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
+  <a href="https://github.com/2fa0/xylring/releases/latest"><img src="https://img.shields.io/github/v/release/2fa0/xylring?style=flat-square&label=Release" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/Go-1.27.3+-00ADD8.svg?style=flat-square&logo=go" alt="Go Version" />
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows-brightgreen.svg?style=flat-square" alt="Platforms" />
   <a href="https://github.com/2fa0/xylring/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/2fa0/xylring/test.yml?style=flat-square" alt="Tests" /></a>
   <img src="https://img.shields.io/badge/许可-Apache%202.0-blue.svg?style=flat-square" alt="License" />
@@ -40,7 +40,7 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 界面交互的灵感最初来自 VS Code 的 Git Graph——图很直观，但只为了看 Git 状态就常驻一个 VS Code，内存开销实在太大；我也试过 Zed，Zed 的内存控制非常优秀，可惜自带的 Git Graph 既不好看也不顺手。
 
-于是我干脆自己动手，用 Go 缝了一个原生轻量的桌面工具出来。Xylring（木年轮）意为树木的年轮——像年轮一样，把每一次代码演进和 AI 协作的印记清晰地刻在时间线上。
+于是我干脆自己动手，用 Go 缝了一个原生轻量的桌面工具出来。Xylring（年轮）取意树木的年轮——像年轮一样，把每一次代码演进和 AI 协作的印记清晰地刻在时间线上。
 
 ---
 
@@ -65,10 +65,10 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 ### macOS
 
-根据芯片架构从 [Release v0.9.2](https://github.com/2fa0/xylring/releases) 下载对应的 `.dmg`：
+根据芯片架构从 [最新 Release](https://github.com/2fa0/xylring/releases/latest) 下载对应的 `.dmg`：
 
-- **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-0.9.2-arm64.dmg`
-- **Intel 芯片 (x86_64)**：`xylring-0.9.2-amd64.dmg`
+- **Apple 芯片 (M1/M2/M3/M4 系列)**：`xylring-<version>-arm64.dmg`
+- **Intel 芯片 (x86_64)**：`xylring-<version>-amd64.dmg`
 
 也可以下载 `.app.tar.gz` 自行放置应用。双击打开 `.dmg`，把 **Xylring** 拖入「应用程序（Applications）」文件夹。
 
@@ -82,14 +82,14 @@ Xylring 诞生于一个很具体的真实需求：我想在不手写一行代码
 
 ### Windows
 
-从 [Releases](https://github.com/2fa0/xylring/releases) 下载 `.exe` 安装程序或免安装 `.zip` 压缩包：
+从 [最新 Release](https://github.com/2fa0/xylring/releases/latest) 下载 `.exe` 安装程序或免安装 `.zip` 压缩包：
 
-- **安装版**：运行 `xylring-setup-0.9.2-amd64.exe`（安装到当前用户目录，无需管理员权限）。
-- **便携版**：解压 `xylring-0.9.2-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
+- **安装版**：运行 `xylring-setup-<version>-amd64.exe`（安装到当前用户目录，无需管理员权限）。
+- **便携版**：解压 `xylring-<version>-windows-x64.zip`，直接双击 `Xylring.exe` 即可运行。
 
 ### 从源码构建
 
-环境要求：**Go 1.27+**、系统 **Git**，以及 Fyne/GLFW 图形绑定所需的 Cgo 依赖。
+环境要求：**Go 1.27.3+**、系统 **Git**，以及 Fyne/GLFW 图形绑定所需的 Cgo 依赖。
 
 ```sh
 # 先克隆仓库，再在仓库根目录运行
