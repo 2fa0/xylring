@@ -117,25 +117,27 @@ type app struct {
 	fetch        fetchDialog
 	folderImport folderImportDialog
 
-	sessionReady   bool
-	sessionDone    chan struct{}
-	sessionWrites  chan savedSession
-	lastSession    *savedSession
-	sessionResults chan error
-	showOperation  bool
-	op             repoOperation
-	opCancel       context.CancelFunc
-	showDiscard    bool
-	discard        discardDialog
-	showPush       bool
-	push           pushDialog
-	showBoard      bool
-	board          boardState
-	quitGuard      closeGuardState
-	docker         dockerDialogState
-	dockerWrites   dockerWriteState
-	writes         map[int]string // 正在跑的 Git 写操作，见 startGitWrite
-	writeSeq       int
+	sessionReady       bool
+	sessionDone        chan struct{}
+	sessionWrites      chan savedSession
+	lastSession        *savedSession
+	sessionResults     chan error
+	showOperation      bool
+	op                 repoOperation
+	opCancel           context.CancelFunc
+	showDiscard        bool
+	discard            discardDialog
+	showWorktreeRemove bool
+	wtRemove           worktreeDialog
+	showPush           bool
+	push               pushDialog
+	showBoard          bool
+	board              boardState
+	quitGuard          closeGuardState
+	docker             dockerDialogState
+	dockerWrites       dockerWriteState
+	writes             map[int]string // 正在跑的 Git 写操作，见 startGitWrite
+	writeSeq           int
 }
 
 type discardDialog struct {
@@ -281,6 +283,7 @@ func (a *app) view(c *ui.Context) {
 	a.fetchModal(c)
 	a.pushModal(c)
 	a.discardModal(c)
+	a.worktreeRemoveModal(c)
 	a.ringModal(c)
 	a.operationModal(c)
 	a.settingsModal(c)
@@ -1030,10 +1033,22 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 		requestClose := func(p string) {
 			closing = p
 		}
-		// 工作树子行沿用仓库行的菜单：都是同一个目录上的动作。
-		contextMenu := func(p string, allowColor bool) func(m *ui.Menu) {
+		// 工作树子行按其状态区分菜单：失效工作树只提供清理记录与复制路径，正常工
+		// 作树支持目录操作与安全移除；颜色标签只属于仓库行。
+		contextMenu := func(p, parentRepo string, wt *repoWorktree) func(m *ui.Menu) {
 			return func(m *ui.Menu) {
-				if allowColor {
+				if wt != nil && wt.prunable != "" {
+					if m.Item(tr("清理失效记录")).Chosen() {
+						a.runPruneWorktrees(parentRepo, p)
+					}
+					m.Separator()
+					if m.Item(tr("复制路径")).Chosen() {
+						c.Services().WriteClipboard(repoCopyPath(p))
+						c.Toast(tr("已复制路径"))
+					}
+					return
+				}
+				if wt == nil {
 					a.repoColorMenu(m, p)
 				}
 				a.dockerTerminalMenu(m, p)
@@ -1068,6 +1083,18 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 					c.Services().WriteClipboard(repoCopyPath(p))
 					c.Toast(tr("已复制路径"))
 				}
+				if wt != nil {
+					m.Separator()
+					if m.Item(tr("移除工作树…")).Chosen() {
+						a.openWorktreeRemoveModal(parentRepo, *wt)
+					}
+					if a.tabIndex(p) >= 0 {
+						if m.Item(tr("关闭标签页")).Chosen() {
+							requestClose(p)
+						}
+					}
+					return
+				}
 				m.Separator()
 				if m.Item(tr("关闭仓库")).Chosen() {
 					requestClose(p)
@@ -1084,7 +1111,8 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			}
 			padL := float32(10) + float32(level)*c.Theme().Space(4)
 			if record.worktree != nil {
-				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, false))
+				parentRepo := items[record.repo]
+				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, parentRepo, record.worktree))
 				return
 			}
 			label := repoListLabel(a.foundFrom, visibleItems, p)
@@ -1101,7 +1129,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				tip += tr("（工作区有未提交或未跟踪的代码）")
 			}
 			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
-			row.ContextMenu(contextMenu(p, true))
+			row.ContextMenu(contextMenu(p, p, nil))
 			row.Children(func() {
 				if tag, ok := a.repoColor(p); ok {
 					ui.Box(c).Size(8, 8).Radius(4).Background(tag.color).Shrink(0)
@@ -1132,7 +1160,11 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			a.closeRepoTree(closing)
 		} else if list.Changed() && a.repoSel >= 0 && a.repoSel < len(rows) {
 			if wt := rows[a.repoSel].worktree; wt != nil {
-				a.openRepo(wt.path)
+				if wt.prunable != "" {
+					a.openWorktreeRemoveModal(items[rows[a.repoSel].repo], *wt)
+				} else {
+					a.openRepo(wt.path)
+				}
 			} else {
 				a.openRoot(visibleItems[rows[a.repoSel].repo])
 			}
@@ -1228,12 +1260,18 @@ func (a *app) sidebarRows(items []string) []sidebarRow {
 	return rows
 }
 
-// repoWorktrees 返回已加载仓库的工作树。没打开过的仓库不为它额外跑 git。
+// repoWorktrees 返回仓库的工作树：已打开且加载完成的标签页直接取它的，否则复用后台摘要。
 func (a *app) repoWorktrees(path string) []repoWorktree {
 	for _, tab := range a.tabs {
 		if tab.path == path && tab.loaded {
 			return tab.worktrees
 		}
+	}
+	a.summaryMu.Lock()
+	s, ok := a.repoSummaries[path]
+	a.summaryMu.Unlock()
+	if ok {
+		return s.worktrees
 	}
 	return nil
 }
@@ -1268,14 +1306,26 @@ func repoIndexAt(rows []sidebarRow, at, count int) int {
 // sidebarWorktreeRow 画一个工作树子行：比它所属的仓库低一层，主文案是分支，
 // 后面是锁定 / 可清理两个图标，点开这个目录。
 func (a *app) sidebarWorktreeRow(c *ui.Context, p string, wt repoWorktree, padL float32, menu func(m *ui.Menu)) {
-	_, dirty, _, _ := a.repoStatus(p)
-	if !a.isRepoSummaryFresh(p) {
-		a.ensureRepoSummary(p)
+	var dirty bool
+	if wt.prunable == "" {
+		_, dirty, _, _ = a.repoStatus(p)
+		if !a.isRepoSummaryFresh(p) {
+			a.ensureRepoSummary(p)
+		}
+	}
+	tip := p
+	if wt.prunable != "" {
+		tip = p + "\n" + tr("目录已不存在，可清理")
+	} else if isTempWorktreePath(p) {
+		tip = p + "\n" + tr("临时目录")
 	}
 	row := ui.Row(c).FillWidth().MinHeight(28).Padding(6, 10, 6, padL).Gap(6).AlignItems(ui.Center)
 	row.ContextMenu(menu)
 	row.Children(func() {
-		ui.Text(c, worktreeRowLabel(wt)).FontSize(12).SingleLine().MinWidth(0).Grow(1).Tooltip(p)
+		label := ui.Text(c, worktreeRowLabel(wt)).FontSize(12).SingleLine().MinWidth(0).Grow(1).Tooltip(tip)
+		if wt.prunable != "" {
+			label.TextColor(c.Theme().TextMuted)
+		}
 		if status := sidebarBranchStatus(dirty, 0, 0); status != "" {
 			ui.Text(c, status).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Shrink(0)
 		}
@@ -1283,7 +1333,7 @@ func (a *app) sidebarWorktreeRow(c *ui.Context, p string, wt repoWorktree, padL 
 			ui.Icon(c, iconLock).Size(12, 12).TextColor(c.Theme().TextMuted).Shrink(0).Tooltip(tr("已锁定"))
 		}
 		if wt.prunable != "" {
-			ui.Icon(c, iconAlertCircle).Size(12, 12).TextColor(c.Theme().Warning).Shrink(0).Tooltip(tr("可清理"))
+			ui.Icon(c, iconAlertCircle).Size(12, 12).TextColor(c.Theme().Warning).Shrink(0).Tooltip(tr("目录已不存在，可清理"))
 		}
 	})
 }
