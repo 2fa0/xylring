@@ -136,6 +136,7 @@ func TestDockerTerminalArgsKeepPathsLiteral(t *testing.T) {
 }
 
 func TestDockerExperienceControlsSurviveFrames(t *testing.T) {
+	requireDockerRepos(t)
 	a, tab := dockerTestApp(t)
 	a.docker = dockerDialogState{open: true, selected: 0, containers: []dockerContainer{{ID: fakeDockerContainerID, Name: "dev-box"}}, path: "/workspace/api", suggestions: []string{"/workspace/api", "/src"}}
 	tt := ui.NewTester(a.dockerRepoModal, 700, 700)

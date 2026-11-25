@@ -525,6 +525,7 @@ func TestDockerStageAndCommitInContainer(t *testing.T) {
 }
 
 func TestDockerWriteGuardPersistsUnknownState(t *testing.T) {
+	requireDockerRepos(t)
 	dir := t.TempDir()
 	oldConfig := userConfigDir
 	userConfigDir = func() (string, error) { return dir, nil }

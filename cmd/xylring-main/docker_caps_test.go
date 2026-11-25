@@ -9,6 +9,13 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func requireDockerRepos(t *testing.T) {
+	t.Helper()
+	if !dockerReposSupported() {
+		t.Skip("container repositories are not offered on this platform")
+	}
+}
+
 func dockerTestKey(path string) string {
 	return dockerRepoKey(repoTarget{
 		kind:      targetDocker,
@@ -127,9 +134,7 @@ func TestDockerStagingBlockedByUnknownWrite(t *testing.T) {
 }
 
 func TestDockerHomeEntryVisible(t *testing.T) {
-	if !dockerReposSupported() {
-		t.Skip("container repositories are not offered on this platform")
-	}
+	requireDockerRepos(t)
 	a := &app{showHome: true}
 	tt := ui.NewTester(a.view, 1100, 800)
 	tt.SetTitleBar(ui.TitleBar{Height: 40, Left: 72, Right: 12})

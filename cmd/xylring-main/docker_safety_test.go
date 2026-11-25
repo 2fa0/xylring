@@ -39,6 +39,7 @@ func TestDockerKilledClientKeepsWriteProtection(t *testing.T) {
 }
 
 func TestDockerWriteRecordsFailClosed(t *testing.T) {
+	requireDockerRepos(t)
 	repo := dockerRepoKey(repoTarget{kind: targetDocker, context: "testctx", endpoint: "unix:///tmp/fake-docker.sock", container: fakeDockerContainerID, path: "/repo"})
 	old := userConfigDir
 	defer func() { userConfigDir = old }()
