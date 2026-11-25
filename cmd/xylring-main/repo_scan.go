@@ -117,7 +117,7 @@ func resolveEnclosingRepoRoot(ctx context.Context, abs string) (string, error) {
 	root, err := repoRoot(ctx, abs)
 	if err != nil {
 		// Git 缺席或跑不起来时不能说“没有找到仓库”，否则用户会一直去翻目录。
-		if isGitUnavailable(err) || err.Error() != "不是 Git 仓库" {
+		if isGitUnavailable(err) || !errors.Is(err, errNotGitRepo) {
 			return "", err
 		}
 		return "", errors.New("没有找到 Git 仓库")

@@ -21,6 +21,8 @@ func TestStoredMessagesFollowLanguageAndPreserveUserValues(t *testing.T) {
 		{"提交姓名 不能为空或包含换行", "Commit author name cannot be empty or contain line breaks"},
 		{"合并完成", "Merge completed"},
 		{"文件过大（123 字节），未载入", "File too large (123 bytes); not loaded"},
+		{"找不到这个仓库：/tmp/gone", "Repository not found: /tmp/gone"},
+		{"不是 Git 仓库：/tmp/plain", "Not a Git repository: /tmp/plain"},
 	}
 	for _, tc := range cases {
 		englishUI.Store(true)

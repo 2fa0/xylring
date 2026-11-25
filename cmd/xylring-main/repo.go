@@ -35,6 +35,22 @@ func (a *app) setBanner(msg, path string) {
 	a.bannerPath = path
 }
 
+// bannerWithoutLocation 去掉消息尾部的位置：调用方已经把仓库路径单列一行，
+// 再在文案里说一遍就是同一事实占了两行。
+func bannerWithoutLocation(msg, path string) string {
+	for _, loc := range []string{repoLocation(path), path} {
+		if loc == "" {
+			continue
+		}
+		for _, sep := range []string{"：", ": "} {
+			if trimmed := strings.TrimSuffix(msg, sep+loc); trimmed != msg {
+				return trimmed
+			}
+		}
+	}
+	return msg
+}
+
 // gitLogBannerButton 打开命令日志，选中最近一条失败。它只在这次会话真的有过
 // Git 调用失败时出现：磁盘错误、会话保存失败这类横幅背后没有可看的命令。
 func (a *app) gitLogBannerButton(c *ui.Context) {
@@ -684,7 +700,7 @@ func (a *app) reload(t *repoTab) {
 				if errors.Is(err, errRepoUnavailable) {
 					a.markRepoUnavailable(t)
 				} else {
-					t.err = err.Error()
+					t.err = "读取提交历史失败：" + err.Error()
 				}
 				return
 			}
@@ -777,7 +793,7 @@ func (a *app) loadMore(t *repoTab) {
 			if err != nil {
 				p.close()
 				t.pager = nil
-				t.err, t.locateHash = err.Error(), zeroHash
+				t.err, t.locateHash = "加载更多提交失败："+err.Error(), zeroHash
 				return
 			}
 			if !more || a.activeTab() != t {

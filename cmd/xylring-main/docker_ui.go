@@ -55,7 +55,7 @@ func (a *app) openDockerRepoDialog() {
 			}
 			a.docker.busy = false
 			if err != nil {
-				a.docker.err = err.Error()
+				a.docker.err = "读取容器列表失败：" + err.Error()
 				return
 			}
 			a.docker.context = dc
@@ -133,7 +133,7 @@ func (a *app) submitDockerRepo() {
 				return
 			}
 			a.docker.busy = false
-			a.docker.err = trimMsg(err.Error())
+			a.docker.err = "打开容器仓库失败：" + trimMsg(err.Error())
 		})
 	}()
 }

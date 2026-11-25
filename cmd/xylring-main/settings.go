@@ -162,12 +162,15 @@ func (a *app) loadSettingsGit(local, save bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		// 写成功但读回失败时，真正出错的是读取；前缀要跟上失败的那一步。
+		writing := save
 		var err error
-		if save {
+		if writing {
 			err = saveGitSettings(ctx, repo, scope, fields)
 		}
 		var fresh []gitSetting
 		if err == nil {
+			writing = false
 			fresh, err = readGitSettings(ctx, repo, scope)
 		}
 		var project []gitSetting
@@ -185,7 +188,11 @@ func (a *app) loadSettingsGit(local, save bool) {
 				if save {
 					target.fields = fields
 				}
-				target.err = err.Error()
+				if writing {
+					target.err = tr("保存 Git 配置失败：") + err.Error()
+				} else {
+					target.err = tr("读取 Git 配置失败：") + err.Error()
+				}
 				return
 			}
 			target.fields, target.loaded = fresh, true

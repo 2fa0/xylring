@@ -253,6 +253,21 @@ func trimMsg(s string) string {
 	return s
 }
 
+// 仓库定位的两个固定结论。调用方用 errors.Is 判断类型；文案里带上路径，
+// 否则用户看到的只是一句不知道说的是哪个仓库的提示。
+var (
+	errRepoMissing = errors.New("找不到这个仓库")
+	errNotGitRepo  = errors.New("不是 Git 仓库")
+)
+
+func repoMissingErr(dir string) error {
+	return fmt.Errorf("%w：%s", errRepoMissing, repoLocation(dir))
+}
+
+func notGitRepoErr(dir string) error {
+	return fmt.Errorf("%w：%s", errNotGitRepo, repoLocation(dir))
+}
+
 func repoRoot(ctx context.Context, dir string) (string, error) {
 	if target, ok := parseDockerRepoKey(dir); ok {
 		root, err := dockerRepoRoot(ctx, target)
@@ -264,12 +279,12 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", errors.New("找不到这个仓库")
+			return "", repoMissingErr(dir)
 		}
 		return "", err
 	}
 	if !info.IsDir() {
-		return "", errors.New("不是 Git 仓库")
+		return "", notGitRepoErr(dir)
 	}
 	// Opening a directory deliberately allows discovery of an enclosing repository.
 	out, err := runGitExtra(ctx, dir, 16<<20, []string{"GIT_CEILING_DIRECTORIES=" + os.Getenv("GIT_CEILING_DIRECTORIES")}, "rev-parse", "--show-toplevel")
@@ -279,11 +294,11 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 		if isGitUnavailable(err) || !notARepository(err) {
 			return "", err
 		}
-		return "", errors.New("不是 Git 仓库")
+		return "", notGitRepoErr(dir)
 	}
 	rawRoot := strings.TrimSpace(string(out))
 	if rawRoot == "" {
-		return "", errors.New("不是 Git 仓库")
+		return "", notGitRepoErr(dir)
 	}
 	if distro, _, ok := parseWSLUNCPath(dir); ok {
 		return formatWSLUNCPath(distro, rawRoot), nil

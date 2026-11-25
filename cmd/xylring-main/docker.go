@@ -1035,7 +1035,7 @@ func dockerRepoRoot(ctx context.Context, t repoTarget) (repoTarget, error) {
 	out, err := dockerRun(ctx, probe, probe.path, []string{"GIT_CEILING_DIRECTORIES="}, 1<<20, "", "git", "rev-parse", "--show-toplevel")
 	if err != nil {
 		if notARepository(err) || strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
-			return repoTarget{}, errors.New("不是 Git 仓库")
+			return repoTarget{}, notGitRepoErr(dockerTargetLocation(t))
 		}
 		return repoTarget{}, err
 	}

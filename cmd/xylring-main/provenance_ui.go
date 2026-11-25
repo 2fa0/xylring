@@ -47,7 +47,7 @@ func (a *app) refreshRing(t *repoTab) {
 			t.ring.stamp = stamp
 			t.ring.ruleStatuses = statuses
 			if err != nil {
-				t.ring.err = err.Error()
+				t.ring.err = "读取年轮状态失败：" + err.Error()
 			}
 		})
 	}()
@@ -74,6 +74,20 @@ func (a *app) refreshRingRules(t *repoTab) {
 		})
 	}()
 }
+
+// ringActionErrorPrefix 让失败的那一步自己说出来：开关 Hook、清除印章共用一处错误显示。
+func ringActionErrorPrefix(action string) string {
+	switch action {
+	case "install":
+		return "开启年轮 Hook 失败："
+	case "uninstall":
+		return "停用年轮 Hook 失败："
+	case "clear":
+		return "清除印章失败："
+	}
+	return "更新年轮设置失败："
+}
+
 func (a *app) ringAction(t *repoTab, action string) {
 	if t.ring.busy {
 		return
@@ -107,7 +121,7 @@ func (a *app) ringAction(t *repoTab, action string) {
 			t.ring.checked = time.Time{}
 			t.ring.err = ""
 			if err != nil {
-				t.ring.err = err.Error()
+				t.ring.err = ringActionErrorPrefix(action) + err.Error()
 			}
 			a.refreshRing(t)
 		})
@@ -497,7 +511,7 @@ func (a *app) previewRingRulesFor(t *repoTab, target string, remove bool) {
 			t.ring.preview = nil
 			t.ring.err = ""
 			if err != nil {
-				t.ring.err = err.Error()
+				t.ring.err = "预览规则修改失败：" + err.Error()
 			} else if p.diff == "" {
 				a.refreshRingRules(t)
 			} else {
@@ -521,7 +535,7 @@ func (a *app) saveRingRules(t *repoTab) {
 			t.ring.busy = false
 			t.ring.err = ""
 			if err != nil {
-				t.ring.err = err.Error()
+				t.ring.err = "保存规则失败：" + err.Error()
 			} else {
 				t.ring.preview = nil
 				a.refreshRingRules(t)

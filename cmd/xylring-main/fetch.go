@@ -156,7 +156,7 @@ func (a *app) openFetch(tab *repoTab) {
 			}
 			a.fetch.preparing = false
 			if err != nil {
-				a.fetch.err = err.Error()
+				a.fetch.err = "读取远程失败：" + err.Error()
 				return
 			}
 			a.fetch.remotes = remotes

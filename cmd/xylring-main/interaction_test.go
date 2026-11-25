@@ -221,6 +221,60 @@ func TestGlobalAlertBannerDismissAndCopy(t *testing.T) {
 	retireTester(tt)
 }
 
+// 看板这类没有仓库上下文的页面，报错必须说清是哪个仓库。
+func TestGlobalAlertBannerNamesRepoWithoutTab(t *testing.T) {
+	withTempBoardConfig(t)
+	missing := "/tmp/gone/legacy-project"
+	errMsg := "找不到这个仓库：" + missing
+	a := &app{
+		showBoard:  true,
+		banner:     errMsg,
+		bannerPath: missing,
+		dispatch:   func(fn func()) {},
+	}
+
+	tt := ui.NewTester(a.view, 1200, 760)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if !tt.HasText(missing) {
+		t.Fatalf("expected the failure to name its repository, texts are %q", tt.Texts())
+	}
+	if err := tt.Click("复制错误信息"); err != nil {
+		t.Fatalf("clicking banner-copy-err failed: %v", err)
+	}
+	if tt.Clipboard() != errMsg {
+		t.Fatalf("expected clipboard %q, got %q", errMsg, tt.Clipboard())
+	}
+}
+
+// Git 自己报的错（如 fetch 失败）不带路径，横幅要补上位置。
+func TestGlobalAlertBannerAddsMissingRepoLocation(t *testing.T) {
+	withTempBoardConfig(t)
+	dir := "/tmp/work/alpha"
+	errMsg := "无法解析远程主机 github.com"
+	a := &app{
+		showBoard:  true,
+		banner:     errMsg,
+		bannerPath: dir,
+		dispatch:   func(fn func()) {},
+	}
+
+	tt := ui.NewTester(a.view, 1200, 760)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if !tt.HasText(errMsg) || !tt.HasText(dir) {
+		t.Fatalf("expected error and its repository, texts are %q", tt.Texts())
+	}
+	if err := tt.Click("复制错误信息"); err != nil {
+		t.Fatalf("clicking banner-copy-err failed: %v", err)
+	}
+	if want := errMsg + "\n" + dir; tt.Clipboard() != want {
+		t.Fatalf("expected clipboard %q, got %q", want, tt.Clipboard())
+	}
+}
+
 func TestNotifySuccessDeliversToastAndNotice(t *testing.T) {
 	tab := newTab(1, "/tmp/sample-repo")
 	tab.loaded = true
