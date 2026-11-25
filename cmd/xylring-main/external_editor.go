@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -76,20 +78,43 @@ func editorMenuOptions() []configOption {
 	return opts
 }
 
-func resolveEditorCommand(
+type editorLaunchPlan struct {
+	bin              string
+	args             []string
+	windowsShellOpen bool
+	isLauncher       bool
+}
+
+func isWindowsBatchFile(p string) bool {
+	lower := strings.ToLower(strings.TrimSpace(p))
+	return strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")
+}
+
+func makeEditorLaunchPlan(goos, bin string, args []string) editorLaunchPlan {
+	if goos == "windows" && isWindowsBatchFile(bin) {
+		// Using "call" avoids cmd.exe /c stripping outer quotes when both the script path and an argument are quoted.
+		cmdArgs := make([]string, 0, len(args)+4)
+		cmdArgs = append(cmdArgs, "/d", "/c", "call", bin)
+		cmdArgs = append(cmdArgs, args...)
+		return editorLaunchPlan{bin: "cmd.exe", args: cmdArgs, isLauncher: true}
+	}
+	return editorLaunchPlan{bin: bin, args: args}
+}
+
+func resolveEditorLaunch(
 	goos, home, editor, targetPath string,
 	statFn func(string) (os.FileInfo, error),
 	lookPathFn func(string) (string, error),
-) (string, []string, error) {
+) (editorLaunchPlan, error) {
 	editor = strings.TrimSpace(editor)
 	if editor == "" {
 		switch goos {
 		case "darwin":
-			return "open", []string{targetPath}, nil
+			return editorLaunchPlan{bin: "open", args: []string{targetPath}, isLauncher: true}, nil
 		case "windows":
-			return "cmd", []string{"/c", "start", "", targetPath}, nil
+			return editorLaunchPlan{windowsShellOpen: true}, nil
 		default:
-			return "xdg-open", []string{targetPath}, nil
+			return editorLaunchPlan{bin: "xdg-open", args: []string{targetPath}, isLauncher: true}, nil
 		}
 	}
 	if p, ok := findEditorPreset(editor); ok {
@@ -102,7 +127,7 @@ func resolveEditorCommand(
 				for _, root := range roots {
 					appPath := path.Join(root, appName+".app")
 					if _, err := statFn(appPath); err == nil {
-						return "open", []string{"-a", appPath, targetPath}, nil
+						return editorLaunchPlan{bin: "open", args: []string{"-a", appPath, targetPath}, isLauncher: true}, nil
 					}
 				}
 			}
@@ -111,57 +136,121 @@ func resolveEditorCommand(
 			if binPath, err := lookPathFn(bin); err == nil {
 				if goos == "windows" {
 					if wslArgs, ok := resolveWindowsWSLEditorArgs(p.id, targetPath); ok {
-						return binPath, wslArgs, nil
+						return makeEditorLaunchPlan(goos, binPath, wslArgs), nil
 					}
 				}
-				return binPath, []string{targetPath}, nil
+				return makeEditorLaunchPlan(goos, binPath, []string{targetPath}), nil
 			}
 		}
-		return "", nil, fmt.Errorf("未找到 %s，请在设置中检查默认编辑器", p.label)
+		return editorLaunchPlan{}, fmt.Errorf("未找到 %s，请在设置中检查默认编辑器", p.label)
 	}
 	if goos == "darwin" && strings.HasSuffix(strings.ToLower(editor), ".app") {
 		if _, err := statFn(editor); err == nil {
-			return "open", []string{"-a", editor, targetPath}, nil
+			return editorLaunchPlan{bin: "open", args: []string{"-a", editor, targetPath}, isLauncher: true}, nil
 		}
-		return "", nil, fmt.Errorf("未找到编辑器应用：%s", editor)
+		return editorLaunchPlan{}, fmt.Errorf("未找到编辑器应用：%s", editor)
 	}
 	if strings.ContainsAny(editor, `/\`) {
 		if info, err := statFn(editor); err == nil && !info.IsDir() {
-			return editor, []string{targetPath}, nil
+			return makeEditorLaunchPlan(goos, editor, []string{targetPath}), nil
 		}
-		return "", nil, fmt.Errorf("未找到编辑器：%s", editor)
+		return editorLaunchPlan{}, fmt.Errorf("未找到编辑器：%s", editor)
 	}
 	if binPath, err := lookPathFn(editor); err == nil {
-		return binPath, []string{targetPath}, nil
+		return makeEditorLaunchPlan(goos, binPath, []string{targetPath}), nil
 	}
-	return "", nil, fmt.Errorf("未找到编辑器命令：%s", editor)
+	return editorLaunchPlan{}, fmt.Errorf("未找到编辑器命令：%s", editor)
 }
 
-func openWithConfiguredEditor(targetPath, editor string) error {
+func resolveEditorCommand(
+	goos, home, editor, targetPath string,
+	statFn func(string) (os.FileInfo, error),
+	lookPathFn func(string) (string, error),
+) (string, []string, error) {
+	plan, err := resolveEditorLaunch(goos, home, editor, targetPath, statFn, lookPathFn)
+	if err != nil {
+		return "", nil, err
+	}
+	return plan.bin, plan.args, nil
+}
+
+const (
+	editorEarlyExitWindow = 2 * time.Second
+	editorStderrWaitDelay = 250 * time.Millisecond
+)
+
+func startAndReapEditor(cmd *exec.Cmd, isLauncher bool, onAsyncErr func(error)) error {
+	stderr := &limitedBuffer{limit: 4096}
+	cmd.Stderr = stderr
+	// Avoid hanging cmd.Wait() if a spawned grandchild inherits stderr and stays open.
+	cmd.WaitDelay = editorStderrWaitDelay
+	hideConsoleWindow(cmd)
+	started := time.Now()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		err := cmd.Wait()
+		if err == nil || errors.Is(err, exec.ErrWaitDelay) || onAsyncErr == nil {
+			return
+		}
+		// Launchers (open / xdg-open) exit quickly; any non-zero exit means launching failed.
+		// Direct editor binaries may exit non-zero much later (e.g. terminated by user);
+		// only surface immediate startup failures.
+		if !isLauncher && time.Since(started) >= editorEarlyExitWindow {
+			return
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			onAsyncErr(fmt.Errorf("%v: %s", err, msg))
+		} else {
+			onAsyncErr(err)
+		}
+	}()
+	return nil
+}
+
+func openWithConfiguredEditor(targetPath, editor string, onAsyncErr func(error)) error {
 	home, _ := os.UserHomeDir()
-	bin, args, err := resolveEditorCommand(runtime.GOOS, home, editor, targetPath, os.Stat, exec.LookPath)
+	plan, err := resolveEditorLaunch(runtime.GOOS, home, editor, targetPath, os.Stat, exec.LookPath)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin, args...)
-	hideConsoleWindow(cmd)
-	return cmd.Start()
+	if plan.windowsShellOpen {
+		return openWithWindowsDefaultApp(targetPath)
+	}
+	cmd := exec.Command(plan.bin, plan.args...)
+	return startAndReapEditor(cmd, plan.isLauncher, onAsyncErr)
 }
 
 func openWithDefaultEditor(path string) error {
-	return openWithConfiguredEditor(path, "")
+	return openWithConfiguredEditor(path, "", nil)
 }
 
 func (a *app) openInEditor(targetPath string) error {
 	if _, err := os.Stat(targetPath); err != nil {
 		return err
 	}
-	return openWithConfiguredEditor(targetPath, a.externalEditor)
+	return openWithConfiguredEditor(targetPath, a.externalEditor, func(err error) {
+		a.post(func() {
+			a.setBanner(trimMsg(err.Error()), "")
+		})
+	})
 }
 
 func (a *app) openEditorMenuLabel() string {
+	return a.openEditorMenuLabelForContext(true)
+}
+
+func (a *app) openEditorMenuLabelForContext(inWorktree bool) string {
 	if strings.TrimSpace(a.externalEditor) == "" {
+		if !inWorktree {
+			return tr("使用默认编辑器打开工作区文件")
+		}
 		return tr("使用默认编辑器打开")
+	}
+	if !inWorktree {
+		return fmt.Sprintf(tr("在 %s 中打开工作区文件"), editorDisplayName(a.externalEditor))
 	}
 	return fmt.Sprintf(tr("在 %s 中打开"), editorDisplayName(a.externalEditor))
 }
@@ -174,6 +263,9 @@ func (a *app) applyCustomEditorPath(raw string) {
 		a.settings.customEditor = false
 	} else {
 		a.settings.customEditor = isCustomEditorValue(trimmed)
+	}
+	if !a.settingsHasUnsavedEdits() {
+		a.settings.confirmClose = false
 	}
 }
 
@@ -199,7 +291,7 @@ func (a *app) pickEditorApp() {
 	}()
 }
 
-func (a *app) editorSettings(c *ui.Context) {
+func (a *app) editorSettingsRows(c *ui.Context) []func() {
 	customActive := a.settings.customEditor || isCustomEditorValue(a.externalEditor)
 	selected := a.externalEditor
 	if customActive {
@@ -247,5 +339,9 @@ func (a *app) editorSettings(c *ui.Context) {
 			})
 		})
 	}
-	settingsSection(c, "settings-editor", "外部编辑器", rows...)
+	return rows
+}
+
+func (a *app) editorSettings(c *ui.Context) {
+	settingsSection(c, "settings-editor", "外部编辑器", a.editorSettingsRows(c)...)
 }

@@ -426,7 +426,7 @@ func (a *app) fileTabBar(c *ui.Context, t *repoTab) {
 										a.dockerTerminalMenu(m, t.path)
 										return
 									}
-									if m.Item(a.openEditorMenuLabel()).Chosen() {
+									if m.Item(a.openEditorMenuLabelForContext(tab.worktree || (tab.fullFile && tab.fullRev == "worktree"))).Chosen() {
 										if _, err := os.Stat(fullPath); err != nil {
 											c.Toast(tr("工作区中不存在此文件"))
 										} else if err := a.openInEditor(fullPath); err != nil {

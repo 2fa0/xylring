@@ -229,7 +229,7 @@ func TestFileTabContextMenu(t *testing.T) {
 	if menu == nil {
 		t.Fatal("expected context menu on file tab")
 	}
-	wantItems := []string{"关闭", "关闭其他", "关闭右侧标签页", "全部关闭", "-", "复制相对路径", "复制绝对路径", "-", "查看文件历史", "使用默认编辑器打开"}
+	wantItems := []string{"关闭", "关闭其他", "关闭右侧标签页", "全部关闭", "-", "复制相对路径", "复制绝对路径", "-", "查看文件历史", "使用默认编辑器打开工作区文件"}
 	for _, item := range wantItems {
 		if !slices.Contains(menu, item) {
 			t.Fatalf("menu %v missing %q", menu, item)

@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -26,16 +28,18 @@ func TestResolveEditorCommand(t *testing.T) {
 
 	// System default per OS.
 	for _, tc := range []struct {
-		goos, wantBin string
-		wantArgs      []string
+		goos, wantBin    string
+		wantArgs         []string
+		wantShellExecute bool
+		wantLauncher     bool
 	}{
-		{"darwin", "open", []string{"/work/repo"}},
-		{"windows", "cmd", []string{"/c", "start", "", "/work/repo"}},
-		{"linux", "xdg-open", []string{"/work/repo"}},
+		{"darwin", "open", []string{"/work/repo"}, false, true},
+		{"windows", "", nil, true, false},
+		{"linux", "xdg-open", []string{"/work/repo"}, false, true},
 	} {
-		bin, args, err := resolveEditorCommand(tc.goos, "/home/u", "", "/work/repo", noStat, noPath)
-		if err != nil || bin != tc.wantBin || !slices.Equal(args, tc.wantArgs) {
-			t.Fatalf("%s default: got (%q, %v, %v)", tc.goos, bin, args, err)
+		plan, err := resolveEditorLaunch(tc.goos, "/home/u", "", "/work/repo", noStat, noPath)
+		if err != nil || plan.bin != tc.wantBin || !slices.Equal(plan.args, tc.wantArgs) || plan.windowsShellOpen != tc.wantShellExecute || plan.isLauncher != tc.wantLauncher {
+			t.Fatalf("%s default: got (%+v, %v)", tc.goos, plan, err)
 		}
 	}
 
@@ -86,6 +90,28 @@ func TestResolveEditorCommand(t *testing.T) {
 	if err != nil || bin != "/usr/local/bin/hx" || !slices.Equal(args, []string{"/work/file.go"}) {
 		t.Fatalf("custom command: got (%q, %v, %v)", bin, args, err)
 	}
+
+	// Windows .cmd/.bat preset wrapper must run through cmd.exe /d /c call.
+	plan, err := resolveEditorLaunch("windows", `C:\Users\u`, "vscode", `C:\My Projects\repo`, noStat, func(name string) (string, error) {
+		if name == "code" {
+			return `C:\Program Files\Microsoft VS Code\bin\code.cmd`, nil
+		}
+		return "", errors.New("missing")
+	})
+	wantCmdArgs := []string{"/d", "/c", "call", `C:\Program Files\Microsoft VS Code\bin\code.cmd`, `C:\My Projects\repo`}
+	if err != nil || plan.bin != "cmd.exe" || !plan.isLauncher || !slices.Equal(plan.args, wantCmdArgs) {
+		t.Fatalf("windows code.cmd preset: got (%+v, %v)", plan, err)
+	}
+
+	// Historical diff context must label the editor entry as opening the working tree file.
+	appDefault := &app{}
+	if got := appDefault.openEditorMenuLabelForContext(false); got != "使用默认编辑器打开工作区文件" {
+		t.Fatalf("unexpected history default label: %q", got)
+	}
+	appNamed := &app{externalEditor: "cursor"}
+	if got := appNamed.openEditorMenuLabelForContext(false); got != "在 Cursor 中打开工作区文件" {
+		t.Fatalf("unexpected history named label: %q", got)
+	}
 }
 
 func TestExternalEditorSettingsAndPersistence(t *testing.T) {
@@ -100,7 +126,7 @@ func TestExternalEditorSettingsAndPersistence(t *testing.T) {
 	defer retireTester(tt)
 	tt.Frame()
 
-	if !tt.HasText("外部编辑器") || !tt.HasText("系统默认") {
+	if !tt.HasText("默认编辑器") || !tt.HasText("系统默认") {
 		t.Fatalf("missing external editor setting: %q", tt.Texts())
 	}
 
@@ -184,5 +210,51 @@ func TestSidebarRepoMenuIncludesDefaultEditor(t *testing.T) {
 	menu := tt.Menu()
 	if !slices.Contains(menu, "在 Zed 中打开") {
 		t.Fatalf("expected editor item in repo context menu, got %v", menu)
+	}
+}
+
+func TestStartAndReapEditorLauncherFailureAndNormalExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sh test")
+	}
+
+	errCh := make(chan error, 1)
+	failCmd := exec.Command("sh", "-c", "echo 'boom launcher' >&2; exit 2")
+	if err := startAndReapEditor(failCmd, true, func(err error) { errCh <- err }); err != nil {
+		t.Fatalf("start failCmd: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "boom launcher") {
+			t.Fatalf("expected launcher stderr error, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for launcher failure callback")
+	}
+
+	okErrCh := make(chan error, 1)
+	okCmd := exec.Command("sh", "-c", "exit 0")
+	if err := startAndReapEditor(okCmd, false, func(err error) { okErrCh <- err }); err != nil {
+		t.Fatalf("start okCmd: %v", err)
+	}
+	select {
+	case err := <-okErrCh:
+		t.Fatalf("unexpected error for normal editor exit: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// A grandchild keeping stderr open must not stall reporting an immediate launcher failure.
+	grandchildErrCh := make(chan error, 1)
+	grandchildCmd := exec.Command("sh", "-c", "(sleep 5 >&2 &); echo 'fast fail' >&2; exit 2")
+	if err := startAndReapEditor(grandchildCmd, true, func(err error) { grandchildErrCh <- err }); err != nil {
+		t.Fatalf("start grandchildCmd: %v", err)
+	}
+	select {
+	case err := <-grandchildErrCh:
+		if err == nil || !strings.Contains(err.Error(), "fast fail") {
+			t.Fatalf("expected fast fail stderr error, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for launcher failure when grandchild holds stderr")
 	}
 }

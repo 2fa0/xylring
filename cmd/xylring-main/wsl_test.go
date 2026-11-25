@@ -115,9 +115,11 @@ func TestWindowsWSLTerminalAndEditor(t *testing.T) {
 	}
 
 	noStat := func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	codeCmd := `C:\Users\u\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd`
 	bin, args, err := resolveEditorCommand("windows", `C:\Users\u`, "vscode", `\\wsl.localhost\Ubuntu\home\u\repo`, noStat,
-		fakeLookPath(map[string]string{"code": `C:\Users\u\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd`}))
-	if err != nil || !slices.Equal(args, []string{"--remote", "wsl+Ubuntu", "/home/u/repo"}) {
+		fakeLookPath(map[string]string{"code": codeCmd}))
+	wantArgs := []string{"/d", "/c", "call", codeCmd, "--remote", "wsl+Ubuntu", "/home/u/repo"}
+	if err != nil || bin != "cmd.exe" || !slices.Equal(args, wantArgs) {
 		t.Fatalf("vscode wsl remote: got (%q, %v, %v)", bin, args, err)
 	}
 }

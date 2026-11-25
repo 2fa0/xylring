@@ -1958,7 +1958,7 @@ func (a *app) fileRowMenu(c *ui.Context, m *ui.Menu, t *repoTab, idx int) func()
 	}
 	m.Separator()
 	fullPath := repoFilePath(t.path, f.path, true)
-	if m.Item(a.openEditorMenuLabel()).Chosen() {
+	if m.Item(a.openEditorMenuLabelForContext(t.worktree)).Chosen() {
 		if _, err := os.Stat(fullPath); err != nil {
 			c.Toast(tr("工作区中不存在此文件"))
 		} else if err := a.openInEditor(fullPath); err != nil {
