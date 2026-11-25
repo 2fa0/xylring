@@ -1,11 +1,14 @@
 /release/
 /release-dev/
+/.release-staging.*
+/.release-backup.*
 /release-notes.md
 /cmd/xylring-main/build/
 /cmd/xylring-main/.mygo/
 /cmd/xylring-main/mygo_windows_*.syso
 .DS_Store
 /xylring-main
+/xylring-main.exe
 /gitclient
 .claude/
 

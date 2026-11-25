@@ -56,10 +56,18 @@ if [ -z "${MYGO_UPDATER_PRIVATE_KEY:-}" ]; then
   export MYGO_UPDATER_PRIVATE_KEY
 fi
 
-have_nsis=0
-if command -v makensis >/dev/null 2>&1; then
-  have_nsis=1
+if ! command -v makensis >/dev/null 2>&1; then
+  fail "未找到 makensis，无法生成 Windows 安装程序。请先安装：brew install makensis"
 fi
+
+build_commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+if [ -z "$build_commit" ]; then
+  fail "无法获取当前 Git 提交（HEAD）。请在有效的 Git 仓库中运行 build.command。"
+fi
+if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+  fail "工作区存在未提交改动，请先提交后再打包正式发布包（日常测试请用 build-dev.command）。"
+fi
+build_dirty="false"
 
 printf '\033]0;打包 Xylring\007'
 echo "Xylring ${version}"
@@ -67,14 +75,7 @@ echo
 echo "将打包："
 echo "  • macOS Apple 芯片（arm64）磁盘镜像"
 echo "  • macOS Intel 芯片（amd64 / x86_64）磁盘镜像"
-if [ "$have_nsis" -eq 1 ]; then
-  echo "  • Windows 10 & 11 x64 安装程序与免安装压缩包"
-else
-  echo "  • Windows 10 & 11 x64 免安装压缩包"
-  echo
-  echo "未找到 makensis，这次不会生成 Windows 安装程序。"
-  echo "安装后重新双击本文件即可：brew install makensis"
-fi
+echo "  • Windows 10 & 11 x64 安装程序与免安装压缩包"
 echo
 echo "目标电脑需要已安装 Git。这些包没有发行签名和公证。"
 echo
@@ -91,13 +92,14 @@ if [ "$build_status" -ne 0 ]; then
   fail "构建命令未成功（退出码 ${build_status}），未更新 release/。"
 fi
 
-staging="$(mktemp -d "${TMPDIR:-/tmp}/xylring-packages.XXXXXX")"
+staging="$(mktemp -d "${ROOT}/.release-staging.XXXXXX")"
+backup=""
 cleanup() {
-  rm -rf "$staging"
+  [ -n "$staging" ] && [ -d "$staging" ] && rm -rf "$staging"
+  [ -n "$backup" ] && [ -d "$backup" ] && rm -rf "$backup"
 }
 trap cleanup EXIT
 
-found=0
 note_windows_installer=0
 note_windows_zip=0
 
@@ -106,9 +108,10 @@ shopt -s nullglob
 dmgs_arm=("$APP_DIR/build/darwin-arm64/"*.dmg)
 shopt -u nullglob
 if [ "${#dmgs_arm[@]}" -eq 1 ]; then
-  cp -p "${dmgs_arm[0]}" "$staging/"
-  found=1
-elif [ "${#dmgs_arm[@]}" -gt 1 ]; then
+  cp -p "${dmgs_arm[0]}" "$staging/" || fail "无法复制 darwin-arm64 磁盘镜像。"
+elif [ "${#dmgs_arm[@]}" -eq 0 ]; then
+  fail "darwin-arm64 缺少磁盘镜像（.dmg）。"
+else
   fail "darwin-arm64 里有多份磁盘镜像，无法判断该交付哪一份。"
 fi
 
@@ -117,73 +120,123 @@ shopt -s nullglob
 dmgs_intel=("$APP_DIR/build/darwin-amd64/"*.dmg)
 shopt -u nullglob
 if [ "${#dmgs_intel[@]}" -eq 1 ]; then
-  cp -p "${dmgs_intel[0]}" "$staging/"
-  found=1
-elif [ "${#dmgs_intel[@]}" -gt 1 ]; then
+  cp -p "${dmgs_intel[0]}" "$staging/" || fail "无法复制 darwin-amd64 磁盘镜像。"
+elif [ "${#dmgs_intel[@]}" -eq 0 ]; then
+  fail "darwin-amd64 缺少磁盘镜像（.dmg）。"
+else
   fail "darwin-amd64 里有多份磁盘镜像，无法判断该交付哪一份。"
 fi
 
 # Windows AMD64 (Windows 10 & 11 x86_64)
 win_dir="$APP_DIR/build/windows-amd64"
-if [ -d "$win_dir" ]; then
-  shopt -s nullglob
-  setups=("$win_dir/"*[Ss]etup*.exe)
-  shopt -u nullglob
-  if [ "${#setups[@]}" -eq 1 ]; then
-    cp -p "${setups[0]}" "$staging/"
-    found=1
-    note_windows_installer=1
-  elif [ "${#setups[@]}" -gt 1 ]; then
-    fail "windows-amd64 里有多份安装程序，无法判断该交付哪一份。"
-  fi
+if [ ! -d "$win_dir" ]; then
+  fail "缺少 windows-amd64 构建目录。"
+fi
+shopt -s nullglob
+setups=("$win_dir/"*[Ss]etup*.exe)
+shopt -u nullglob
+if [ "${#setups[@]}" -eq 1 ]; then
+  cp -p "${setups[0]}" "$staging/" || fail "无法复制 Windows 安装程序。"
+  note_windows_installer=1
+elif [ "${#setups[@]}" -gt 1 ]; then
+  fail "windows-amd64 里有多份安装程序，无法判断该交付哪一份。"
+else
+  fail "windows-amd64 缺少安装程序（*setup*.exe）。"
+fi
 
-  if [ -f "$win_dir/Xylring.exe" ]; then
-    payload="$(mktemp -d "${TMPDIR:-/tmp}/xylring-win.XXXXXX")"
-    inner="$payload/Xylring"
-    mkdir -p "$inner"
-    for entry in "$win_dir"/*; do
-      name="$(basename "$entry")"
-      case "$name" in
-        *[Ss]etup*.exe) continue ;;
-      esac
-      cp -R "$entry" "$inner/"
-    done
-    zip_name="xylring-${version}-windows-x64.zip"
-    if ! ditto -c -k --norsrc "$inner" "$staging/$zip_name"; then
-      rm -rf "$payload"
-      fail "无法压缩 Windows 文件。"
-    fi
+if [ ! -f "$win_dir/Xylring.exe" ]; then
+  fail "windows-amd64 缺少 Xylring.exe，无法生成便携压缩包。"
+fi
+payload="$(mktemp -d "${TMPDIR:-/tmp}/xylring-win.XXXXXX")"
+inner="$payload/Xylring"
+mkdir -p "$inner" || { rm -rf "$payload"; fail "无法创建 Windows 便携包临时目录。"; }
+shopt -s nullglob
+for entry in "$win_dir"/*; do
+  name="$(basename "$entry")"
+  case "$name" in
+    *[Ss]etup*.exe|update-*.json|*.tar.gz|*.delta) continue ;;
+  esac
+  if ! cp -R "$entry" "$inner/"; then
     rm -rf "$payload"
-    found=1
-    note_windows_zip=1
+    fail "无法复制 Windows 文件：${name}"
   fi
+done
+shopt -u nullglob
+zip_name="xylring-${version}-windows-x64.zip"
+if ! ditto -c -k --norsrc "$inner" "$staging/$zip_name"; then
+  rm -rf "$payload"
+  fail "无法压缩 Windows 文件。"
 fi
+rm -rf "$payload"
+note_windows_zip=1
 
-if [ "$found" -eq 0 ]; then
-  fail "没有生成可交付的包。请查看上面的构建输出。"
-fi
-
-# 每个平台的构建目录里还有更新用的归档、清单和增量包。Release 必须带上它们，
-# 否则正在运行的旧版本查不到新版本。
+# 每个平台的构建目录里必须同时具备更新清单、完整归档及对应增量包。
 for target in darwin-arm64 darwin-amd64 windows-amd64; do
   dir="$APP_DIR/build/$target"
-  [ -d "$dir" ] || continue
+  [ -d "$dir" ] || fail "缺少 $target 构建目录。"
+  manifest="$dir/update-${target}.json"
+  [ -f "$manifest" ] || fail "$target 缺少更新清单 update-${target}.json。"
   shopt -s nullglob
-  update_files=("$dir"/*.tar.gz "$dir"/*.delta "$dir"/update-*.json)
+  full_archives=("$dir"/*.tar.gz)
+  deltas=("$dir"/*.delta)
   shopt -u nullglob
-  if [ "${#update_files[@]}" -eq 0 ]; then
-    fail "$target 里没有更新文件，这个包发出去后已安装的版本无法自动升级。"
+  if [ "${#full_archives[@]}" -eq 0 ]; then
+    fail "$target 缺少完整更新归档（*.tar.gz）。"
   fi
-  if ! cp -p "${update_files[@]}" "$staging/"; then
-    fail "无法复制 $target 的更新文件。"
+  if ! cp -p "$manifest" "${full_archives[@]}" "$staging/"; then
+    fail "无法复制 $target 的更新清单或完整归档。"
+  fi
+  if [ "${#deltas[@]}" -gt 0 ]; then
+    if ! cp -p "${deltas[@]}" "$staging/"; then
+      fail "无法复制 $target 的增量更新包。"
+    fi
   fi
 done
 
-rm -rf "$PACKAGES"
-mkdir -p "$PACKAGES" || fail "无法创建 release/。"
-cp -p "$staging"/* "$PACKAGES/" || fail "无法把安装包放进 release/。"
-# 校验文件跟着包一起发；手工上传时也要带上。
-(cd "$PACKAGES" && shasum -a 256 * > checksums.txt) || fail "无法生成 checksums.txt。"
+# 校验文件跟着包一起发；核对构建期间提交与工作区未变，并在替换 release/ 前逐项校验。
+post_build_commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+if [ "$post_build_commit" != "$build_commit" ]; then
+  fail "构建期间 Git HEAD 发生变化（${build_commit:0:7} -> ${post_build_commit:0:7}），未更新 release/。"
+fi
+if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+  fail "构建后工作区存在未提交改动，未更新 release/。"
+fi
+(cd "$staging" && shasum -a 256 * > checksums.txt) || fail "无法生成 checksums.txt。"
+checksums_sha="$(shasum -a 256 "$staging/checksums.txt" | awk '{print $1}')"
+python3 - "$staging/.build-meta.json" "$version" "$build_commit" "$build_dirty" "$checksums_sha" <<'PY' || fail "无法写入构建元数据。"
+import json, sys
+out, version, commit, dirty, checksums_sha = sys.argv[1:6]
+with open(out, "w", encoding="utf-8") as f:
+    json.dump({
+        "version": version,
+        "commit": commit,
+        "dirty": dirty == "true",
+        "checksums_sha256": checksums_sha,
+    }, f, indent=2)
+    f.write("\n")
+PY
+if ! (cd "$ROOT" && go run ./scripts/verifyrelease -dir "$staging" -config "$APP_DIR/mygo.json" -version "$version" -expected-commit "$build_commit" -require-win-installer=true); then
+  fail "产物完整性校验未通过，未更新 release/。"
+fi
+
+# 先校验完成，再在同一文件系统原子替换 release/，避免替换失败时丢失上一版可用包。
+if [ -e "$PACKAGES" ]; then
+  backup="${ROOT}/.release-backup.$$"
+  rm -rf "$backup"
+  mv "$PACKAGES" "$backup" || fail "无法备份旧 release/ 目录，未更新产物。"
+fi
+if ! mv "$staging" "$PACKAGES"; then
+  if [ -n "$backup" ] && [ -e "$backup" ]; then
+    mv "$backup" "$PACKAGES" || true
+    backup=""
+  fi
+  fail "无法将已校验产物替换到 release/。"
+fi
+staging=""
+if [ -n "$backup" ] && [ -e "$backup" ]; then
+  rm -rf "$backup"
+  backup=""
+fi
 
 elapsed=$(( $(date +%s) - started ))
 echo "可交付的包在 release/，用时 ${elapsed} 秒："
