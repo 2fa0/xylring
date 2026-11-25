@@ -9,6 +9,55 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestOpenRepoRevealsWorktreeAtTop(t *testing.T) {
+	dir, git := initTestRepo(t)
+	for range 20 {
+		git("commit", "--allow-empty", "-m", "commit")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("change\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		top  int
+	}{
+		{"initial view", 0},
+		{"already scrolled", 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tab := newTab(1, dir)
+			updates := make(chan func(), 64)
+			a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) { updates <- fn }}
+			defer tab.cancel()
+			a.reload(tab)
+			waitUpdates(t, updates, func() bool { return !tab.loading })
+
+			tt := ui.NewTester(a.view, 1100, 560)
+			tt.Frame()
+			if tc.top > 0 {
+				tab.list.ScrollTo(tc.top, ui.Start)
+				tt.Frame()
+			}
+			first, _ := tab.list.Visible()
+			if first != tc.top {
+				t.Fatalf("initial top row = %d, want %d", first, tc.top)
+			}
+			want := worktreeHash
+			if tc.top > 0 {
+				want = tab.commits[first].hash
+			}
+
+			waitUpdates(t, updates, tab.hasWorktreeRow)
+			tt.Frame()
+			first, _ = tab.list.Visible()
+			if row := tab.rowData(first); row == nil || row.hash != want {
+				t.Fatalf("top row after loading the worktree = %+v, want %x", row, want)
+			}
+		})
+	}
+}
+
 func TestAutoRefreshKeepsReadingContext(t *testing.T) {
 	dir, git := initTestRepo(t)
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600)

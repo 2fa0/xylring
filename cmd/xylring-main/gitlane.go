@@ -3,9 +3,41 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
+
+type heldGitLanesKey struct{}
+
+func gitLaneHeld(ctx context.Context, key string) bool {
+	held, _ := ctx.Value(heldGitLanesKey{}).(map[string]bool)
+	return held[key]
+}
+
+// Hold the parent and target write lanes through inspection and removal.
+// A fixed order lets overlapping worktree operations wait without a cycle.
+func acquireWorktreeLanes(ctx context.Context, dirs ...string) (context.Context, func()) {
+	keys := make([]string, 0, len(dirs))
+	seen := make(map[string]bool)
+	for _, dir := range dirs {
+		key := canonicalRepoDir(dir)
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	var releases []func()
+	for _, key := range keys {
+		releases = append(releases, acquireGitLane(ctx, key, true))
+	}
+	return context.WithValue(ctx, heldGitLanesKey{}, seen), func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+}
 
 // 每个仓库一条车道：只读的 Git 进程可以并行，写操作必须独占这个仓库。
 // 车道按先来后到放行，成串的历史读取不会把后到的写操作饿死。

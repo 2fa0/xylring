@@ -33,6 +33,8 @@ type graph struct {
 	usedColors     []bool
 }
 
+const maxSameParentLanes = 8
+
 func (g *graph) add(c *commit) {
 	g.incoming = append(g.incoming[:0], g.cols...)
 	g.incomingColors = append(g.incomingColors[:0], g.colors...)
@@ -68,10 +70,16 @@ func (g *graph) add(c *commit) {
 			missing = true
 			continue
 		}
-		// 第一父链始终沿当前列直连下去，直到真正走到父提交那一行再汇入，
-		// 避免多个并行分支提前收口到同一列而互相借道或错连。
+		// 第一父链默认沿当前列直连下去，避免少量并行分支提前收口而互相借道；
+		// 但若同一父提交已有过多在途泳道（如大扇入仓库），则汇入已有泳道以防泳道与连线平方级膨胀。
 		if i > 0 {
 			if j := indexHash(g.cols, p); j >= 0 {
+				parentCols[i] = j
+				parentJoins[i] = true
+				continue
+			}
+		} else if countHash(g.cols, p) >= maxSameParentLanes {
+			if j := lastIndexHash(g.cols, p); j >= 0 {
 				parentCols[i] = j
 				parentJoins[i] = true
 				continue
@@ -127,7 +135,7 @@ func (g *graph) add(c *commit) {
 			continue
 		}
 		color := g.colors[pc]
-		if i == 0 {
+		if i == 0 && !parentJoins[i] {
 			// 第一父链汇回已有链前，连线仍属于当前链。
 			color = nodeColor
 		}
@@ -213,4 +221,23 @@ func indexHash(cols [][20]byte, h [20]byte) int {
 		}
 	}
 	return -1
+}
+
+func lastIndexHash(cols [][20]byte, h [20]byte) int {
+	for i := len(cols) - 1; i >= 0; i-- {
+		if cols[i] == h {
+			return i
+		}
+	}
+	return -1
+}
+
+func countHash(cols [][20]byte, h [20]byte) int {
+	n := 0
+	for _, c := range cols {
+		if c == h {
+			n++
+		}
+	}
+	return n
 }

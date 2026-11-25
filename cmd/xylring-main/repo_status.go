@@ -29,6 +29,10 @@ func repoSummaryEqual(a, b repoSummary) bool {
 }
 
 func queryRepoSummary(ctx context.Context, dir string) repoSummary {
+	return queryRepoSummaryWithWorktrees(ctx, dir, true)
+}
+
+func queryRepoSummaryWithWorktrees(ctx context.Context, dir string, includeWorktrees bool) repoSummary {
 	var s repoSummary
 	s.checked = time.Now()
 	if dir == "" {
@@ -59,7 +63,7 @@ func queryRepoSummary(ctx context.Context, dir string) repoSummary {
 	s.upstream = sync.upstream
 	s.ahead = sync.ahead
 	s.behind = sync.behind
-	if s.branch != "仓库不可用" && !isDockerRepoPath(dir) {
+	if includeWorktrees && s.branch != "仓库不可用" && !isDockerRepoPath(dir) {
 		if linked, werr := listWorktrees(ctx, dir); werr == nil {
 			s.worktrees = linked
 		}
@@ -131,7 +135,7 @@ func (a *app) ensureRepoSummary(path string) {
 
 // Only visible rows need periodic status. A batch uses one worker and one UI update.
 func (a *app) visibleRepoPaths() []string {
-	rows := a.sidebarRows(a.repoItems())
+	rows := a.sidebarRows(a.visibleRepoItems())
 	first, last := a.repoListState.Visible()
 	if first < 0 || last < first {
 		first, last = 0, min(32, len(rows))-1
@@ -154,6 +158,12 @@ func (a *app) refreshRepoSummary(path string) {
 func (a *app) refreshSummaryBatch(paths []string) {
 	if a.closed {
 		return
+	}
+	topLevelPaths := make(map[string]bool)
+	for _, row := range a.sidebarRows(a.visibleRepoItems()) {
+		if row.worktree == nil {
+			topLevelPaths[row.path] = true
+		}
 	}
 	a.summaryMu.Lock()
 	if len(a.summaryRunning) != 0 {
@@ -189,7 +199,7 @@ func (a *app) refreshSummaryBatch(paths []string) {
 				break
 			}
 			ctx, cancel := context.WithTimeout(batchCtx, 5*time.Second)
-			results[path] = queryRepoSummary(ctx, path)
+			results[path] = queryRepoSummaryWithWorktrees(ctx, path, topLevelPaths[path])
 			cancel()
 		}
 		a.onMain(func() {
@@ -206,6 +216,14 @@ func (a *app) refreshSummaryBatch(paths []string) {
 			changed := false
 			for path, result := range results {
 				old, ok := a.repoSummaries[path]
+				if ok && result.worktrees == nil {
+					result.worktrees = old.worktrees
+				} else if result.worktrees != nil {
+					if tab := a.tabByPath(path); tab != nil && tab.loaded && tab != a.activeTab() && !slices.Equal(tab.worktrees, result.worktrees) {
+						tab.worktrees = result.worktrees
+						changed = true
+					}
+				}
 				changed = changed || !ok || !repoSummaryEqual(old, result)
 				a.repoSummaries[path] = result
 			}

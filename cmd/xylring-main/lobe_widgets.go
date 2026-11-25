@@ -230,7 +230,7 @@ func chip(c *ui.Context, key, text string, s chipStyle) ui.Element {
 		font = 12
 	}
 	e.Children(func() {
-		t := ui.Text(c, text).SingleLine().FontSize(font).TextColor(s.Text)
+		t := ui.Text(c, text).SingleLine().MinWidth(0).FontSize(font).TextColor(s.Text)
 		if s.Bold {
 			t.FontWeight(600)
 		}

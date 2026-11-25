@@ -617,6 +617,7 @@ func (a *app) reload(t *repoTab) {
 	t.generation++
 	t.locateGen++
 	gen, worktreeGen := t.generation, t.worktreeRefreshGen
+	firstLoad := !t.loaded && t.restore == nil
 	t.worktreeCache = nil
 	t.nextRepoCheck, t.repoCheckDelay = time.Time{}, 0
 	t.loading = true
@@ -735,8 +736,15 @@ func (a *app) reload(t *repoTab) {
 		if worktreeErr == nil {
 			a.post(func() {
 				if !t.closed && t.generation == gen && t.worktreeRefreshGen == worktreeGen {
+					// 列表会按提交哈希保持滚动锚点，首次加载时要让新插入的工作区行露出来。
+					first, _ := t.list.Visible()
+					revealWorktree := firstLoad && first <= 0 && t.selected < 0 &&
+						t.locateHash == zeroHash && !t.hasWorktreeRow()
 					t.worktreeCache = cache
 					a.applyWorktree(t, files)
+					if revealWorktree && t.hasWorktreeRow() {
+						t.list.ScrollTo(0, ui.Start)
+					}
 				}
 			})
 		}
@@ -971,7 +979,6 @@ func (a *app) selectCommit(t *repoTab, i int) {
 type repoColorTag struct {
 	id       string
 	label    string
-	hex      string
 	color    ui.Color
 	menuIcon *mygo.MenuIcon
 }
@@ -995,7 +1002,6 @@ func newRepoColorTag(id, label, hex string) repoColorTag {
 	return repoColorTag{
 		id:       id,
 		label:    label,
-		hex:      hex,
 		color:    ui.Hex(hex),
 		menuIcon: icon,
 	}
@@ -1090,52 +1096,23 @@ func (a *app) sortReposByColor() {
 
 func (a *app) repoColorMenu(m *ui.Menu, path string) {
 	currentColor := a.repoColors[path]
-	m.Item(tr("标签颜色")).ID("repo-color-picker").Content(func(mc ui.MenuItemContent) {
-		ui.Row(mc.Context).Gap(6).AlignItems(ui.Center).Children(func() {
-			for _, tag := range repoColorTags {
-				selected := currentColor == tag.id
-				btn := ui.ButtonBase(mc.Context.Key("menu-color-"+tag.id)).
-					Label(tr(tag.label)).
-					Tooltip(tr(tag.label)).
-					Size(18, 18).
-					Radius(9).
-					Center().
-					Cursor(ui.CursorPointer)
+	m.Submenu(tr("标签颜色"), func(sub *ui.Menu) {
+		for _, tag := range repoColorTags {
+			selected := currentColor == tag.id
+			if sub.Item(tr(tag.label)).ID(tag.id).Icon(tag.menuIcon).Radio(selected).Chosen() {
 				if selected {
-					btn.Border(1.5, mc.Text)
-				} else if btn.Hovered() {
-					btn.Background(mc.Text.Alpha(0.14))
-				}
-				btn.Children(func() {
-					ui.Box(mc.Context).Size(12, 12).Radius(6).Background(tag.color).Shrink(0)
-				})
-				if btn.Clicked() {
-					if selected {
-						a.setRepoColor(path, "")
-					} else {
-						a.setRepoColor(path, tag.id)
-					}
-				}
-			}
-			if currentColor != "" {
-				clearBtn := ui.ButtonBase(mc.Context.Key("menu-color-clear")).
-					Label(tr("清除标签")).
-					Tooltip(tr("清除标签")).
-					Size(18, 18).
-					Radius(9).
-					Center().
-					Cursor(ui.CursorPointer)
-				if clearBtn.Hovered() {
-					clearBtn.Background(mc.Text.Alpha(0.14))
-				}
-				clearBtn.Children(func() {
-					ui.Icon(mc.Context, iconClose).Size(11, 11).TextColor(mc.Muted)
-				})
-				if clearBtn.Clicked() {
 					a.setRepoColor(path, "")
+				} else {
+					a.setRepoColor(path, tag.id)
 				}
 			}
-		})
+		}
+		if currentColor != "" {
+			sub.Separator()
+			if sub.Item(tr("清除标签")).Chosen() {
+				a.setRepoColor(path, "")
+			}
+		}
 	})
 	m.Separator()
 }

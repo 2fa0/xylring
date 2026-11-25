@@ -337,5 +337,32 @@ func TestFilteredQueryKeepsGraphFlat(t *testing.T) {
 	if !stub(cs[3]) {
 		t.Fatalf("最后一条提交缺失父提交时没有画短桩：%+v", cs[3].segs)
 	}
+}
 
+func TestGraphLargeFanInBoundedLanesAndSegs(t *testing.T) {
+	var g graph
+	base := [20]byte{1: 0xab, 2: 0xcd}
+	const tips = 2000
+	cs := make([]commit, tips+1)
+	for i := 0; i < tips; i++ {
+		var h [20]byte
+		h[0] = 2
+		h[18] = byte(i >> 8)
+		h[19] = byte(i)
+		cs[i] = commit{hash: h, parents: [][20]byte{base}}
+	}
+	cs[tips] = commit{hash: base}
+	for i := range cs {
+		g.add(&cs[i])
+	}
+	if g.lanes() > maxSameParentLanes+2 {
+		t.Fatalf("large fan-in expanded to %d lanes (limit %d)", g.lanes(), maxSameParentLanes+2)
+	}
+	totalSegs := 0
+	for i := range cs {
+		totalSegs += len(cs[i].segs)
+	}
+	if totalSegs > 50000 {
+		t.Fatalf("large fan-in generated %d segs (expected bounded linear growth)", totalSegs)
+	}
 }

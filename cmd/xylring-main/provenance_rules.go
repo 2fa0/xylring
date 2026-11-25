@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,7 +153,7 @@ func saveRulePreview(p rulePreview) error {
 		mode = info.Mode().Perm()
 	}
 	if err := os.WriteFile(p.path, p.after, mode); err != nil {
-		return fmt.Errorf("保存规则失败：%w", err)
+		return err
 	}
 	return nil
 }

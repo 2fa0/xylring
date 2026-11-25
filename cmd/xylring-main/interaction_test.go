@@ -421,12 +421,11 @@ func TestSidebarRepoColorTagsAndFilter(t *testing.T) {
 	defer retireTester(tt)
 	tt.Frame()
 
-	// 1. Finder-style first-level dot picker in PopoverMenu
 	if err := tt.RightClick("repo-two"); err != nil {
 		t.Fatalf("RightClick failed: %v", err)
 	}
-	if err := tt.Click("蓝色"); err != nil {
-		t.Fatalf("Click(蓝色) in popover menu failed: %v", err)
+	if err := tt.ChooseMenuItem("标签颜色", "蓝色"); err != nil {
+		t.Fatal(err)
 	}
 	tt.CloseMenu()
 	tt.Frame()
@@ -434,12 +433,11 @@ func TestSidebarRepoColorTagsAndFilter(t *testing.T) {
 		t.Fatalf("expected repo-two color blue, got %q", got)
 	}
 
-	// Clear color tag via × button in popover menu
 	if err := tt.RightClick("repo-two"); err != nil {
 		t.Fatalf("RightClick failed: %v", err)
 	}
-	if err := tt.Click("清除标签"); err != nil {
-		t.Fatalf("Click(清除标签) failed: %v", err)
+	if err := tt.ChooseMenuItem("标签颜色", "清除标签"); err != nil {
+		t.Fatal(err)
 	}
 	tt.CloseMenu()
 	tt.Frame()
@@ -512,11 +510,34 @@ func TestRecentRepoColorTag(t *testing.T) {
 	if err := tt.RightClick("my-recent-project"); err != nil {
 		t.Fatalf("RightClick on recent repo failed: %v", err)
 	}
-	if err := tt.Click("绿色"); err != nil {
-		t.Fatalf("Click(绿色) on recent repo menu failed: %v", err)
+	if err := tt.ChooseMenuItem("标签颜色", "绿色"); err != nil {
+		t.Fatal(err)
 	}
 	tt.Frame()
 	if got := a.repoColors[dir]; got != "green" {
 		t.Fatalf("expected recent repo color green, got %q", got)
+	}
+}
+
+func TestRepoColorMenuKeyboard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repo-keyboard")
+	a := &app{showHome: true, recent: []string{path}, dispatch: func(fn func()) {}}
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.SetMenuPresentation(ui.PopoverMenus)
+		a.view(c)
+	}, 1000, 700)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if err := tt.RightClick("repo-keyboard"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyHome)
+	tt.Key(0, ui.KeyRight)
+	tt.Key(0, ui.KeyHome)
+	tt.Key(0, ui.KeyDown)
+	tt.Key(0, ui.KeyEnter)
+	if got := a.repoColors[path]; got != "orange" {
+		t.Fatalf("expected keyboard to select orange, got %q", got)
 	}
 }

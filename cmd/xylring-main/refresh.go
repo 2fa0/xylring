@@ -158,6 +158,10 @@ func (a *app) checkActiveRepo() {
 				changed = true
 				return
 			}
+			if full && !slices.Equal(t.worktrees, meta.worktrees) {
+				t.worktrees = meta.worktrees
+				changed = true
+			}
 			if dirtyChanged {
 				a.applyWorktree(t, dirty)
 				changed = true

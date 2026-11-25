@@ -1,3 +1,19 @@
+## 0.11.0
+
+### 更新内容
+
+- 仓库可按颜色打标签、筛选和排序。
+- 侧栏显示关联工作树，支持清理失效记录，以及在检查当前状态后移除工作树。
+- 提交图谱增加独立引用列，保留折叠引用的操作入口，并改进并行分支的连线。
+- 错误提示补充失败步骤和相关仓库，设置页新增项目主页入口。
+
+### Changes
+
+- Add repository color tags with filtering and sorting.
+- Show linked worktrees in the sidebar and support stale record cleanup and worktree removal with safety checks.
+- Add a dedicated refs column with actions for collapsed refs and improve parallel branch connections in the commit graph.
+- Add failing steps and repository details to error messages and link to the project page from Settings.
+
 ## 0.10.0 - 2026-11-23
 
 ### 更新内容

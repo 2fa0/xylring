@@ -156,7 +156,11 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 
 func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []string, input string, args ...string) ([]byte, error) {
 	// 车道先于全局槽，defer 逆序释放。
-	releaseLane := acquireGitLane(ctx, canonicalRepoDir(dir), gitCommandWrites(args))
+	releaseLane := func() {}
+	key := canonicalRepoDir(dir)
+	if !gitLaneHeld(ctx, key) {
+		releaseLane = acquireGitLane(ctx, key, gitCommandWrites(args))
+	}
 	defer releaseLane()
 	if err := acquireGit(ctx); err != nil {
 		return nil, err

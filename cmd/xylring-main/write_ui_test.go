@@ -312,6 +312,28 @@ func TestBranchBadgeContextMenuCheckout(t *testing.T) {
 	}
 }
 
+func TestCollapsedRefsReachableInNarrowGraph(t *testing.T) {
+	tab := graphTabForWrite()
+	tab.refs = map[[20]byte][]refInfo{tab.head: {
+		{name: "a-very-very-long-local-branch", kind: refBranch},
+		{name: "second", kind: refBranch},
+		{name: "tag-two", kind: refTag},
+	}}
+	a := &app{tabs: []*repoTab{tab}, dispatch: func(fn func()) {}}
+	tt := ui.NewTester(a.view, 900, 700)
+	defer retireTester(tt)
+	tt.Frame()
+	if err := tt.RightClick("+2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("second", "复制分支名"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tt.Clipboard(); got != "second" {
+		t.Fatalf("expected collapsed ref to be copied, got %q", got)
+	}
+}
+
 func TestBranchBadgeContextMenuCurrentBranchDisabled(t *testing.T) {
 	tab := graphTabForWrite()
 	tab.branch = "main"

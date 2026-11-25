@@ -337,7 +337,7 @@ func (a *app) ringModal(c *ui.Context) {
 			settingsNotice(c, "ring-docker-readonly", tr("容器仓库只读取年轮状态，暂不支持开启 Hook、设置印章或写入规则文件。"), th.TextMuted)
 		}
 		if t.ring.err != "" {
-			settingsNotice(c, "ring-error", t.ring.err, th.Danger)
+			settingsNotice(c, "ring-error", trMessage(t.ring.err), th.Danger)
 		}
 
 		// Card 1: Terminal commit Hook & active stamp

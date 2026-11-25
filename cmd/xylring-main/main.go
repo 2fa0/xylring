@@ -208,7 +208,6 @@ func newApp() *app {
 }
 
 func (a *app) view(c *ui.Context) {
-	c.SetMenuPresentation(ui.PopoverMenus)
 	switch a.themeMode {
 	case "light":
 		c.SetTheme(ui.LightTheme())
@@ -1003,15 +1002,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 		if len(usedColors) > 0 {
 			a.sidebarColorFilterBar(c, usedColors)
 		}
-		visibleItems := items
-		if a.repoColorFilter != "" {
-			visibleItems = make([]string, 0, len(items))
-			for _, p := range items {
-				if a.repoColors[p] == a.repoColorFilter {
-					visibleItems = append(visibleItems, p)
-				}
-			}
-		}
+		visibleItems := a.visibleRepoItems()
 		rows := a.sidebarRows(visibleItems)
 		a.repoSel = -1
 		for i, row := range rows {
@@ -1039,7 +1030,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			return func(m *ui.Menu) {
 				if wt != nil && wt.prunable != "" {
 					if m.Item(tr("清理失效记录")).Chosen() {
-						a.runPruneWorktrees(parentRepo, p)
+						a.runPruneWorktreeRecord(parentRepo, p)
 					}
 					m.Separator()
 					if m.Item(tr("复制路径")).Chosen() {
@@ -1111,7 +1102,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			}
 			padL := float32(10) + float32(level)*c.Theme().Space(4)
 			if record.worktree != nil {
-				parentRepo := items[record.repo]
+				parentRepo := record.parentRepo
 				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, parentRepo, record.worktree))
 				return
 			}
@@ -1161,7 +1152,7 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 		} else if list.Changed() && a.repoSel >= 0 && a.repoSel < len(rows) {
 			if wt := rows[a.repoSel].worktree; wt != nil {
 				if wt.prunable != "" {
-					a.openWorktreeRemoveModal(items[rows[a.repoSel].repo], *wt)
+					a.openWorktreeRemoveModal(rows[a.repoSel].parentRepo, *wt)
 				} else {
 					a.openRepo(wt.path)
 				}
@@ -1228,33 +1219,76 @@ func (a *app) sidebarColorFilterBar(c *ui.Context, usedColors []repoColorTag) {
 	})
 }
 
-// sidebarRow 是侧栏列表里的一行：仓库本身（worktree 为 nil），或挂在它下面的工作树。
-type sidebarRow struct {
-	path     string
-	worktree *repoWorktree
-	repo     int // items 里的下标，工作树行指向它所属的仓库
+func (a *app) visibleRepoItems() []string {
+	items := a.repoItems()
+	if a.repoColorFilter == "" {
+		return items
+	}
+	usedColors := a.usedRepoColors(items)
+	if !slices.ContainsFunc(usedColors, func(tag repoColorTag) bool { return tag.id == a.repoColorFilter }) {
+		return items
+	}
+	visible := make([]string, 0, len(items))
+	for _, p := range items {
+		if a.repoColors[p] == a.repoColorFilter {
+			visible = append(visible, p)
+		}
+	}
+	return visible
 }
 
-// sidebarRows 摊平仓库列表：每个仓库后面跟它的工作树子行。已经作为工作树列在
-// 别处的仓库不再单独占一行，同一个目录只出现一次（工作树优先）。
+// sidebarRow 是侧栏列表里的一行：仓库本身（worktree 为 nil），或挂在它下面的工作树。
+type sidebarRow struct {
+	path       string
+	parentRepo string
+	worktree   *repoWorktree
+	repo       int // visibleItems 里的下标，工作树行指向它所属的仓库
+}
+
+// sidebarRows 摊平仓库列表：每个仓库后面跟它的工作树子行。
+// 同一个 Git 仓库家族只选定唯一的展示父级（优先主工作树，其次列表里最靠前的项），
+// 避免两个已打开的兄弟工作树互相把对方标成子行而一起消失。
 func (a *app) sidebarRows(items []string) []sidebarRow {
 	worktrees := make(map[string][]repoWorktree, len(items))
-	nested := map[string]bool{}
+	inAnyWorktree := map[string]bool{}
 	for _, p := range items {
-		worktrees[p] = a.repoWorktrees(p)
+		wts := a.repoWorktrees(p)
+		worktrees[p] = wts
+		for _, wt := range wts {
+			inAnyWorktree[wt.path] = true
+		}
+	}
+	topLevel := make(map[string]bool, len(items))
+	claimed := make(map[string]bool, len(items))
+	for _, p := range items {
+		if inAnyWorktree[p] {
+			continue
+		}
+		topLevel[p] = true
+		claimed[p] = true
 		for _, wt := range worktrees[p] {
-			nested[wt.path] = true
+			claimed[wt.path] = true
+		}
+	}
+	for _, p := range items {
+		if claimed[p] {
+			continue
+		}
+		topLevel[p] = true
+		claimed[p] = true
+		for _, wt := range worktrees[p] {
+			claimed[wt.path] = true
 		}
 	}
 	rows := make([]sidebarRow, 0, len(items))
 	for i, p := range items {
-		if nested[p] {
+		if !topLevel[p] {
 			continue
 		}
-		rows = append(rows, sidebarRow{repo: i, path: p})
+		rows = append(rows, sidebarRow{repo: i, path: p, parentRepo: p})
 		for _, wt := range worktrees[p] {
 			wt := wt
-			rows = append(rows, sidebarRow{repo: i, path: wt.path, worktree: &wt})
+			rows = append(rows, sidebarRow{repo: i, path: wt.path, parentRepo: p, worktree: &wt})
 		}
 	}
 	return rows
@@ -1875,13 +1909,15 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 		return
 	}
 	padEnd := float32(8)
+	gap := float32(6)
 	switch column {
 	case "refs":
 		padEnd = 0
+		gap = 4
 	case "hash":
 		padEnd = 16
 	}
-	cellRow := ui.Row(c).Fill().MinHeight(28).Padding(2, padEnd, 2, 8).Gap(6).AlignItems(ui.Center)
+	cellRow := ui.Row(c).Fill().MinWidth(0).MinHeight(28).Padding(2, padEnd, 2, 8).Gap(gap).AlignItems(ui.Center)
 	if !worktree && (tab.query.term != "" || tab.query.filePath != "") {
 		commitHash := item.hash
 		if cellRow.RowDoubleClicked() {
@@ -1904,42 +1940,55 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				chip(c, "chip-head", "HEAD", chipStyle{Text: ui.RGBA(255, 255, 255, 1), Background: color, Bold: true}).
 					Tooltip(tr("当前检出位置 (HEAD)"))
 			}
-			// 左侧引用列空间紧凑：默认展示主引用，其余折叠成 +N 徽章，悬停查看全部。
+			// 左侧引用列空间紧凑：默认展示主引用，其余折叠成 +N 徽章，悬停查看全部，右键可操作折叠引用。
 			maxVisible := 1
 			if !isHead && len(badges) == 2 && len(badges[0].name)+len(badges[1].name) <= 18 {
 				maxVisible = 2
 			}
+			hasMore := len(badges) > maxVisible
 			for idx, badge := range badges {
 				if idx == maxVisible {
 					var rest []string
-					for _, b := range badges[maxVisible:] {
+					collapsed := slices.Clone(badges[maxVisible:])
+					for _, b := range collapsed {
 						rest = append(rest, b.label())
 					}
-					chip(c, fmt.Sprintf("ref-more-%s", hashHex(item.hash)), fmt.Sprintf("+%d", len(rest)),
+					commitCopy := *item
+					more := chip(c, fmt.Sprintf("ref-more-%s", hashHex(item.hash)), fmt.Sprintf("+%d", len(rest)),
 						chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
-						Tooltip(strings.Join(rest, "\n"))
+						Cursor(ui.CursorPointer).
+						Tooltip(strings.Join(rest, "\n") + "\n" + tr("（右键操作更多引用）"))
+					more.ContextMenu(func(m *ui.Menu) {
+						for _, rb := range collapsed {
+							b := rb
+							m.Submenu(b.label(), func(sub *ui.Menu) {
+								a.refBadgeMenu(c, sub, tab, commitCopy, b)
+							})
+						}
+					})
 					break
 				}
 				b := badge
 				commitCopy := *item
+				var pill ui.Element
 				switch b.kind {
 				case refBranch:
 					tip := tr("本地分支 ") + b.name + tr("（右键更多操作）")
 					if len(b.remotes) > 0 {
 						tip = tr("本地分支 ") + b.name + tr(" · 同步远端 ") + strings.Join(b.remotes, ", ") + tr("（右键更多操作）")
 					}
-					pill := chipSoft(c, fmt.Sprintf("ref-branch-%s-%s", hashHex(item.hash), b.name), b.name, color, true).
+					pill = chipSoft(c, fmt.Sprintf("ref-branch-%s-%s", hashHex(item.hash), b.name), b.name, color, true).
 						Cursor(ui.CursorPointer).Tooltip(tip)
 					pill.ContextMenu(func(m *ui.Menu) {
-						a.branchBadgeMenu(c, m, tab, commitCopy, b.name)
+						a.refBadgeMenu(c, m, tab, commitCopy, b)
 					})
-					if len(b.remotes) > 0 {
+					if len(b.remotes) > 0 && !hasMore {
 						pill.Children(func() {
 							ui.Text(c, "· "+strings.Join(b.remotes, ",")).FontSize(11).SingleLine().TextColor(muted)
 						})
 					}
 				case refRemote:
-					pill := chip(c, fmt.Sprintf("ref-remote-%s-%s", hashHex(item.hash), b.name), b.name,
+					pill = chip(c, fmt.Sprintf("ref-remote-%s-%s", hashHex(item.hash), b.name), b.name,
 						chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
 						Cursor(ui.CursorPointer).Tooltip(tr("远程分支 ") + b.name + tr("（双击检出跟踪分支，右键更多操作）"))
 					if pill.RowDoubleClicked() {
@@ -1952,14 +2001,17 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 						a.write.checkout = true
 					}
 					pill.ContextMenu(func(m *ui.Menu) {
-						a.remoteBadgeMenu(c, m, tab, commitCopy, b.name)
+						a.refBadgeMenu(c, m, tab, commitCopy, b)
 					})
 				case refTag:
-					pill := chipSoft(c, fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name), tr("标签 ")+b.name, t.Warning, false).
+					pill = chipSoft(c, fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name), tr("标签 ")+b.name, t.Warning, false).
 						Cursor(ui.CursorPointer).Tooltip(tr("标签 ") + b.name + tr("（右键更多操作）"))
 					pill.ContextMenu(func(m *ui.Menu) {
-						a.tagBadgeMenu(c, m, tab, commitCopy, b.name)
+						a.refBadgeMenu(c, m, tab, commitCopy, b)
 					})
+				}
+				if pill.Valid() {
+					pill.Shrink(1).MinWidth(0).Clip()
 				}
 			}
 			ui.Box(c).Grow(1).MinWidth(0).AlignSelf(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) {
@@ -2042,6 +2094,17 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 	})
 }
 
+func (a *app) refBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, commitCopy commit, b commitRefBadge) {
+	switch b.kind {
+	case refBranch:
+		a.branchBadgeMenu(c, m, tab, commitCopy, b.name)
+	case refRemote:
+		a.remoteBadgeMenu(c, m, tab, commitCopy, b.name)
+	case refTag:
+		a.tagBadgeMenu(c, m, tab, commitCopy, b.name)
+	}
+}
+
 func parsePalette(s string) ([]ui.Color, error) {
 	var colors []ui.Color
 	for _, part := range strings.Split(s, ",") {
@@ -2070,7 +2133,7 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 	}
 	if mainW > 0 && mainW < 700 {
 		return []ui.TableColumn{
-			{ID: "refs", Title: tr("引用"), Width: 108, MinWidth: 80},
+			{ID: "refs", Title: tr("引用"), Width: 132, MinWidth: 128},
 			{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
 			{ID: "subject", Title: tr("描述"), MinWidth: 116},
 			{ID: "date", Title: tr("日期"), Width: 112, MinWidth: 92},
@@ -2079,7 +2142,7 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 		}
 	}
 	return []ui.TableColumn{
-		{ID: "refs", Title: tr("引用"), Width: 168, MinWidth: 100},
+		{ID: "refs", Title: tr("引用"), Width: 168, MinWidth: 128},
 		{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
 		{ID: "subject", Title: tr("描述"), MinWidth: 160},
 		{ID: "date", Title: tr("日期"), Width: 144, MinWidth: 116},
