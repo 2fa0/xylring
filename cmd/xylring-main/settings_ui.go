@@ -1,6 +1,10 @@
 package main
 
-import "github.com/egoist/mygo/ui"
+import (
+	"fmt"
+
+	"github.com/egoist/mygo/ui"
+)
 
 // 设置页读起来是一摞卡片：卡片自己带着标题、边框和底色，行与行用一条往底色里
 // 褪过的细线分开。一行的形状固定——名字和说明在左，改它的控件在右。卡片的分组、
@@ -13,6 +17,162 @@ func settingsControlWidth(c *ui.Context) float32 {
 		return 142
 	}
 	return 176
+}
+
+// settingsInputWidth is how much room an inline text input takes on the right
+// of a setting row.
+func settingsInputWidth(c *ui.Context) float32 {
+	if w, _ := c.Size(); w < 620 {
+		return 156
+	}
+	return 220
+}
+
+type settingsNavItem struct {
+	page   int
+	key    string
+	label  string
+	icon   *ui.SVG
+	dirty  bool
+	handle *ui.Handle
+}
+
+// settingsDialog lays out the settings modal with a pinned left sidebar on
+// desktop widths and a wrapping pill bar on narrow windows, keeping the right
+// content scrollable and the dialog height stable across page switches.
+func settingsDialog(c *ui.Context, open *bool, title string, width, tall float32, busy bool, page *int, items []settingsNavItem, banner, content, footer func()) {
+	if !*open {
+		return
+	}
+	w, h := c.Size()
+	t := c.Theme()
+	panelW := min(width, max(0, w-32))
+	sidebar := panelW >= 580
+	visible := true
+	ui.DialogBase(c, &visible, func(backdrop, panel ui.Element) {
+		backdrop.Background(ui.RGBA(0, 0, 0, 0.4))
+		panel.Width(panelW).MaxHeight(max(0, h-32)).
+			Padding(0).Gap(0).Radius(12).Background(t.Background).
+			Border(1, t.Border).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.3)).Label(tr(title))
+		if tall > 0 {
+			panel.Height(min(max(0, h-32), tall))
+		}
+		panel.Children(func() {
+			ui.Row(c.Key("header")).Padding(12, 16).Gap(12).AlignItems(ui.Center).Shrink(0).
+				BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+				ui.Text(c, tr(title)).FontSize(14).Bold().Grow(1).MinWidth(0)
+				if closeIconButton(c, "dialog-close", tr("关闭对话框")).Disabled(busy).Clicked() {
+					*open = false
+				}
+			})
+			scrollKey := fmt.Sprintf("body-%d", *page)
+			if sidebar {
+				ui.Row(c.Key("settings-shell")).Grow(1).MinHeight(0).FillWidth().AlignItems(ui.Stretch).Clip().Children(func() {
+					ui.Column(c.Key("settings-nav")).Role(ui.RoleTabList).FocusGroup(ui.Vertical).Label(tr("设置")).Width(168).Shrink(0).FillHeight().
+						Padding(12, 10).Gap(2).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+						for idx := range items {
+							settingsNavButton(c, items, idx, page, true)
+						}
+					})
+					ui.Column(c.Key("settings-main")).Grow(1).MinWidth(0).MinHeight(0).FillHeight().Children(func() {
+						if banner != nil {
+							banner()
+						}
+						ui.Scroll(c.Key(scrollKey)).Grow(1).MinWidth(0).MinHeight(0).FillWidth().Children(func() {
+							ui.Column(c.Key("settings-page")).FillWidth().Padding(16).Gap(12).Children(func() {
+								content()
+							})
+						})
+					})
+				})
+			} else {
+				ui.Row(c.Key("settings-nav-compact")).Role(ui.RoleTabList).FocusGroup(ui.Horizontal).Label(tr("设置")).FillWidth().Wrap().Padding(8, 12).Gap(4).Shrink(0).
+					BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+					for idx := range items {
+						settingsNavButton(c, items, idx, page, false)
+					}
+				})
+				if banner != nil {
+					banner()
+				}
+				ui.Scroll(c.Key(scrollKey)).Grow(1).MinHeight(0).FillWidth().Children(func() {
+					ui.Column(c.Key("settings-page")).FillWidth().Padding(12).Gap(12).Children(func() {
+						content()
+					})
+				})
+			}
+			ui.Row(c.Key("footer")).Padding(12, 16).Gap(8).AlignItems(ui.Center).Justify(ui.End).Shrink(0).
+				BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(footer)
+		})
+	})
+	if !visible && !busy {
+		*open = false
+	}
+}
+
+func settingsNavButton(c *ui.Context, items []settingsNavItem, idx int, page *int, fullWidth bool) {
+	item := items[idx]
+	t := c.Theme()
+	active := *page == item.page
+	btn := ui.ButtonBase(c.Key(item.key)).Role(ui.RoleTab).Label(tr(item.label)).AccessSelected(active).AlignItems(ui.Center).
+		Radius(8).Cursor(ui.CursorPointer).Transition(colorMotion())
+	if item.handle != nil {
+		btn.Bind(item.handle)
+	}
+	if fullWidth {
+		btn.FillWidth().Padding(8, 10).Gap(8)
+	} else {
+		btn.Padding(6, 10).Gap(6)
+	}
+	if active {
+		btn.Background(t.Accent.Alpha(0.12))
+	} else if btn.Hovered() {
+		btn.Background(t.SurfaceHover)
+	}
+	fg := t.Text
+	iconFg := t.TextMuted
+	if active {
+		fg = t.Accent
+		iconFg = t.Accent
+	}
+	btn.Children(func() {
+		if fullWidth {
+			ui.Icon(c, item.icon).Size(15, 15).TextColor(iconFg).Shrink(0)
+		}
+		txt := ui.Text(c, tr(item.label)).FontSize(13).TextColor(fg).SingleLine()
+		if active {
+			txt.FontWeight(600)
+		}
+		if fullWidth {
+			txt.Grow(1).MinWidth(0)
+		}
+		if item.dirty {
+			ui.Box(c).Size(6, 6).Radius(3).Background(t.Accent).Shrink(0)
+		}
+	})
+	selectIndex := func(target int) {
+		if len(items) == 0 {
+			return
+		}
+		target = (target%len(items) + len(items)) % len(items)
+		*page = items[target].page
+		if items[target].handle != nil {
+			items[target].handle.Focus(c)
+		}
+	}
+	if btn.Clicked() {
+		*page = item.page
+	}
+	switch {
+	case btn.Shortcut(0, ui.KeyDown), btn.Shortcut(0, ui.KeyRight):
+		selectIndex(idx + 1)
+	case btn.Shortcut(0, ui.KeyUp), btn.Shortcut(0, ui.KeyLeft):
+		selectIndex(idx - 1)
+	case btn.Shortcut(0, ui.KeyHome):
+		selectIndex(0)
+	case btn.Shortcut(0, ui.KeyEnd):
+		selectIndex(len(items) - 1)
+	}
 }
 
 func settingsName(c *ui.Context, label string) {
@@ -45,37 +205,6 @@ func settingsSection(c *ui.Context, key, title string, rows ...func()) {
 			}
 			row()
 		}
-	})
-}
-
-// settingsDisclosure is settingsSection whose rows fold away: the title row is
-// the card's header and the chevron at its end says the rows can be put away,
-// so a page of long groups stays short until one of them is wanted. A pointer
-// over the header lights it, as a row of the same card would.
-func settingsDisclosure(c *ui.Context, key, title string, open *bool, rows ...func()) {
-	t := c.Theme()
-	ui.Column(c.Key(key)).FillWidth().Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
-		p := ui.CollapsibleBase(c.Key(key+"-fold"), open)
-		head := p.Trigger.FillWidth().Padding(12, 16).Gap(12).AlignItems(ui.Center).
-			Cursor(ui.CursorPointer).Radius(12).Transition(colorMotion())
-		if head.Hovered() {
-			head.Background(t.SurfaceHover)
-		}
-		head.Children(func() {
-			ui.Text(c, tr(title)).FontSize(16).FontWeight(600).TextColor(t.Text).
-				SingleLine().Grow(1).MinWidth(0)
-			ui.Icon(c, iconChevronDown).Size(16, 16).TextColor(t.TextMuted).Shrink(0).
-				Rotate(180 * p.Progress())
-		})
-		p.Panel(func() {
-			settingsCardDivider(c)
-			for i, row := range rows {
-				if i > 0 {
-					settingsCardDivider(c)
-				}
-				row()
-			}
-		})
 	})
 }
 

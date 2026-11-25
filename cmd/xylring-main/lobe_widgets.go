@@ -212,6 +212,7 @@ type chipStyle struct {
 	Text, Background, Border ui.Color
 	Bold                     bool
 	FontSize                 float32
+	MaxWidth                 float32
 }
 
 // chip is the pill the app puts a ref, a state or a count in: one height,
@@ -219,6 +220,9 @@ type chipStyle struct {
 // and menu, and may add children beside the label.
 func chip(c *ui.Context, key, text string, s chipStyle) ui.Element {
 	e := ui.Row(c.Key(key)).Gap(4).AlignItems(ui.Center).Shrink(0).Padding(1, 6).Radius(4)
+	if s.MaxWidth > 0 {
+		e.MaxWidth(s.MaxWidth).Clip()
+	}
 	if s.Background != ui.Transparent {
 		e.Background(s.Background)
 	}
@@ -231,6 +235,9 @@ func chip(c *ui.Context, key, text string, s chipStyle) ui.Element {
 	}
 	e.Children(func() {
 		t := ui.Text(c, text).SingleLine().MinWidth(0).FontSize(font).TextColor(s.Text)
+		if s.MaxWidth > 0 {
+			t.Shrink(1)
+		}
 		if s.Bold {
 			t.FontWeight(600)
 		}

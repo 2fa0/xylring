@@ -82,9 +82,12 @@ func TestEnglishDialogsAndStoredErrorsContainNoChinese(t *testing.T) {
 		setup func(*app)
 		view  func(*app, *ui.Context)
 	}{
-		{"settings", func(a *app) { a.settings = settingsState{open: true} }, (*app).settingsModal},
+		{"settings", func(a *app) { a.settings = settingsState{open: true, confirmClose: true} }, (*app).settingsModal},
+		{"project-settings", func(a *app) {
+			a.settings = settingsState{open: true, page: settingsPageProject, repo: "/work/repo", local: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}
+		}, (*app).settingsModal},
 		{"git-settings", func(a *app) {
-			a.settings = settingsState{open: true, page: 1, global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys)), err: "提交姓名 不能为空或包含换行"}}
+			a.settings = settingsState{open: true, page: settingsPageGit, global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys)), err: "提交姓名 不能为空或包含换行"}}
 		}, (*app).settingsModal},
 		{"write", func(a *app) {
 			a.showWrite = true

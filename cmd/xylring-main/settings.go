@@ -17,12 +17,21 @@ type appPreferences struct {
 	RestoreDisabled  bool   `json:"restore_disabled,omitempty"`
 	FileView         int    `json:"file_view,omitempty"`
 	DiffLayout       int    `json:"diff_layout,omitempty"`
+	RefsInline       bool   `json:"refs_inline,omitempty"`
 	IgnoreWhitespace bool   `json:"ignore_whitespace,omitempty"`
 	Wrap             bool   `json:"diff_wrap,omitempty"`
 	AutoFetch        string `json:"auto_fetch,omitempty"`
 	GitExecutable    string `json:"git_executable,omitempty"`
 	ExternalEditor   string `json:"external_editor,omitempty"`
 }
+
+const (
+	settingsPageGeneral = iota
+	settingsPageDiff
+	settingsPageGit
+	settingsPageProject
+	settingsPageDataAbout
+)
 
 type settingsState struct {
 	open          bool
@@ -31,28 +40,14 @@ type settingsState struct {
 	page          int
 	repo          string
 	gen           int
+	navHandles    [5]ui.Handle
 	global, local gitSettingsScope
-	// gitOpen 记着 Git 分组折到了哪：打开设置时默认全展开，收起只在这一个
-	// 对话框的生命周期里有效，不写进配置。
-	gitOpen map[string]*bool
-}
-
-// gitGroupOpen 是某一组 Git 设置的展开状态，第一次问到时按展开算。
-func (s *settingsState) gitGroupOpen(id string) *bool {
-	if s.gitOpen == nil {
-		s.gitOpen = make(map[string]*bool)
-	}
-	if s.gitOpen[id] == nil {
-		open := true
-		s.gitOpen[id] = &open
-	}
-	return s.gitOpen[id]
 }
 
 var autoFetchOptions = []configOption{{"off", "关闭"}, {"2", "每 2 分钟"}, {"5", "每 5 分钟"}, {"10", "每 10 分钟"}, {"15", "每 15 分钟"}}
 
 func (a *app) preferences() appPreferences {
-	return appPreferences{RestoreDisabled: a.restoreDisabled, FileView: a.fileView, DiffLayout: a.diffLayout, IgnoreWhitespace: a.diffIgnoreWhitespace, Wrap: a.diffWrap, AutoFetch: a.autoFetch, Language: a.language, GitExecutable: a.gitExecutable, ExternalEditor: a.externalEditor}
+	return appPreferences{RestoreDisabled: a.restoreDisabled, FileView: a.fileView, DiffLayout: a.diffLayout, RefsInline: a.refsInline, IgnoreWhitespace: a.diffIgnoreWhitespace, Wrap: a.diffWrap, AutoFetch: a.autoFetch, Language: a.language, GitExecutable: a.gitExecutable, ExternalEditor: a.externalEditor}
 }
 func (a *app) autoFetchDelay(path string) time.Duration {
 	value := a.autoFetch
@@ -92,10 +87,15 @@ func autoFetchDetail(chosen string, delay time.Duration) string {
 }
 
 func (a *app) openSettings() {
+	a.openSettingsPage(settingsPageGeneral)
+}
+
+func (a *app) openSettingsPage(page int) {
 	if a.settings.open {
+		a.settings.page = page
 		return
 	}
-	a.settings = settingsState{open: true, gen: a.settings.gen + 1, customEditor: isCustomEditorValue(a.externalEditor)}
+	a.settings = settingsState{open: true, page: page, gen: a.settings.gen + 1, customEditor: isCustomEditorValue(a.externalEditor)}
 	a.gitPathDraft = a.gitExecutable
 	if a.settings.customEditor {
 		a.editorPathDraft = a.externalEditor
@@ -124,15 +124,29 @@ func (a *app) settingsGitWriteBlocked() bool {
 	return false
 }
 
-// gitSettingsHasEmptyOverride reports a key turned on with no value: the row's
-// field marks itself invalid, and the page cannot be applied until it is filled.
+// gitSettingsHasEmptyOverride reports a modified key turned on with no value:
+// only changed keys block Apply, matching saveGitSettings validation.
 func gitSettingsHasEmptyOverride(s *gitSettingsScope) bool {
 	for _, f := range s.fields {
-		if f.enabled && strings.TrimSpace(f.value) == "" {
+		if f.changed() && f.enabled && strings.TrimSpace(f.value) == "" {
 			return true
 		}
 	}
 	return false
+}
+
+func isWSLRepoPath(path string) bool {
+	_, _, ok := parseWSLUNCPath(path)
+	return ok
+}
+
+func settingsGitRepoDir(repo string, local bool) string {
+	// 全局 Git 设置页同时管理本机 Git 可执行文件路径；当前打开容器或 WSL 仓库时，
+	// 全局配置必须固定读写本机环境，避免同一页混用主机与容器/WSL 两套配置。
+	if !local && (isDockerRepoPath(repo) || isWSLRepoPath(repo)) {
+		return ""
+	}
+	return repo
 }
 
 func (a *app) loadSettingsGit(local, save bool) {
@@ -149,16 +163,13 @@ func (a *app) loadSettingsGit(local, save bool) {
 		return
 	}
 	d.busy, d.err, d.notice = true, "", ""
-	gen, repo := a.settings.gen, a.settings.repo
-	if !local && isDockerRepoPath(repo) {
-		repo = ""
-	}
+	gen, repo := a.settings.gen, settingsGitRepoDir(a.settings.repo, local)
 	scope := "--global"
 	if local {
 		scope = "--local"
 	}
 	fields := slices.Clone(d.fields)
-	refreshProject := save && !local && a.settings.local.loaded && !isDockerRepoPath(a.settings.repo)
+	refreshProject := save && !local && a.settings.local.loaded && !isDockerRepoPath(a.settings.repo) && !isWSLRepoPath(a.settings.repo)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -205,11 +216,15 @@ func (a *app) loadSettingsGit(local, save bool) {
 					for i, f := range project {
 						dst := &a.settings.local.fields[i]
 						dst.effective, dst.origin, dst.scope = f.effective, f.origin, f.scope
+						dst.inherited, dst.inheritedOrigin, dst.inheritedScope = f.inherited, f.inheritedOrigin, f.inheritedScope
 					}
 				}
 			}
 			if save {
 				target.notice = "已保存"
+				if !a.settingsHasUnsavedEdits() {
+					a.settings.confirmClose = false
+				}
 			}
 		})
 	}()
@@ -243,7 +258,7 @@ func settingsScopeLabel(scope string) string {
 	case "command":
 		return tr("命令行")
 	}
-	return scope
+	return ""
 }
 
 func settingsNotice(c *ui.Context, key, text string, color ui.Color) {
@@ -255,40 +270,79 @@ func settingsNotice(c *ui.Context, key, text string, color ui.Color) {
 
 // 设置页内容长短不一，读取 Git 配置时还会只剩一行提示；给对话框一个固定的
 // 高度上限（窗口更矮时按窗口来），切页签时就不会先缩短再长回去。
-const settingsModalHeight = 720
+const (
+	settingsModalWidth  = 760
+	settingsModalHeight = 720
+)
+
+func (a *app) gitPathDraftDirty() bool {
+	return strings.TrimSpace(a.gitPathDraft) != a.gitExecutable
+}
+
+func (a *app) editorPathDraftDirty() bool {
+	if !a.settings.customEditor && !isCustomEditorValue(a.externalEditor) {
+		return false
+	}
+	trimmed := strings.TrimSpace(a.editorPathDraft)
+	if !isCustomEditorValue(a.externalEditor) {
+		return trimmed != ""
+	}
+	return trimmed != a.externalEditor
+}
+
+func (a *app) settingsHasUnsavedEdits() bool {
+	return gitSettingsDirty(&a.settings.global) || gitSettingsDirty(&a.settings.local) || a.gitPathDraftDirty() || a.editorPathDraftDirty()
+}
 
 func (a *app) settingsModal(c *ui.Context) {
 	d := &a.settings
 	if !d.open {
 		return
 	}
-	dirty := gitSettingsDirty(&d.global) || gitSettingsDirty(&d.local)
+	generalDirty := a.editorPathDraftDirty()
+	globalDirty := gitSettingsDirty(&d.global) || a.gitPathDraftDirty()
+	localDirty := gitSettingsDirty(&d.local)
+	dirty := generalDirty || globalDirty || localDirty
 	busy := d.global.busy || d.local.busy
 	visible := true
 	discard := false
-	appModalSized(c.Key("settings-modal"), &visible, tr("设置"), 720, settingsModalHeight, busy, func() {
+	navItems := []settingsNavItem{
+		{page: settingsPageGeneral, key: "settings-nav-general", label: "通用", icon: iconRingSettings, dirty: generalDirty, handle: &d.navHandles[0]},
+		{page: settingsPageDiff, key: "settings-nav-diff", label: "差异与视图", icon: iconGitCompare, handle: &d.navHandles[1]},
+		{page: settingsPageGit, key: "settings-nav-git", label: "Git", icon: iconGitBranch, dirty: globalDirty, handle: &d.navHandles[2]},
+		{page: settingsPageProject, key: "settings-nav-project", label: "当前项目", icon: iconFolderGit, dirty: localDirty, handle: &d.navHandles[3]},
+		{page: settingsPageDataAbout, key: "settings-nav-data", label: "数据与关于", icon: iconKanban, handle: &d.navHandles[4]},
+	}
+	settingsDialog(c.Key("settings-modal"), &visible, tr("设置"), settingsModalWidth, settingsModalHeight, busy, &d.page, navItems, func() {
 		if d.confirmClose {
-			settingsNotice(c, "settings-confirm-close", "有未应用的 Git 修改。", c.Theme().Warning)
-			ui.Row(c).Justify(ui.End).AlignItems(ui.Center).Children(func() {
-				if ui.Button(c.Key("settings-continue"), tr("继续编辑")).Clicked() {
-					d.confirmClose = false
-				}
+			confirmMsg := "有未应用的 Git 修改。"
+			if !globalDirty && !localDirty && generalDirty {
+				confirmMsg = "有未应用的设置修改。"
+			}
+			ui.Column(c.Key("settings-confirm-wrap")).FillWidth().Shrink(0).Padding(12, 16, 0, 16).Gap(8).Children(func() {
+				settingsNotice(c, "settings-confirm-close", confirmMsg, c.Theme().Warning)
+				ui.Row(c).Justify(ui.End).AlignItems(ui.Center).Children(func() {
+					if ui.Button(c.Key("settings-continue"), tr("继续编辑")).Clicked() {
+						d.confirmClose = false
+					}
+				})
 			})
 		}
-		ui.Tabs(c.Key("settings-pages"), &d.page, tr("通用"), "Git", tr("当前项目")).FillWidth()
-		ui.Divider(c)
-		ui.Column(c.Key("settings-page")).FillWidth().Gap(12).Children(func() {
-			switch d.page {
-			case 0:
-				a.generalSettings(c)
-			case 1:
-				a.gitSettingsPage(c, false)
-			case 2:
-				a.projectSettings(c)
-			}
-		})
 	}, func() {
-		dirty = gitSettingsDirty(&d.global) || gitSettingsDirty(&d.local)
+		switch d.page {
+		case settingsPageGeneral:
+			a.generalSettings(c)
+		case settingsPageDiff:
+			a.diffSettings(c)
+		case settingsPageGit:
+			a.gitSettingsPage(c, false)
+		case settingsPageProject:
+			a.projectSettings(c)
+		case settingsPageDataAbout:
+			a.dataAboutSettings(c)
+		}
+	}, func() {
+		dirty = a.settingsHasUnsavedEdits()
 		ui.Box(c).Grow(1)
 		if dirty {
 			if ui.Button(c.Key("settings-discard"), tr("放弃修改并关闭")).Disabled(busy).Clicked() {
@@ -296,8 +350,8 @@ func (a *app) settingsModal(c *ui.Context) {
 				visible = false
 			}
 		}
-		if d.page > 0 {
-			local := d.page == 2
+		if d.page == settingsPageGit || d.page == settingsPageProject {
+			local := d.page == settingsPageProject
 			s := a.settingsScope(local)
 			if ui.PrimaryButton(c.Key("settings-apply"), tr("应用")).Disabled(busy || a.settingsGitWriteBlocked() || !s.loaded || !gitSettingsDirty(s) || gitSettingsHasEmptyOverride(s)).Clicked() {
 				a.loadSettingsGit(local, true)
@@ -307,18 +361,29 @@ func (a *app) settingsModal(c *ui.Context) {
 			visible = false
 		}
 	})
-	dirty = gitSettingsDirty(&d.global) || gitSettingsDirty(&d.local)
+	dirty = a.settingsHasUnsavedEdits()
 	if !visible {
 		if dirty && !discard {
 			d.confirmClose = true
 		} else {
+			if discard {
+				a.gitPathDraft = a.gitExecutable
+				if isCustomEditorValue(a.externalEditor) {
+					a.editorPathDraft = a.externalEditor
+					d.customEditor = true
+				} else {
+					a.editorPathDraft = ""
+					d.customEditor = false
+				}
+			}
+			d.confirmClose = false
 			d.open = false
 		}
 	}
 }
 
 func (a *app) generalSettings(c *ui.Context) {
-	settingsSection(c, "settings-appearance", "语言与外观",
+	settingsSection(c, "settings-appearance", "界面",
 		func() {
 			settingsChoiceRow(c, "settings-language", "界面语言", "", a.language,
 				[]configOption{{"", "跟随系统"}, {"zh-Hans", "简体中文"}, {"en", "English"}}, a.setLanguage)
@@ -328,33 +393,11 @@ func (a *app) generalSettings(c *ui.Context) {
 				[]configOption{{"", "跟随系统"}, {"light", "浅色"}, {"dark", "深色"}},
 				func(v string) { a.themeMode = v })
 		},
-	)
-	settingsSection(c, "settings-diff", "差异与文件",
-		func() {
-			settingsChoiceRow(c, "settings-diff-layout", "默认差异视图", "", strconv.Itoa(a.diffLayout),
-				[]configOption{{"0", "左右对照"}, {"1", "统一视图"}},
-				func(v string) { a.diffLayout, _ = strconv.Atoi(v) })
-		},
-		func() {
-			settingsChoiceRow(c, "settings-file-view", "默认文件视图", "", strconv.Itoa(a.fileView),
-				[]configOption{{"0", "列表"}, {"1", "目录树"}},
-				func(v string) { a.fileView, _ = strconv.Atoi(v) })
-		},
-		func() {
-			settingsSwitchRow(c, "settings-whitespace", "差异默认忽略空白", "", &a.diffIgnoreWhitespace, false, func() {
-				if t := a.activeTab(); t != nil && t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
-					a.loadFileDiff(t, t.fileSel)
-				}
-			})
-		},
-		func() {
-			settingsSwitchRow(c, "settings-diff-wrap", "差异默认折行", "", &a.diffWrap, false, nil)
-		},
 		func() {
 			settingsSwitchRow(c, "settings-bottom-width", "底部详情面板全宽", "", &a.bottomFullWidth, false, nil)
 		},
 	)
-	settingsSection(c, "settings-startup", "启动与同步",
+	startupRows := []func(){
 		func() {
 			restore := !a.restoreDisabled
 			settingsSwitchRow(c, "settings-restore", "启动时恢复上次打开的仓库", "", &restore, false, func() {
@@ -376,10 +419,49 @@ func (a *app) generalSettings(c *ui.Context) {
 				}
 			})
 		},
+	}
+	startupRows = append(startupRows, a.editorSettingsRows(c)...)
+	settingsSection(c, "settings-startup", "启动与工具", startupRows...)
+}
+
+func (a *app) diffSettings(c *ui.Context) {
+	settingsSection(c, "settings-view", "默认视图",
+		func() {
+			value := "0"
+			if a.refsInline {
+				value = "1"
+			}
+			settingsChoiceRow(c, "settings-refs-position", "引用位置", "", value,
+				[]configOption{{"0", "图谱左侧"}, {"1", "描述行内"}},
+				func(v string) { a.refsInline = v == "1" })
+		},
+		func() {
+			settingsChoiceRow(c, "settings-diff-layout", "默认差异视图", "", strconv.Itoa(a.diffLayout),
+				[]configOption{{"0", "左右对照"}, {"1", "统一视图"}},
+				func(v string) { a.diffLayout, _ = strconv.Atoi(v) })
+		},
+		func() {
+			settingsChoiceRow(c, "settings-file-view", "默认文件视图", "", strconv.Itoa(a.fileView),
+				[]configOption{{"0", "列表"}, {"1", "目录树"}},
+				func(v string) { a.fileView, _ = strconv.Atoi(v) })
+		},
 	)
-	a.editorSettings(c)
+	settingsSection(c, "settings-diff", "差异显示",
+		func() {
+			settingsSwitchRow(c, "settings-whitespace", "差异默认忽略空白", "", &a.diffIgnoreWhitespace, false, func() {
+				if t := a.activeTab(); t != nil && t.fileSel >= 0 && t.fileSel < len(t.compareFiles) {
+					a.loadFileDiff(t, t.fileSel)
+				}
+			})
+		},
+		func() {
+			settingsSwitchRow(c, "settings-diff-wrap", "差异默认折行", "", &a.diffWrap, false, nil)
+		},
+	)
+}
+
+func (a *app) dataAboutSettings(c *ui.Context) {
 	a.boardSettings(c)
-	a.gitBinarySettings(c)
 	a.updateSettings(c)
 	a.aboutSettings(c)
 }
@@ -523,12 +605,12 @@ func (a *app) projectSettings(c *ui.Context) {
 		ui.Icon(c, iconFolder).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
 		ui.Text(c, homePath(d.repo)).FontSize(12).TextColor(t.Text).SingleLine().Grow(1).MinWidth(0).Tooltip(d.repo)
 	})
-	settingsSection(c, "project-fetch", "自动获取",
+	settingsSection(c, "project-behavior", "仓库行为",
 		func() {
 			value := a.repoAutoFetch[d.repo]
 			options := append([]configOption{{"", "继承应用默认"}}, autoFetchOptions...)
 			detail := autoFetchDetail(value, a.autoFetchDelay(d.repo))
-			settingsChoiceRow(c, "project-auto-fetch", "检查频率", detail, value, options, func(v string) {
+			settingsChoiceRow(c, "project-auto-fetch", "自动获取", detail, value, options, func(v string) {
 				if a.repoAutoFetch == nil {
 					a.repoAutoFetch = make(map[string]string)
 				}
@@ -544,8 +626,6 @@ func (a *app) projectSettings(c *ui.Context) {
 				}
 			})
 		},
-	)
-	settingsSection(c, "project-ring", "提交规范",
 		func() {
 			dirty := gitSettingsDirty(&d.global) || gitSettingsDirty(&d.local)
 			settingsRow(c, "project-ring-row", func() {
@@ -553,7 +633,7 @@ func (a *app) projectSettings(c *ui.Context) {
 				settingsDetail(c, "提交时检查 AI Agent 与模型的溯源信息")
 			}, func() {
 				if tab := a.tabByPath(d.repo); tab != nil {
-					if ui.Button(c.Key("settings-ring"), tr("本仓库年轮设置…")).Disabled(dirty || d.global.busy || d.local.busy).Clicked() {
+					if ui.Button(c.Key("settings-ring"), tr("管理…")).Disabled(dirty || d.global.busy || d.local.busy).Clicked() {
 						d.open = false
 						tab.ring.open = true
 						tab.ring.err = ""
@@ -571,6 +651,9 @@ func (a *app) projectSettings(c *ui.Context) {
 func (a *app) gitSettingsPage(c *ui.Context, local bool) {
 	a.gitSettingsState(c, local)
 	a.gitSettingsGroups(c, local)
+	if !local {
+		a.gitBinarySettings(c)
+	}
 }
 
 // gitSettingsState shows reading, failure and the last save of one scope.
@@ -613,15 +696,33 @@ func (a *app) gitSettingsGroups(c *ui.Context, local bool) {
 			rows = append(rows, func() { a.gitSettingRow(c, s, i, local) })
 		}
 		if len(rows) > 0 {
-			settingsDisclosure(c, "git-"+group.id, group.title, a.settings.gitGroupOpen(group.id), rows...)
+			settingsSection(c, "git-"+group.id, group.title, rows...)
 		}
 	}
 }
 
-// gitSettingRow is one Git key: its name and current effective value, a switch
-// for writing the key in this scope, and the value editor while it is on.
-// Keys with a fixed set of values go through gitChoiceSettingRow instead: a
-// switch cannot say which of three values is meant.
+func gitScopePrecedence(scope string) int {
+	switch scope {
+	case "system":
+		return 1
+	case "global":
+		return 2
+	case "local":
+		return 3
+	case "worktree":
+		return 4
+	case "command":
+		return 5
+	}
+	return 0
+}
+
+func isHigherPrecedenceScope(scope, pageScope string) bool {
+	return gitScopePrecedence(scope) > gitScopePrecedence(pageScope)
+}
+
+// gitSettingRow is one Git key: choice keys use a menu, text keys use an inline
+// text input where an empty value means no override in this scope.
 func (a *app) gitSettingRow(c *ui.Context, s *gitSettingsScope, i int, local bool) {
 	def := settingsGitKeys[i]
 	if len(def.options) > 0 {
@@ -630,46 +731,61 @@ func (a *app) gitSettingRow(c *ui.Context, s *gitSettingsScope, i int, local boo
 	}
 	f := &s.fields[i]
 	t := c.Theme()
-	tip := "在全局配置中设置"
-	// 当前页面本身就是这个范围，所以只有生效值来自更高优先级的范围时才需要括出来源。
 	pageScope := "global"
+	placeholder := tr("未设置")
+	clearTip := "清除"
 	if local {
-		tip = "为当前项目单独设置"
 		pageScope = "local"
+		placeholder = tr("继承全局设置")
+		clearTip = "恢复继承"
 	}
-	ui.Column(c.Key("git-" + def.key)).FillWidth().Children(func() {
-		row := ui.SwitchBase(c.Key("git-"+def.key+"-switch"), &f.enabled).Label(tr(def.label)).FillWidth().
-			Padding(11, 16).Gap(12).AlignItems(ui.Center).Cursor(ui.CursorPointer).
-			Disabled(s.busy).Tooltip(tr(tip)).Transition(colorMotion())
-		if row.Hovered() && !s.busy {
-			row.Background(t.SurfaceHover)
+	overriddenByHigher := isHigherPrecedenceScope(f.scope, pageScope) && f.effective != ""
+	previewScope, previewOrigin := "", ""
+	if !f.enabled {
+		if f.changed() {
+			if f.inherited != "" {
+				placeholder = f.inherited
+				previewScope, previewOrigin = f.inheritedScope, f.inheritedOrigin
+			}
+		} else if !overriddenByHigher && f.effective != "" {
+			placeholder = f.effective
+			previewScope, previewOrigin = f.scope, f.origin
 		}
-		row.Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Padding(0, 46, 0, 0).Children(func() {
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-					settingsName(c, def.label)
-					if f.changed() {
-						chip(c, "changed", tr("已修改"), chipStyle{Text: t.Accent, Background: t.Accent.Alpha(0.12), FontSize: 10})
-					}
-				})
-				if f.origin != "" {
-					ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-						if f.scope != pageScope {
-							chip(c, "scope", settingsScopeLabel(f.scope), chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10}).Tooltip(f.origin)
-						}
-						ui.Text(c, f.effective).FontSize(12).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(f.effective)
-					})
+	}
+	settingsRow(c, "git-"+def.key, func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+			settingsName(c, def.label)
+			if f.changed() {
+				chip(c, "changed", tr("已修改"), chipStyle{Text: t.Accent, Background: t.Accent.Alpha(0.12), FontSize: 10})
+			} else if !f.enabled && previewOrigin != "" && previewScope != pageScope {
+				if scopeLabel := settingsScopeLabel(previewScope); scopeLabel != "" {
+					chip(c, "scope", scopeLabel, chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10}).Tooltip(previewOrigin)
 				}
-			})
+			}
 		})
-		pos := row.AnimateTo("switch", boolFloat(f.enabled), ui.Animation{Duration: motionColor, Ease: ui.EaseOut})
-		row.DrawOver(func(p *ui.Painter, r ui.Rect) { settingsSwitch(p, r, pos, t, s.busy) })
-		row.OnClick(func() { s.notice = "" })
-		if f.enabled {
-			ui.Row(c.Key("git-"+def.key+"-editor")).FillWidth().Padding(0, 16, 12, 40).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.TextInput(c.Key("value"), &f.value).Label(tr(def.label)).Placeholder(tr("填写值")).FillWidth().Disabled(s.busy).
-					Invalid(strings.TrimSpace(f.value) == "")
+		if overriddenByHigher {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+				if scopeLabel := settingsScopeLabel(f.scope); scopeLabel != "" {
+					chip(c, "scope-effective", scopeLabel, chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10}).Tooltip(f.origin)
+				}
+				ui.Text(c, f.effective).FontSize(12).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
 			})
+		}
+	}, func() {
+		input := ui.TextInput(c.Key("git-"+def.key+"-value"), &f.value).
+			Label(tr(def.label)).Placeholder(placeholder).
+			Width(settingsInputWidth(c)).Disabled(s.busy).
+			Invalid(f.changed() && f.enabled && strings.TrimSpace(f.value) == "")
+		if input.Changed() {
+			s.notice = ""
+			f.enabled = f.value != ""
+		}
+		if f.enabled {
+			if paneIconButton(c, "git-"+def.key+"-clear", clearTip, iconClose).Disabled(s.busy).Clicked() {
+				s.notice = ""
+				f.enabled = false
+				f.value = ""
+			}
 		}
 	})
 }
@@ -695,14 +811,25 @@ func (a *app) gitChoiceSettingRow(c *ui.Context, s *gitSettingsScope, i int, loc
 	if f.enabled {
 		selected = f.value
 	}
-	// 未覆盖时生效值来自别的范围：在这一行下面写成人能读的取值，菜单里只留“不覆盖”。
-	// 覆盖了就是自己这份值，菜单已经写着，不重复第二遍。
+	// 区分正在编辑的值与实际生效的值：更高优先级（如 worktree）覆盖时始终显示生效值；
+	// 清除当前范围覆盖但尚未保存时，只展示确定的继承值，不把旧覆盖值当成继承值。
+	overriddenByHigher := isHigherPrecedenceScope(f.scope, pageScope) && f.effective != ""
+	rawPreview, previewScope, previewOrigin := "", "", ""
+	if overriddenByHigher {
+		rawPreview, previewScope, previewOrigin = f.effective, f.scope, f.origin
+	} else if !f.enabled {
+		if f.changed() {
+			rawPreview, previewScope, previewOrigin = f.inherited, f.inheritedScope, f.inheritedOrigin
+		} else {
+			rawPreview, previewScope, previewOrigin = f.effective, f.scope, f.origin
+		}
+	}
 	value := ""
-	if !f.enabled {
-		if label, ok := configOptionLabel(def, f.effective); ok {
+	if rawPreview != "" {
+		if label, ok := configOptionLabel(def, rawPreview); ok {
 			value = tr(label)
 		} else {
-			value = f.effective
+			value = rawPreview
 		}
 	}
 	settingsRow(c, "git-"+def.key, func() {
@@ -714,8 +841,10 @@ func (a *app) gitChoiceSettingRow(c *ui.Context, s *gitSettingsScope, i int, loc
 		})
 		if value != "" {
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-				if f.scope != pageScope {
-					chip(c, "scope", settingsScopeLabel(f.scope), chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10}).Tooltip(f.origin)
+				if previewScope != pageScope {
+					if scopeLabel := settingsScopeLabel(previewScope); scopeLabel != "" {
+						chip(c, "scope", scopeLabel, chipStyle{Text: t.TextMuted, Background: t.Border.Alpha(0.4), FontSize: 10}).Tooltip(previewOrigin)
+					}
 				}
 				ui.Text(c, value).FontSize(12).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
 			})

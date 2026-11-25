@@ -107,6 +107,7 @@ type app struct {
 	compareThree         bool
 	fileView             int // 0 list, 1 tree
 	diffLayout           int // 0 split, 1 unified
+	refsInline           bool
 	diffIgnoreWhitespace bool
 	diffWrap             bool
 
@@ -177,6 +178,7 @@ func newApp() *app {
 			a.language = p.Language
 		}
 		a.restoreDisabled, a.fileView, a.diffLayout = p.RestoreDisabled, p.FileView, p.DiffLayout
+		a.refsInline = p.RefsInline
 		a.diffIgnoreWhitespace = p.IgnoreWhitespace
 		a.diffWrap = p.Wrap
 		if validAutoFetch(p.AutoFetch) {
@@ -1673,6 +1675,7 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 			return col.ID == "graph"
 		})
 	}
+	subjectColW := a.subjectColumnWidth(c, columns)
 	var pointerY float32
 	var pointerOver bool
 	rowHovered := func(r ui.Rect) bool {
@@ -1693,7 +1696,7 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 				}
 				ui.Themed(c.Key("commit-selection-theme"), listTheme(c)).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 					table := ui.Table(c.Key(fmt.Sprintf("commits-%d", tab.id)), &tab.list, columns, tab.rows(), func(row, col int) {
-						a.commitCell(c, tab, row, columns[col].ID, rowHovered)
+						a.commitCell(c, tab, row, columns[col].ID, subjectColW, rowHovered)
 					}).Grow(1).MinHeight(0).Padding(0, 12)
 					_, y, over := table.PointerPosition()
 					pointerY, pointerOver = table.Bounds().Y+y, over
@@ -1904,7 +1907,37 @@ func iconBadge(c *ui.Context, key string, icon *ui.SVG, color ui.Color, tip stri
 	return e
 }
 
-func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowHovered func(ui.Rect) bool) {
+func (a *app) subjectColumnWidth(c *ui.Context, columns []ui.TableColumn) float32 {
+	winW, _ := c.Size()
+	mainW := winW
+	if a.showRepoSidebar() {
+		split := a.repoSplit
+		if split <= 0 {
+			split = defaultSidebarWidth
+		}
+		mainW -= split
+	}
+	// Table has Padding(0, 12) -> 24px horizontal padding.
+	avail := mainW - 24
+	var subjectMin float32
+	for _, col := range columns {
+		if col.ID == "subject" {
+			subjectMin = col.MinWidth
+			continue
+		}
+		w := col.Width
+		if w <= 0 {
+			w = col.MinWidth
+		}
+		avail -= w
+	}
+	if avail < subjectMin {
+		return subjectMin
+	}
+	return avail
+}
+
+func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, subjectColW float32, rowHovered func(ui.Rect) bool) {
 	t := c.Theme()
 	item := tab.rowData(i)
 	if item == nil {
@@ -1932,7 +1965,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				paintWorktreeCommit(p, full, item, bg)
 				return
 			}
-			if item.nodeCol > 0 && commitHasRefs(tab, item) {
+			if !a.refsInline && item.nodeCol > 0 && commitHasRefs(tab, item) {
 				paintGuideLeft(p, full, laneCenter(full, item.nodeCol), commitRadius(item)+3, nil, item.nodeColor)
 			}
 			paintCommit(p, full, item, tab.worktreeConnectsFromTop(i), nil, bg, tab.provenance.get(item.prov).attribution == "inferred")
@@ -1968,88 +2001,8 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 			if worktree {
 				return
 			}
-			isHead := item.hash == tab.head && tab.head != zeroHash
-			badges := groupCommitRefs(tab.refs[item.hash], tab.query.hideRemote)
-			if !isHead && len(badges) == 0 {
+			if !a.renderCommitRefBadges(c, tab, item, color, muted, false, 0) {
 				return
-			}
-			if isHead {
-				chip(c, "chip-head", "HEAD", chipStyle{Text: ui.RGBA(255, 255, 255, 1), Background: color, Bold: true}).
-					Tooltip(tr("当前检出位置 (HEAD)"))
-			}
-			// 左侧引用列空间紧凑：默认展示主引用，其余折叠成 +N 徽章，悬停查看全部，右键可操作折叠引用。
-			maxVisible := 1
-			if !isHead && len(badges) == 2 && len(badges[0].name)+len(badges[1].name) <= 18 {
-				maxVisible = 2
-			}
-			hasMore := len(badges) > maxVisible
-			for idx, badge := range badges {
-				if idx == maxVisible {
-					var rest []string
-					collapsed := slices.Clone(badges[maxVisible:])
-					for _, b := range collapsed {
-						rest = append(rest, b.label())
-					}
-					commitCopy := *item
-					more := chip(c, fmt.Sprintf("ref-more-%s", hashHex(item.hash)), fmt.Sprintf("+%d", len(rest)),
-						chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
-						Cursor(ui.CursorPointer).
-						Tooltip(strings.Join(rest, "\n") + "\n" + tr("（右键操作更多引用）"))
-					more.ContextMenu(func(m *ui.Menu) {
-						for _, rb := range collapsed {
-							b := rb
-							m.Submenu(b.label(), func(sub *ui.Menu) {
-								a.refBadgeMenu(c, sub, tab, commitCopy, b)
-							})
-						}
-					})
-					break
-				}
-				b := badge
-				commitCopy := *item
-				var pill ui.Element
-				switch b.kind {
-				case refBranch:
-					tip := tr("本地分支 ") + b.name + tr("（右键更多操作）")
-					if len(b.remotes) > 0 {
-						tip = tr("本地分支 ") + b.name + tr(" · 同步远端 ") + strings.Join(b.remotes, ", ") + tr("（右键更多操作）")
-					}
-					pill = chipSoft(c, fmt.Sprintf("ref-branch-%s-%s", hashHex(item.hash), b.name), b.name, color, true).
-						Cursor(ui.CursorPointer).Tooltip(tip)
-					pill.ContextMenu(func(m *ui.Menu) {
-						a.refBadgeMenu(c, m, tab, commitCopy, b)
-					})
-					if len(b.remotes) > 0 && !hasMore {
-						pill.Children(func() {
-							ui.Text(c, "· "+strings.Join(b.remotes, ",")).FontSize(11).SingleLine().TextColor(muted)
-						})
-					}
-				case refRemote:
-					pill = chip(c, fmt.Sprintf("ref-remote-%s-%s", hashHex(item.hash), b.name), b.name,
-						chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
-						Cursor(ui.CursorPointer).Tooltip(tr("远程分支 ") + b.name + tr("（双击检出跟踪分支，右键更多操作）"))
-					if pill.RowDoubleClicked() {
-						a.openCommitWrite(tab, writeBranch, commitCopy)
-						a.write.track = true
-						a.write.trackRemote = b.name
-						if local := remoteLocalName(b.name); local != "" {
-							a.write.name = local
-						}
-						a.write.checkout = true
-					}
-					pill.ContextMenu(func(m *ui.Menu) {
-						a.refBadgeMenu(c, m, tab, commitCopy, b)
-					})
-				case refTag:
-					pill = chipSoft(c, fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name), tr("标签 ")+b.name, t.Warning, false).
-						Cursor(ui.CursorPointer).Tooltip(tr("标签 ") + b.name + tr("（右键更多操作）"))
-					pill.ContextMenu(func(m *ui.Menu) {
-						a.refBadgeMenu(c, m, tab, commitCopy, b)
-					})
-				}
-				if pill.Valid() {
-					pill.Shrink(1).MinWidth(0).Clip()
-				}
 			}
 			ui.Box(c).Grow(1).MinWidth(0).AlignSelf(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) {
 				if r.W < 6 {
@@ -2070,6 +2023,9 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				}
 				ui.Box(c).Grow(1).MinWidth(0)
 				return
+			}
+			if a.refsInline {
+				a.renderCommitRefBadges(c, tab, item, color, muted, true, subjectColW)
 			}
 			if tab.outgoing[item.hash] {
 				iconBadge(c, "sync-out-"+hashHex(item.hash), iconUpload, rowAccent(t), tr("待推送"))
@@ -2101,7 +2057,11 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 			if text == "" {
 				text = tr("（无说明）")
 			}
-			e := ui.Text(c, text).SingleLine().Grow(1).MinWidth(0)
+			minSubjectW := float32(120)
+			if subjectColW > 0 && subjectColW < 280 {
+				minSubjectW = 80
+			}
+			e := ui.Text(c, text).SingleLine().Grow(1).MinWidth(minSubjectW)
 			if len(item.parents) > 1 {
 				e.TextColor(muted)
 			}
@@ -2129,6 +2089,155 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 			}
 		}
 	})
+}
+
+func inlineRefLayoutBudget(subjectWidth float32, isHead bool, badges []commitRefBadge) (maxVisible int, maxBadgeW float32) {
+	// Reserve enough room in the subject column so the commit subject remains visible.
+	minSubjectW := float32(120)
+	if subjectWidth < 280 {
+		minSubjectW = max(80, subjectWidth*0.42)
+	}
+	// Account for cell padding (16) and gap between badges and subject (6).
+	maxTotalW := subjectWidth - minSubjectW - 22
+	if maxTotalW < 0 {
+		maxTotalW = 0
+	}
+	if maxTotalW > 280 {
+		maxTotalW = 280
+	}
+
+	maxBadgeW = 160
+	maxCount := 3
+	if maxTotalW < 220 {
+		maxBadgeW = 120
+		maxCount = 2
+	}
+	if maxTotalW < 150 {
+		maxBadgeW = 92
+		maxCount = 1
+	}
+	if maxBadgeW > maxTotalW-34 && maxTotalW > 56 {
+		maxBadgeW = max(56, maxTotalW-34)
+	}
+
+	usedW := float32(0)
+	if isHead {
+		usedW = 48
+	}
+	for i, b := range badges {
+		if i >= maxCount {
+			break
+		}
+		est := float32(len([]rune(b.label())))*7 + 18
+		if est > maxBadgeW {
+			est = maxBadgeW
+		}
+		reserveMore := float32(0)
+		if i+1 < len(badges) {
+			reserveMore = 32
+		}
+		if usedW+est+reserveMore > maxTotalW {
+			break
+		}
+		usedW += est + 4
+		maxVisible = i + 1
+	}
+	return maxVisible, maxBadgeW
+}
+
+func (a *app) renderCommitRefBadges(c *ui.Context, tab *repoTab, item *commit, color, muted ui.Color, inline bool, subjectColW float32) bool {
+	t := c.Theme()
+	isHead := item.hash == tab.head && tab.head != zeroHash
+	badges := groupCommitRefs(tab.refs[item.hash], tab.query.hideRemote)
+	if !isHead && len(badges) == 0 {
+		return false
+	}
+	if isHead {
+		chip(c, "chip-head", "HEAD", chipStyle{Text: ui.RGBA(255, 255, 255, 1), Background: color, Bold: true}).
+			Tooltip(tr("当前检出位置 (HEAD)"))
+	}
+	maxVisible := 1
+	maxBadgeW := float32(0)
+	if inline {
+		maxVisible, maxBadgeW = inlineRefLayoutBudget(subjectColW, isHead, badges)
+	} else {
+		// 左侧引用列空间紧凑：默认展示主引用，其余折叠成 +N 徽章，悬停查看全部，右键可操作折叠引用。
+		if !isHead && len(badges) == 2 && len(badges[0].name)+len(badges[1].name) <= 18 {
+			maxVisible = 2
+		}
+	}
+	hasMore := len(badges) > maxVisible
+	for idx, badge := range badges {
+		if idx == maxVisible {
+			var rest []string
+			collapsed := slices.Clone(badges[maxVisible:])
+			for _, b := range collapsed {
+				rest = append(rest, b.label())
+			}
+			commitCopy := *item
+			more := chip(c, fmt.Sprintf("ref-more-%s", hashHex(item.hash)), fmt.Sprintf("+%d", len(rest)),
+				chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
+				Cursor(ui.CursorPointer).
+				Tooltip(strings.Join(rest, "\n") + "\n" + tr("（右键操作更多引用）"))
+			more.ContextMenu(func(m *ui.Menu) {
+				for _, rb := range collapsed {
+					b := rb
+					m.Submenu(b.label(), func(sub *ui.Menu) {
+						a.refBadgeMenu(c, sub, tab, commitCopy, b)
+					})
+				}
+			})
+			break
+		}
+		b := badge
+		commitCopy := *item
+		var pill ui.Element
+		switch b.kind {
+		case refBranch:
+			tip := tr("本地分支 ") + b.name + tr("（右键更多操作）")
+			if len(b.remotes) > 0 {
+				tip = tr("本地分支 ") + b.name + tr(" · 同步远端 ") + strings.Join(b.remotes, ", ") + tr("（右键更多操作）")
+			}
+			pill = chip(c, fmt.Sprintf("ref-branch-%s-%s", hashHex(item.hash), b.name), b.name,
+				chipStyle{Text: color, Background: color.Alpha(0.14), Border: color.Alpha(0.45), Bold: true, MaxWidth: maxBadgeW}).
+				Cursor(ui.CursorPointer).Tooltip(tip)
+			pill.ContextMenu(func(m *ui.Menu) {
+				a.refBadgeMenu(c, m, tab, commitCopy, b)
+			})
+			if len(b.remotes) > 0 && (!hasMore && (!inline || subjectColW >= 360)) {
+				pill.Children(func() {
+					ui.Text(c, "· "+strings.Join(b.remotes, ",")).FontSize(11).SingleLine().MinWidth(0).Shrink(1).TextColor(muted)
+				})
+			}
+		case refRemote:
+			pill = chip(c, fmt.Sprintf("ref-remote-%s-%s", hashHex(item.hash), b.name), b.name,
+				chipStyle{Text: muted, Background: t.Surface, Border: t.Border, MaxWidth: maxBadgeW}).
+				Cursor(ui.CursorPointer).Tooltip(tr("远程分支 ") + b.name + tr("（双击检出跟踪分支，右键更多操作）"))
+			if pill.RowDoubleClicked() {
+				a.openCommitWrite(tab, writeBranch, commitCopy)
+				a.write.track = true
+				a.write.trackRemote = b.name
+				if local := remoteLocalName(b.name); local != "" {
+					a.write.name = local
+				}
+				a.write.checkout = true
+			}
+			pill.ContextMenu(func(m *ui.Menu) {
+				a.refBadgeMenu(c, m, tab, commitCopy, b)
+			})
+		case refTag:
+			pill = chip(c, fmt.Sprintf("ref-tag-%s-%s", hashHex(item.hash), b.name), tr("标签 ")+b.name,
+				chipStyle{Text: t.Warning, Background: t.Warning.Alpha(0.14), Border: t.Warning.Alpha(0.45), MaxWidth: maxBadgeW}).
+				Cursor(ui.CursorPointer).Tooltip(tr("标签 ") + b.name + tr("（右键更多操作）"))
+			pill.ContextMenu(func(m *ui.Menu) {
+				a.refBadgeMenu(c, m, tab, commitCopy, b)
+			})
+		}
+		if !inline && pill.Valid() {
+			pill.Shrink(1).MinWidth(0).Clip()
+		}
+	}
+	return true
 }
 
 func (a *app) refBadgeMenu(c *ui.Context, m *ui.Menu, tab *repoTab, commitCopy commit, b commitRefBadge) {
@@ -2169,6 +2278,15 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 		mainW -= split
 	}
 	if mainW > 0 && mainW < 700 {
+		if a.refsInline {
+			return []ui.TableColumn{
+				{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
+				{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 160},
+				{ID: "date", Title: tr("日期"), Width: 128, MinWidth: 100},
+				{ID: "author", Title: tr("作者"), Width: 96, MinWidth: 60},
+				{ID: "hash", Title: tr("哈希"), Width: 84, MinWidth: 70},
+			}
+		}
 		return []ui.TableColumn{
 			{ID: "refs", Title: tr("引用"), Width: 132, MinWidth: 128},
 			{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
@@ -2176,6 +2294,15 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 			{ID: "date", Title: tr("日期"), Width: 112, MinWidth: 92},
 			{ID: "author", Title: tr("作者"), Width: 72, MinWidth: 56},
 			{ID: "hash", Title: tr("哈希"), Width: 72, MinWidth: 64},
+		}
+	}
+	if a.refsInline {
+		return []ui.TableColumn{
+			{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
+			{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 200},
+			{ID: "date", Title: tr("日期"), Width: 172, MinWidth: 128},
+			{ID: "author", Title: tr("作者"), Width: 156, MinWidth: 96},
+			{ID: "hash", Title: tr("哈希"), Width: 120, MinWidth: 96},
 		}
 	}
 	return []ui.TableColumn{

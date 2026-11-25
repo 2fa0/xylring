@@ -128,6 +128,9 @@ func (a *app) applyGitExecutablePath(path string) {
 	path = setGitExecutablePath(path)
 	a.gitExecutable = path
 	a.gitPathDraft = path
+	if !a.settingsHasUnsavedEdits() {
+		a.settings.confirmClose = false
+	}
 	a.checkGit(true)
 }
 
@@ -167,7 +170,7 @@ func (a *app) gitNoticeCard(c *ui.Context) {
 				a.checkGit(true)
 			}
 			if ui.Button(c.Key("git-notice-settings"), tr("指定 Git 路径…")).Clicked() {
-				a.openSettings()
+				a.openSettingsPage(settingsPageGit)
 			}
 		})
 	})
@@ -200,9 +203,8 @@ func (a *app) gitBinarySettings(c *ui.Context) {
 			ui.Column(c.Key("settings-git-path")).FillWidth().Children(func() {
 				settingsRow(c, "settings-git-path-row", func() {
 					settingsName(c, "Git 可执行文件路径")
-					settingsDetail(c, "留空则自动使用 PATH 和常见安装位置中的 Git")
 				}, func() {
-					if ui.Button(c.Key("settings-git-path-apply"), tr("应用")).
+					if ui.Button(c.Key("settings-git-path-apply"), tr("保存")).
 						Disabled(a.git.checking || strings.TrimSpace(a.gitPathDraft) == a.gitExecutable).Clicked() {
 						a.applyGitExecutablePath(a.gitPathDraft)
 					}

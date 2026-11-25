@@ -123,6 +123,7 @@ func TestSettingsPreferencesAndProjectFetchPersist(t *testing.T) {
 	a.sessionReady = true
 	a.restoreDisabled = true
 	a.fileView, a.diffLayout = 1, 1
+	a.refsInline = true
 	a.diffIgnoreWhitespace = true
 	a.autoFetch = "5"
 	a.language = "en"
@@ -196,7 +197,7 @@ func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
 		tt := ui.NewTester(a.view, width, 720)
 		defer retireTester(tt)
 		tt.Frame()
-		for _, label := range []string{"通用", "Git", "当前项目", "启动时恢复上次打开的仓库"} {
+		for _, label := range []string{"通用", "差异与视图", "Git", "当前项目", "数据与关于", "启动时恢复上次打开的仓库"} {
 			if !tt.HasText(label) {
 				t.Fatalf("missing %s", label)
 			}
@@ -206,7 +207,9 @@ func TestSettingsDialogLayoutAndUnsavedEdits(t *testing.T) {
 			t.Fatal("restore preference not updated")
 		}
 		saveLobePreview(t, tt, "settings-general-"+strconv.Itoa(width))
-		clickInDialogBody(t, tt, width, 720, "Git")
+		if err := tt.Click("Git"); err != nil {
+			t.Fatal(err)
+		}
 		tt.Frame()
 		a.settings.global.fields[0].enabled = true
 		a.settings.global.fields[0].value = "Draft"
@@ -238,6 +241,17 @@ func TestSettingsRowsToggleFromTheirLabels(t *testing.T) {
 	tt := ui.NewTester(a.view, 900, 720)
 	defer retireTester(tt)
 	tt.Frame()
+	if err := tt.Click("底部详情面板全宽"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.bottomFullWidth {
+		t.Fatal("bottom panel preference not updated")
+	}
+	if err := tt.Click("差异与视图"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
 	if err := tt.Click("差异默认忽略空白"); err != nil {
 		t.Fatal(err)
 	}
@@ -252,39 +266,40 @@ func TestSettingsRowsToggleFromTheirLabels(t *testing.T) {
 	if a.diffIgnoreWhitespace {
 		t.Fatal("clicking the row did not turn the preference off")
 	}
-	if err := tt.Click("底部详情面板全宽"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if !a.bottomFullWidth {
-		t.Fatal("bottom panel preference not updated")
-	}
 }
 
-func TestSettingsGitRowSwitchWritesAndRemovesOverride(t *testing.T) {
-	a := &app{settings: settingsState{open: true, page: 1, global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}}
+func TestSettingsGitTextRowInlineInputAndClear(t *testing.T) {
+	a := &app{settings: settingsState{open: true, page: settingsPageGit, global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}}
 	tt := ui.NewTester(a.view, 900, 760)
 	defer retireTester(tt)
 	tt.Frame()
-	if err := tt.Click("提交邮箱"); err != nil {
-		t.Fatal(err)
+	field, ok := tt.AccessByRole(ui.RoleTextField, "提交邮箱")
+	if !ok {
+		t.Fatalf("missing inline text field for 提交邮箱: %q", tt.Texts())
 	}
+	tt.ClickAt(field.Bounds.X+field.Bounds.W/2, field.Bounds.Y+field.Bounds.H/2)
 	tt.Frame()
-	if !a.settings.global.fields[1].enabled {
-		t.Fatal("row did not enable the override")
-	}
-	if !gitSettingsDirty(&a.settings.global) {
-		t.Fatal("an empty override is not a pending change")
+	tt.Type("   ")
+	tt.Frame()
+	if !a.settings.global.fields[1].enabled || !gitSettingsDirty(&a.settings.global) {
+		t.Fatalf("whitespace edit should mark pending invalid override: %+v", a.settings.global.fields[1])
 	}
 	if apply, ok := tt.Access("应用"); !ok || !apply.Disabled {
-		t.Fatalf("an empty override must not be appliable: %q", tt.Texts())
+		t.Fatalf("a whitespace-only override must not be appliable: %q", tt.Texts())
 	}
-	if err := tt.Click("提交邮箱"); err != nil {
-		t.Fatal(err)
+	clickControl(t, tt, "清除")
+	if a.settings.global.fields[1].enabled || a.settings.global.fields[1].value != "" || gitSettingsDirty(&a.settings.global) {
+		t.Fatalf("clear button did not remove the override: %+v", a.settings.global.fields[1])
 	}
+	tt.ClickAt(field.Bounds.X+field.Bounds.W/2, field.Bounds.Y+field.Bounds.H/2)
 	tt.Frame()
-	if a.settings.global.fields[1].enabled || gitSettingsDirty(&a.settings.global) {
-		t.Fatal("row did not remove the override")
+	tt.Type("alice@example.com")
+	tt.Frame()
+	if !a.settings.global.fields[1].enabled || a.settings.global.fields[1].value != "alice@example.com" || !gitSettingsDirty(&a.settings.global) {
+		t.Fatalf("typing did not set inline override: %+v", a.settings.global.fields[1])
+	}
+	if apply, ok := tt.Access("应用"); !ok || apply.Disabled {
+		t.Fatalf("valid override should enable Apply: %q", tt.Texts())
 	}
 }
 
@@ -371,7 +386,7 @@ func TestGitSettingsGlobalChoiceUnsets(t *testing.T) {
 }
 
 func TestSettingsProjectPageOwnsItsOverride(t *testing.T) {
-	a := &app{settings: settingsState{open: true, page: 2, repo: "/work/repo",
+	a := &app{settings: settingsState{open: true, page: settingsPageProject, repo: "/work/repo",
 		global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))},
 		local:  gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))},
 	}}
@@ -381,7 +396,7 @@ func TestSettingsProjectPageOwnsItsOverride(t *testing.T) {
 	if !tt.HasText("/work/repo") {
 		t.Fatal("missing project path")
 	}
-	clickControl(t, tt, "检查频率")
+	clickControl(t, tt, "自动获取")
 	if err := tt.ChooseMenuItem("每 5 分钟"); err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +546,7 @@ func TestSettingsDialogKeepsHeightAcrossPages(t *testing.T) {
 		return d.Bounds.H
 	}
 	want := height()
-	for _, label := range []string{"Git", "当前项目", "通用", "Git"} {
+	for _, label := range []string{"差异与视图", "Git", "当前项目", "数据与关于", "通用", "Git"} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}
@@ -545,38 +560,362 @@ func TestSettingsDialogKeepsHeightAcrossPages(t *testing.T) {
 	if got := height(); got != want {
 		t.Fatalf("loaded page changed dialog height: got %v want %v", got, want)
 	}
-	if !tt.HasText("提交姓名") {
-		t.Fatalf("loaded Git page did not render: %q", tt.Texts())
+	if !tt.HasText("提交姓名") || !tt.HasText("Git 程序") {
+		t.Fatalf("loaded Git page did not render config and binary sections: %q", tt.Texts())
 	}
 }
 
-// Git 分组默认展开，收起后那一组的行不再占地方，别的组也不受影响。
-func TestGitSettingsGroupsFold(t *testing.T) {
-	a := &app{settings: settingsState{open: true, page: 1, repo: "/work/repo",
-		global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))}}}
+func TestSettingsDataAboutPageGroupsBoardUpdateAndAbout(t *testing.T) {
+	a := &app{settings: settingsState{open: true, page: settingsPageDataAbout}}
+	tt := ui.NewTester(a.view, 1000, 760)
+	defer retireTester(tt)
+	tt.Frame()
+	for _, want := range []string{"看板", "数据目录", "备份与导入", "更新", "关于", "项目主页"} {
+		if !tt.HasText(want) {
+			t.Fatalf("missing %q on Data & About page: %q", want, tt.Texts())
+		}
+	}
+}
+
+func TestSettingsRefsPositionSwitchesCommitColumns(t *testing.T) {
+	h := hashN(1)
+	tab := newTab(1, "/work/repo")
+	tab.loaded = true
+	tab.head = h
+	tab.commits = []commit{{hash: h, subject: "feat: demo"}}
+	tab.refs = map[[20]byte][]refInfo{h: {{kind: refBranch, name: "main"}}}
+	a := &app{
+		tabs:     []*repoTab{tab},
+		active:   0,
+		settings: settingsState{open: true, page: settingsPageDiff},
+		dispatch: func(func()) {},
+	}
 	tt := ui.NewTester(a.view, 1100, 760)
 	defer retireTester(tt)
 	tt.Frame()
-	if !tt.HasText("提交姓名") {
-		t.Fatalf("Git groups should start open: %q", tt.Texts())
+
+	// 默认图谱左侧独立列
+	if a.refsInline {
+		t.Fatal("refsInline should default to false")
 	}
-	if err := tt.Click("提交身份"); err != nil {
+	if !tt.HasText("引用") || tt.HasText("描述 / 引用") {
+		t.Fatalf("expected separate refs column by default: %q", tt.Texts())
+	}
+
+	clickControl(t, tt, "引用位置")
+	if err := tt.ChooseMenuItem("描述行内"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Advance(time.Second)
 	tt.Frame()
-	if tt.HasText("提交姓名") || tt.HasText("提交邮箱") {
-		t.Fatalf("folded group still shows its rows: %q", tt.Texts())
+	if !a.refsInline {
+		t.Fatal("choosing 描述行内 did not enable refsInline")
 	}
-	if !tt.HasText("拉取方式") {
-		t.Fatalf("folding one group hid another: %q", tt.Texts())
+	if !tt.HasText("描述 / 引用") {
+		t.Fatalf("expected inline refs column header 描述 / 引用: %q", tt.Texts())
 	}
-	if err := tt.Click("提交身份"); err != nil {
+	if !tt.HasText("HEAD") || !tt.HasText("main") || !tt.HasText("feat: demo") {
+		t.Fatalf("inline refs mode should keep badges and subject visible: %q", tt.Texts())
+	}
+}
+
+func TestInlineRefsKeepSubjectVisibleInsideSubjectColumn(t *testing.T) {
+	h := hashN(1)
+	tab := newTab(1, "/work/repo")
+	tab.loaded = true
+	tab.head = h
+	tab.commits = []commit{{hash: h, subject: "feat: keep subject visible with many long refs", author: "Ada", when: 1700000000}}
+	tab.refs = map[[20]byte][]refInfo{
+		h: {
+			{kind: refBranch, name: "feature/very-long-branch-name-alpha"},
+			{kind: refBranch, name: "feature/very-long-branch-name-beta"},
+			{kind: refTag, name: "v0.11.0-rc.1-release-candidate"},
+		},
+	}
+	a := &app{
+		tabs:       []*repoTab{tab},
+		active:     0,
+		refsInline: true,
+		repoSplit:  300,
+		dispatch:   func(func()) {},
+	}
+	tt := ui.NewTester(a.view, 920, 600)
+	defer retireTester(tt)
+	tt.Frame()
+
+	subjRect, ok := tt.Find("feat: keep subject visible with many long refs")
+	if !ok {
+		t.Fatalf("subject text not found: %q", tt.Texts())
+	}
+	dateHeader, ok := tt.Find("日期")
+	if !ok {
+		t.Fatalf("date column header not found: %q", tt.Texts())
+	}
+	// The subject must start well before the date column so it isn't clipped away by inline badges.
+	visibleW := dateHeader.X - subjRect.X
+	if visibleW < 80 {
+		t.Fatalf("subject clipped by inline refs: subjRect=%+v dateHeader=%+v visibleW=%.1f", subjRect, dateHeader, visibleW)
+	}
+}
+
+func TestSettingsNavSupportsArrowKeys(t *testing.T) {
+	a := &app{settings: settingsState{open: true, page: settingsPageGeneral}}
+	tt := ui.NewTester(a.view, 1000, 760)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if err := tt.Click("通用"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Advance(time.Second)
 	tt.Frame()
-	if !tt.HasText("提交姓名") {
-		t.Fatalf("group did not open again: %q", tt.Texts())
+	tt.Key(0, ui.KeyDown)
+	tt.Frame()
+	if a.settings.page != settingsPageDiff {
+		t.Fatalf("expected KeyDown to move to settingsPageDiff, got %d", a.settings.page)
+	}
+	tt.Key(0, ui.KeyEnd)
+	tt.Frame()
+	if a.settings.page != settingsPageDataAbout {
+		t.Fatalf("expected KeyEnd to move to settingsPageDataAbout, got %d", a.settings.page)
+	}
+	tt.Key(0, ui.KeyUp)
+	tt.Frame()
+	if a.settings.page != settingsPageProject {
+		t.Fatalf("expected KeyUp to move to settingsPageProject, got %d", a.settings.page)
+	}
+}
+
+func TestGitSettingsClearDoesNotPreviewStaleAndShowsHigherWorktreeScope(t *testing.T) {
+	fields := make([]gitSetting, len(settingsGitKeys))
+	// user.name: local override cleared before save, no global/system inherited value known.
+	fields[0] = gitSetting{
+		enabled:   false,
+		value:     "",
+		original:  []string{"Stale Local Name"},
+		effective: "Stale Local Name",
+		scope:     "local",
+		origin:    "file:.git/config",
+	}
+	// user.email: local value edited, but higher-precedence worktree config overrides it.
+	fields[1] = gitSetting{
+		enabled:   true,
+		value:     "local@example.com",
+		original:  []string{"local@example.com"},
+		effective: "wt@example.com",
+		scope:     "worktree",
+		origin:    "file:.git/worktrees/wt/config.worktree",
+	}
+	a := &app{
+		settings: settingsState{
+			open:  true,
+			page:  settingsPageProject,
+			repo:  "/work/repo",
+			local: gitSettingsScope{loaded: true, fields: fields},
+		},
+	}
+	tt := ui.NewTester(a.view, 1000, 760)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if tt.HasText("Stale Local Name") {
+		t.Fatalf("cleared project override must not preview stale local value: %q", tt.Texts())
+	}
+	if !tt.HasText("工作树") || !tt.HasText("wt@example.com") {
+		t.Fatalf("higher-precedence worktree effective value must remain visible: %q", tt.Texts())
+	}
+}
+
+func TestSettingsSidebarContentTopAlignedAndClipped(t *testing.T) {
+	a := &app{settings: settingsState{
+		open:   true,
+		page:   settingsPageGeneral,
+		repo:   "/work/repo",
+		global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))},
+	}}
+	tt := ui.NewTester(a.view, 1100, 760)
+	defer retireTester(tt)
+	tt.Frame()
+
+	navBtn, ok1 := tt.Find("通用")
+	sectionTitle, ok2 := tt.Find("界面")
+	if !ok1 || !ok2 {
+		t.Fatalf("missing nav or section: ok1=%v ok2=%v", ok1, ok2)
+	}
+	// 右侧首张卡片应紧贴内容区顶部，和左侧首项基本齐平，不应被垂直居中推到中间。
+	if diff := sectionTitle.Y - navBtn.Y; diff > 40 || diff < -20 {
+		t.Fatalf("right content not top-aligned: nav.Y=%v section.Y=%v", navBtn.Y, sectionTitle.Y)
+	}
+
+	// 切到内容更长的 Git 页，顶部卡片不能盖到关闭按钮或标题栏上。
+	if err := tt.Click("Git"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	closeBtn, okClose := tt.AccessByRole(ui.RoleButton, "关闭对话框")
+	gitTitle, okGit := tt.Find("提交身份")
+	if !okClose || !okGit {
+		t.Fatalf("missing close or git section: okClose=%v okGit=%v", okClose, okGit)
+	}
+	if gitTitle.Y < closeBtn.Bounds.Y+closeBtn.Bounds.H {
+		t.Fatalf("git section overlapped dialog header: close=%+v git=%+v", closeBtn.Bounds, gitTitle)
+	}
+}
+
+func TestGitSettingsEmptyUnchangedFieldDoesNotBlockOtherEdits(t *testing.T) {
+	fields := make([]gitSetting, len(settingsGitKeys))
+	// Existing empty user.name (unchanged).
+	fields[0] = gitSetting{enabled: true, value: "", original: []string{""}}
+	// User modifies fetch.prune (index 4).
+	fields[4] = gitSetting{enabled: true, value: "true", original: nil}
+
+	s := &gitSettingsScope{loaded: true, fields: fields}
+	if !gitSettingsDirty(s) {
+		t.Fatal("expected fetch.prune edit to mark scope dirty")
+	}
+	if gitSettingsHasEmptyOverride(s) {
+		t.Fatal("existing unchanged empty user.name must not block applying other changed settings")
+	}
+	// If the user explicitly edits user.name to whitespace, it MUST block Apply.
+	fields[0].value = "   "
+	if !gitSettingsHasEmptyOverride(s) {
+		t.Fatal("modified empty/whitespace field must block Apply")
+	}
+}
+
+func TestSettingsGitRepoDirIsolatesWSLAndDockerForGlobalScope(t *testing.T) {
+	wslPath := `\\wsl$\Ubuntu\home\user\repo`
+	if got := settingsGitRepoDir(wslPath, false); got != "" {
+		t.Fatalf("global settings with WSL repo must target host, got %q", got)
+	}
+	if got := settingsGitRepoDir(wslPath, true); got != wslPath {
+		t.Fatalf("local settings with WSL repo must target WSL repo, got %q", got)
+	}
+	dockerPath := dockerRepoKey(repoTarget{
+		context:   "default",
+		endpoint:  "unix:///var/run/docker.sock",
+		container: strings.Repeat("a", 64),
+		path:      "/workspace/repo",
+	})
+	if got := settingsGitRepoDir(dockerPath, false); got != "" {
+		t.Fatalf("global settings with Docker repo must target host, got %q", got)
+	}
+}
+
+func TestSettingsNavAccessibilityAndFixedConfirmCloseBanner(t *testing.T) {
+	fields := make([]gitSetting, len(settingsGitKeys))
+	fields[0] = gitSetting{enabled: true, value: "Modified Name", original: nil}
+	a := &app{settings: settingsState{
+		open:         true,
+		page:         settingsPageGit,
+		confirmClose: true,
+		repo:         "/work/repo",
+		global:       gitSettingsScope{loaded: true, fields: fields},
+	}}
+	tt := ui.NewTester(a.view, 900, 620)
+	defer retireTester(tt)
+	tt.Frame()
+
+	// Nav tabs expose RoleTab and selected state.
+	gitTab, ok := tt.AccessByRole(ui.RoleTab, "Git")
+	if !ok || !gitTab.Selected {
+		t.Fatalf("expected Git nav item to be a selected RoleTab, got ok=%v node=%+v", ok, gitTab)
+	}
+	generalTab, ok := tt.AccessByRole(ui.RoleTab, "通用")
+	if !ok || generalTab.Selected {
+		t.Fatalf("expected 通用 nav item to be unselected RoleTab, got ok=%v node=%+v", ok, generalTab)
+	}
+
+	// Scroll to bottom of Git page; confirmClose banner must stay fixed and visible.
+	for i := 0; i < 10; i++ {
+		tt.Scroll(550, 350, 0, 120)
+		tt.Frame()
+	}
+	bannerRect, okBanner := tt.Find("有未应用的 Git 修改。")
+	if !okBanner || bannerRect.Y < 0 || bannerRect.Y > 300 {
+		t.Fatalf("confirmClose banner scrolled off screen: ok=%v rect=%+v", okBanner, bannerRect)
+	}
+}
+
+func TestSettingsUnsavedPathDraftsBlockDoneAndClearConfirmOnApply(t *testing.T) {
+	// Unsaved Git path draft blocks Done and triggers confirmClose instead of silently discarding.
+	a := &app{
+		gitPathDraft: "/custom/git",
+		settings: settingsState{
+			open:   true,
+			page:   settingsPageGit,
+			global: gitSettingsScope{loaded: true, fields: make([]gitSetting, len(settingsGitKeys))},
+		},
+	}
+	if !a.gitPathDraftDirty() || !a.settingsHasUnsavedEdits() {
+		t.Fatal("expected unsaved gitPathDraft to be marked dirty")
+	}
+	tt := ui.NewTester(a.view, 900, 720)
+	defer retireTester(tt)
+	tt.Frame()
+	if !tt.HasText("放弃修改并关闭") {
+		t.Fatalf("expected discard button for unsaved gitPathDraft: %q", tt.Texts())
+	}
+	// Clicking "放弃修改并关闭" discards the draft and closes settings cleanly.
+	if err := tt.Click("放弃修改并关闭"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.settings.open || a.gitPathDraft != "" {
+		t.Fatalf("expected discard to close settings and reset gitPathDraft, open=%v draft=%q", a.settings.open, a.gitPathDraft)
+	}
+
+	// Unsaved custom editor path draft blocks Done and clears confirmClose once applied.
+	b := &app{
+		editorPathDraft: "/Applications/Nova.app",
+		settings: settingsState{
+			open:         true,
+			page:         settingsPageGeneral,
+			customEditor: true,
+			confirmClose: true,
+		},
+	}
+	if !b.editorPathDraftDirty() || !b.settingsHasUnsavedEdits() {
+		t.Fatal("expected unsaved editorPathDraft to be marked dirty")
+	}
+	b.applyCustomEditorPath(b.editorPathDraft)
+	if b.settings.confirmClose {
+		t.Fatal("expected confirmClose warning to clear after applying custom editor path")
+	}
+}
+
+func TestInlineRefsNarrowWindowCapsBadgeAndKeepsSubjectVisible(t *testing.T) {
+	h := hashN(1)
+	tab := newTab(1, "/work/repo")
+	tab.loaded = true
+	tab.head = h
+	tab.commits = []commit{{hash: h, subject: "feat: keep this description readable"}}
+	tab.refs = map[[20]byte][]refInfo{
+		h: {
+			{kind: refBranch, name: "feature/very-long-branch-name-that-should-not-squeeze-out-the-commit-subject"},
+			{kind: refBranch, name: "release/v0.12.0-candidate"},
+			{kind: refTag, name: "v0.12.0-rc.1"},
+		},
+	}
+	a := &app{
+		tabs:       []*repoTab{tab},
+		active:     0,
+		refsInline: true,
+		dispatch:   func(func()) {},
+	}
+	tt := ui.NewTester(a.view, 860, 620)
+	defer retireTester(tt)
+	tt.Frame()
+
+	subjRect, ok := tt.Find("feat: keep this description readable")
+	if !ok {
+		t.Fatalf("commit subject missing in narrow inline refs mode: %q", tt.Texts())
+	}
+	if subjRect.W < 80 {
+		t.Fatalf("commit subject squeezed too narrow: rect=%+v", subjRect)
+	}
+	if dateHeader, ok := tt.Find("日期"); ok && dateHeader.X-subjRect.X < 80 {
+		t.Fatalf("commit subject clipped before date column: subjRect=%+v dateHeader=%+v", subjRect, dateHeader)
+	}
+	if !tt.HasText("+3") && !tt.HasText("+2") && !tt.HasText("+1") {
+		t.Fatalf("expected overflow refs collapsed into +N badge: %q", tt.Texts())
 	}
 }

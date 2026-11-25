@@ -26,10 +26,11 @@ var settingsGitKeys = []configDefinition{
 }
 
 type gitSetting struct {
-	enabled                  bool
-	value                    string
-	original                 []string
-	effective, origin, scope string
+	enabled                           bool
+	value                             string
+	original                          []string
+	effective, origin, scope          string
+	inherited, inheritedOrigin, inheritedScope string
 }
 type gitSettingsScope struct {
 	fields       []gitSetting
@@ -102,10 +103,15 @@ func readGitSettings(ctx context.Context, dir, scope string) ([]gitSetting, erro
 				return nil, fmt.Errorf("无法解析 %s 的配置来源", def.key)
 			}
 			for j := 0; j < len(parts); j += 3 {
-				if scope == "--global" && (parts[j] == "local" || parts[j] == "worktree") {
+				sc, org, val := parts[j], parts[j+1], parts[j+2]
+				if scope == "--global" && (sc == "local" || sc == "worktree") {
 					continue
 				}
-				f.scope, f.origin, f.effective = parts[j], parts[j+1], parts[j+2]
+				f.scope, f.origin, f.effective = sc, org, val
+				if (scope == "--local" && (sc == "system" || sc == "global")) ||
+					(scope == "--global" && sc == "system") {
+					f.inheritedScope, f.inheritedOrigin, f.inherited = sc, org, val
+				}
 			}
 		}
 		fields[i] = f
