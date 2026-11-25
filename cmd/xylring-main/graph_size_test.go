@@ -189,12 +189,19 @@ func TestGraphNodeSizeFollowsChangeVolume(t *testing.T) {
 	}
 	// 没有年轮记录的实心节点，行中心那一串连续墨水就是直径。节点外圈有背景色衬底，
 	// 右边的泳道和引导点线不会并进来。
+	refsHeader, ok1 := tt.Find("引用")
+	graphHeader, ok2 := tt.Find("图谱")
+	if !ok1 || !ok2 {
+		t.Fatal("未找到引用或图谱列头")
+	}
+	refsW := graphHeader.X - refsHeader.X
 	width := func(subject string) int {
 		t.Helper()
 		row, ok := tt.Find(subject)
 		if !ok {
 			t.Fatalf("未找到行 %q", subject)
 		}
+		graphX := row.X + refsW
 		y := int(row.Y + row.H/2)
 		ink := func(x int) bool {
 			r, g, b, _ := img.At(x, y).RGBA()
@@ -204,15 +211,15 @@ func TestGraphNodeSizeFollowsChangeVolume(t *testing.T) {
 			if tab.commits[i].subject != subject {
 				continue
 			}
-			node := int(row.X + lanePad + float32(tab.commits[i].nodeCol)*laneGap + laneGap/2)
+			node := int(graphX + lanePad + float32(tab.commits[i].nodeCol)*laneGap + laneGap/2)
 			if !ink(node) {
 				t.Fatalf("行 %q 没有画出节点", subject)
 			}
 			left, right := node, node
-			for left-1 > int(row.X) && ink(left-1) {
+			for left-1 > int(graphX) && ink(left-1) {
 				left--
 			}
-			for right+1 < int(row.X+graphWidth(tab.graph.lanes())) && ink(right+1) {
+			for right+1 < int(graphX+graphWidth(tab.graph.lanes())) && ink(right+1) {
 				right++
 			}
 			return right - left + 1

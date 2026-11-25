@@ -10,7 +10,7 @@ type seg struct {
 	bot   bool
 	dash  bool
 	color int
-	bend  uint8 // 1：S 曲线的下半行，2：下一行的上半行。
+	bend  uint8 // 1：S 曲线的下半行，2：下一行的上半行，3：汇入本行节点的曲线。
 }
 
 type graphBend struct {
@@ -68,10 +68,14 @@ func (g *graph) add(c *commit) {
 			missing = true
 			continue
 		}
-		if j := indexHash(g.cols, p); j >= 0 {
-			parentCols[i] = j
-			parentJoins[i] = true
-			continue
+		// 第一父链始终沿当前列直连下去，直到真正走到父提交那一行再汇入，
+		// 避免多个并行分支提前收口到同一列而互相借道或错连。
+		if i > 0 {
+			if j := indexHash(g.cols, p); j >= 0 {
+				parentCols[i] = j
+				parentJoins[i] = true
+				continue
+			}
 		}
 		dest := node
 		if i != 0 || g.cols[node] != zeroHash {
@@ -107,8 +111,14 @@ func (g *graph) add(c *commit) {
 				break
 			}
 		}
-		if i != node || top {
-			segs = append(segs, seg{a: i, b: i, top: top, bot: i != node, color: incomingColors[i]})
+		if i != node {
+			if h == c.hash {
+				segs = append(segs, seg{a: i, b: node, top: top, color: incomingColors[i], bend: 3})
+			} else {
+				segs = append(segs, seg{a: i, b: i, top: top, bot: true, color: incomingColors[i]})
+			}
+		} else if top {
+			segs = append(segs, seg{a: i, b: i, top: true, bot: false, color: incomingColors[i]})
 		}
 	}
 	g.bends = nil

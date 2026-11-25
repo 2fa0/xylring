@@ -87,9 +87,6 @@ func TestGraphChainColorsSurviveLaneReuse(t *testing.T) {
 	for i := range cs {
 		g.add(&cs[i])
 	}
-	if cs[1].nodeCol == cs[4].nodeCol {
-		t.Fatal("测试没有覆盖 release 使用不同泳道的情况")
-	}
 	for i := 1; i < 12; i += 3 {
 		if cs[i].nodeColor != cs[1].nodeColor {
 			t.Fatalf("release 第 %d 次变色：%d → %d", i/3+1, cs[1].nodeColor, cs[i].nodeColor)
@@ -101,8 +98,42 @@ func TestGraphChainColorsSurviveLaneReuse(t *testing.T) {
 			t.Fatal("master 颜色改变")
 		}
 	}
-	if cs[1].nodeCol != cs[2].nodeCol || cs[1].nodeColor == cs[2].nodeColor {
-		t.Fatal("dev 复用 release 泳道后继承了原来的颜色")
+	if cs[1].nodeCol == cs[2].nodeCol {
+		t.Fatal("release 与 dev 应该各自占独立泳道")
+	}
+}
+
+func TestGraphParallelBranchesConvergeAtParent(t *testing.T) {
+	var g graph
+	base := hashN(10)
+	cs := []commit{
+		{hash: hashN(1), parents: [][20]byte{hashN(2), hashN(4)}},
+		{hash: hashN(2), parents: [][20]byte{hashN(3), hashN(5)}},
+		{hash: hashN(3), parents: [][20]byte{base}},
+		{hash: hashN(4), parents: [][20]byte{base}},
+		{hash: hashN(5), parents: [][20]byte{base}},
+		{hash: hashN(6), parents: [][20]byte{base}},
+		{hash: base},
+	}
+	for i := range cs {
+		g.add(&cs[i])
+	}
+	wantCols := []int{0, 0, 0, 1, 2, 3, 0}
+	for i, c := range cs {
+		if c.nodeCol != wantCols[i] {
+			t.Fatalf("第 %d 条提交在列 %d，想要 %d", i, c.nodeCol, wantCols[i])
+		}
+	}
+	joined := map[int]bool{}
+	for _, s := range cs[6].segs {
+		if s.bend == 3 && s.b == 0 {
+			joined[s.a] = true
+		}
+	}
+	for _, col := range []int{1, 2, 3} {
+		if !joined[col] {
+			t.Fatalf("父提交行缺少来自列 %d 的汇入曲线：%+v", col, cs[6].segs)
+		}
 	}
 }
 

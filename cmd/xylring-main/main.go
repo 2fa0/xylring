@@ -1598,7 +1598,9 @@ func (a *app) commitPane(c *ui.Context, tab *repoTab, includeBottom bool) {
 	}
 	columns := a.commitColumns(c, tab)
 	if tab.query.filePath != "" {
-		columns = columns[1:]
+		columns = slices.DeleteFunc(columns, func(col ui.TableColumn) bool {
+			return col.ID == "graph"
+		})
 	}
 	var pointerY float32
 	var pointerOver bool
@@ -1859,6 +1861,9 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 				paintWorktreeCommit(p, full, item, bg)
 				return
 			}
+			if item.nodeCol > 0 && commitHasRefs(tab, item) {
+				paintGuideLeft(p, full, laneCenter(full, item.nodeCol), commitRadius(item)+3, nil, item.nodeColor)
+			}
 			paintCommit(p, full, item, tab.worktreeConnectsFromTop(i), nil, bg, tab.provenance.get(item.prov).attribution == "inferred")
 			if tab.worktreeThrough(i) {
 				if h := tab.worktreeHead(); h != nil {
@@ -1870,7 +1875,10 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 		return
 	}
 	padEnd := float32(8)
-	if column == "hash" {
+	switch column {
+	case "refs":
+		padEnd = 0
+	case "hash":
 		padEnd = 16
 	}
 	cellRow := ui.Row(c).Fill().MinHeight(28).Padding(2, padEnd, 2, 8).Gap(6).AlignItems(ui.Center)
@@ -1883,27 +1891,33 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 	cellRow.Children(func() {
 		color := graphColor(item.nodeColor, nil)
 		switch column {
-		case "subject":
+		case "refs":
 			if worktree {
-				ui.Text(c, tr("未提交改动")).SingleLine().Shrink(0)
-				for _, label := range worktreeBadges(tab.worktreeFiles) {
-					chip(c, "worktree-badge-"+label, label, chipStyle{Text: color, Background: color.Alpha(0.12)})
-				}
-				ui.Box(c).Grow(1).MinWidth(0)
 				return
 			}
-			if item.hash == tab.head && tab.head != zeroHash {
+			isHead := item.hash == tab.head && tab.head != zeroHash
+			badges := groupCommitRefs(tab.refs[item.hash], tab.query.hideRemote)
+			if !isHead && len(badges) == 0 {
+				return
+			}
+			if isHead {
 				chip(c, "chip-head", "HEAD", chipStyle{Text: ui.RGBA(255, 255, 255, 1), Background: color, Bold: true}).
 					Tooltip(tr("当前检出位置 (HEAD)"))
 			}
-			badges := groupCommitRefs(tab.refs[item.hash], tab.query.hideRemote)
+			// 左侧引用列空间紧凑：默认展示主引用，其余折叠成 +N 徽章，悬停查看全部。
+			maxVisible := 1
+			if !isHead && len(badges) == 2 && len(badges[0].name)+len(badges[1].name) <= 18 {
+				maxVisible = 2
+			}
 			for idx, badge := range badges {
-				if idx == 4 {
+				if idx == maxVisible {
 					var rest []string
-					for _, b := range badges[4:] {
+					for _, b := range badges[maxVisible:] {
 						rest = append(rest, b.label())
 					}
-					ui.Text(c, "…").TextColor(muted).Shrink(0).Tooltip(strings.Join(rest, "\n"))
+					chip(c, fmt.Sprintf("ref-more-%s", hashHex(item.hash)), fmt.Sprintf("+%d", len(rest)),
+						chipStyle{Text: muted, Background: t.Surface, Border: t.Border}).
+						Tooltip(strings.Join(rest, "\n"))
 					break
 				}
 				b := badge
@@ -1947,6 +1961,26 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, rowH
 						a.tagBadgeMenu(c, m, tab, commitCopy, b.name)
 					})
 				}
+			}
+			ui.Box(c).Grow(1).MinWidth(0).AlignSelf(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) {
+				if r.W < 6 {
+					return
+				}
+				var path ui.Path
+				y := r.Y + r.H/2
+				path.MoveTo(r.X, y)
+				path.LineTo(r.X+r.W-1, y)
+				path.Dash(0, 1.5, 3)
+				p.StrokePath(&path, 1, color.Alpha(0.35))
+			})
+		case "subject":
+			if worktree {
+				ui.Text(c, tr("未提交改动")).SingleLine().Shrink(0)
+				for _, label := range worktreeBadges(tab.worktreeFiles) {
+					chip(c, "worktree-badge-"+label, label, chipStyle{Text: color, Background: color.Alpha(0.12)})
+				}
+				ui.Box(c).Grow(1).MinWidth(0)
+				return
 			}
 			if tab.outgoing[item.hash] {
 				iconBadge(c, "sync-out-"+hashHex(item.hash), iconUpload, rowAccent(t), tr("待推送"))
@@ -2036,19 +2070,21 @@ func (a *app) commitColumns(c *ui.Context, tab *repoTab) []ui.TableColumn {
 	}
 	if mainW > 0 && mainW < 700 {
 		return []ui.TableColumn{
+			{ID: "refs", Title: tr("引用"), Width: 108, MinWidth: 80},
 			{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
-			{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 160},
-			{ID: "date", Title: tr("日期"), Width: 128, MinWidth: 100},
-			{ID: "author", Title: tr("作者"), Width: 96, MinWidth: 60},
-			{ID: "hash", Title: tr("哈希"), Width: 84, MinWidth: 70},
+			{ID: "subject", Title: tr("描述"), MinWidth: 116},
+			{ID: "date", Title: tr("日期"), Width: 112, MinWidth: 92},
+			{ID: "author", Title: tr("作者"), Width: 72, MinWidth: 56},
+			{ID: "hash", Title: tr("哈希"), Width: 72, MinWidth: 64},
 		}
 	}
 	return []ui.TableColumn{
+		{ID: "refs", Title: tr("引用"), Width: 168, MinWidth: 100},
 		{ID: "graph", Title: tr("图谱"), Width: graphWidth(tab.graph.lanes()), MinWidth: 56},
-		{ID: "subject", Title: tr("描述 / 引用"), MinWidth: 200},
-		{ID: "date", Title: tr("日期"), Width: 172, MinWidth: 128},
-		{ID: "author", Title: tr("作者"), Width: 156, MinWidth: 96},
-		{ID: "hash", Title: tr("哈希"), Width: 120, MinWidth: 96},
+		{ID: "subject", Title: tr("描述"), MinWidth: 160},
+		{ID: "date", Title: tr("日期"), Width: 144, MinWidth: 116},
+		{ID: "author", Title: tr("作者"), Width: 108, MinWidth: 80},
+		{ID: "hash", Title: tr("哈希"), Width: 84, MinWidth: 72},
 	}
 }
 
@@ -2168,6 +2204,13 @@ func lanePath(r ui.Rect, s seg) ui.Path {
 	case 2:
 		path.MoveTo((x0+x1)/2, r.Y)
 		path.CubeTo(x1-(x1-x0)/4, r.Y+r.H/8, x1, r.Y+r.H/4, x1, mid)
+	case 3:
+		y0 := mid
+		if s.top {
+			y0 = r.Y
+		}
+		path.MoveTo(x0, y0)
+		path.CubeTo(x0, mid, (x0+x1)/2, mid, x1, mid)
 	default:
 		y0, y1 := mid, mid
 		if s.top {
@@ -2195,7 +2238,14 @@ func paintWorktreeCommit(p *ui.Painter, r ui.Rect, c *commit, background ui.Colo
 // paintGuide 从节点往右拉一条淡点线一直到图谱列末尾。
 // 泳道多的时候，一眼就能把这条提交和它的标题连起来。
 func paintGuide(p *ui.Painter, r ui.Rect, nodeX, gap float32, palette []ui.Color, color int) {
-	x0, x1, y := nodeX+gap, r.X+r.W-1, r.Y+r.H/2
+	paintGuideSpan(p, nodeX+gap, r.X+r.W-1, r.Y+r.H/2, palette, color)
+}
+
+func paintGuideLeft(p *ui.Painter, r ui.Rect, nodeX, gap float32, palette []ui.Color, color int) {
+	paintGuideSpan(p, r.X+1, nodeX-gap, r.Y+r.H/2, palette, color)
+}
+
+func paintGuideSpan(p *ui.Painter, x0, x1, y float32, palette []ui.Color, color int) {
 	if x1-x0 < 6 {
 		return
 	}
@@ -2204,6 +2254,13 @@ func paintGuide(p *ui.Painter, r ui.Rect, nodeX, gap float32, palette []ui.Color
 	path.LineTo(x1, y)
 	path.Dash(0, 1.5, 3)
 	p.StrokePath(&path, 1, graphColor(color, palette).Alpha(0.35))
+}
+
+func commitHasRefs(tab *repoTab, item *commit) bool {
+	if item.hash == tab.head && tab.head != zeroHash {
+		return true
+	}
+	return len(groupCommitRefs(tab.refs[item.hash], tab.query.hideRemote)) > 0
 }
 
 func paintWorktreeNode(p *ui.Painter, x, y, radius float32, color, background ui.Color) {

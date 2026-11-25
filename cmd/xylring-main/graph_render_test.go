@@ -320,13 +320,19 @@ func TestFilteredHistoryKeepsGraphWithStubs(t *testing.T) {
 		r, g, b, _ := img.At(x, y).RGBA()
 		return max(r, g, b) - min(r, g, b)
 	}
+	refsHeader, ok1 := tt.Find("引用")
+	graphHeader, ok2 := tt.Find("图谱")
+	if !ok1 || !ok2 {
+		t.Fatal("未找到引用或图谱列头")
+	}
+	refsW := graphHeader.X - refsHeader.X
 	// fix-two 的第一父提交也在结果集里，它下面是实线；另外两行只有虚线短桩。
 	for subject, dashed := range map[string]bool{"fix-one": true, "fix-two": false, "fix-three": true} {
 		row, ok := tt.Find(subject)
 		if !ok {
 			t.Fatalf("未找到行 %q", subject)
 		}
-		x := int(row.X + lanePad + laneGap/2)
+		x := int(row.X + refsW + lanePad + laneGap/2)
 		mid := int(row.Y + row.H/2)
 		ink, gap := 0, 0
 		for y := mid + 8; y < int(row.Y+row.H)-2; y++ {
