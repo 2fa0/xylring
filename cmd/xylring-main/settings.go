@@ -374,6 +374,29 @@ func (a *app) generalSettings(c *ui.Context) {
 	a.boardSettings(c)
 	a.gitBinarySettings(c)
 	a.updateSettings(c)
+	a.aboutSettings(c)
+}
+
+// projectURL 是这个应用自己的仓库，设置页的「关于」分组把它展示出来。
+const projectURL = "https://github.com/2fa0/xylring"
+
+// aboutSettings 是设置页的「关于」分组：仓库地址和去点 Star 的入口。版本号上面的
+// 「更新」分组已经写过一次，这里不再重复。
+func (a *app) aboutSettings(c *ui.Context) {
+	settingsSection(c, "settings-about", "关于",
+		func() {
+			settingsRow(c, "settings-about-repo", func() {
+				settingsName(c, "项目主页")
+				// 地址本身就是链接，去掉协议头就短到不用悬停也能读全。
+				ui.Link(c.Key("settings-about-url"), strings.TrimPrefix(projectURL, "https://"), projectURL).
+					FontSize(12).SingleLine().MinWidth(0)
+			}, func() {
+				if paneIconButton(c, "settings-about-star", "在 GitHub 上点 Star", iconStar).Clicked() {
+					c.OpenURL(projectURL)
+				}
+			})
+		},
+	)
 }
 
 func (a *app) boardSettings(c *ui.Context) {

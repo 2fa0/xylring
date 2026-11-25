@@ -65,6 +65,7 @@ var (
 	iconChevronRight = lucide.ChevronRight()
 	iconFlag         = lucide.Flag()
 	iconContainer    = lucide.Box()
+	iconStar         = lucide.Star()
 )
 
 var (
