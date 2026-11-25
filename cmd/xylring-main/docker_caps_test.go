@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -89,14 +91,29 @@ func TestDockerCommitRejectsAmendAndUnknownWrite(t *testing.T) {
 }
 
 func TestDockerStagingBlockedByUnknownWrite(t *testing.T) {
+	oldConfig := userConfigDir
+	cfg := t.TempDir()
+	userConfigDir = func() (string, error) { return cfg, nil }
+	t.Cleanup(func() { userConfigDir = oldConfig })
+
 	a, tab := dockerTestApp(t)
-	a.dockerWrites.unknown = map[string]string{tab.path: "连接中断"}
+	recordsPath, err := dockerWriteRecordsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := fmt.Appendf(nil, `[{"repo":%q,"op_id":"pending-stage","action":"stage","reason":"connection lost"}]`, tab.path)
+	if err := os.WriteFile(recordsPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
 	a.stageWorktreeFile(tab, "a.txt")
 	if tab.commitBusy {
 		t.Fatal("staging started despite an unknown write")
 	}
 	if !strings.Contains(a.banner, "结果未知") {
 		t.Fatalf("no reason for the blocked staging: %q", a.banner)
+	}
+	if rec := a.dockerWrites.records[tab.path]; rec == nil || rec.OpID != "pending-stage" {
+		t.Fatalf("pending staging record changed: %+v", rec)
 	}
 }
 

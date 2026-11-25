@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -95,11 +96,11 @@ func resolveEditorCommand(
 		if goos == "darwin" {
 			roots := []string{"/Applications"}
 			if home != "" {
-				roots = append(roots, filepath.Join(home, "Applications"))
+				roots = append(roots, path.Join(home, "Applications"))
 			}
 			for _, appName := range p.macApps {
 				for _, root := range roots {
-					appPath := filepath.Join(root, appName+".app")
+					appPath := path.Join(root, appName+".app")
 					if _, err := statFn(appPath); err == nil {
 						return "open", []string{"-a", appPath, targetPath}, nil
 					}
