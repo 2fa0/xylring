@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 )
@@ -14,6 +15,17 @@ type repoSummary struct {
 	behind      int
 	upstream    string
 	hasUpstream bool
+	worktrees   []repoWorktree
+}
+
+func repoSummaryEqual(a, b repoSummary) bool {
+	return a.branch == b.branch &&
+		a.dirty == b.dirty &&
+		a.ahead == b.ahead &&
+		a.behind == b.behind &&
+		a.upstream == b.upstream &&
+		a.hasUpstream == b.hasUpstream &&
+		slices.Equal(a.worktrees, b.worktrees)
 }
 
 func queryRepoSummary(ctx context.Context, dir string) repoSummary {
@@ -47,6 +59,11 @@ func queryRepoSummary(ctx context.Context, dir string) repoSummary {
 	s.upstream = sync.upstream
 	s.ahead = sync.ahead
 	s.behind = sync.behind
+	if s.branch != "仓库不可用" && !isDockerRepoPath(dir) {
+		if linked, werr := listWorktrees(ctx, dir); werr == nil {
+			s.worktrees = linked
+		}
+	}
 	return s
 }
 
@@ -189,8 +206,7 @@ func (a *app) refreshSummaryBatch(paths []string) {
 			changed := false
 			for path, result := range results {
 				old, ok := a.repoSummaries[path]
-				old.checked = result.checked
-				changed = changed || !ok || old != result
+				changed = changed || !ok || !repoSummaryEqual(old, result)
 				a.repoSummaries[path] = result
 			}
 			a.summaryMu.Unlock()

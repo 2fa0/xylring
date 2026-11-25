@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 // worktreeDump 是解析结果的快照形式：字段按固定顺序排，一行为一个工作树。
@@ -123,5 +126,103 @@ func TestWorktreeListExcludesMainWorktree(t *testing.T) {
 	}
 	if label := worktreeRowLabel(*rows[1].worktree); label != "side" {
 		t.Fatalf("child label = %q", label)
+	}
+}
+
+func TestPruneAndRemoveWorktree(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git("commit", "--allow-empty", "-m", "first")
+	ctx := context.Background()
+
+	// 1. 删除目录后变为 prunable，pruneWorktrees 清理掉。
+	gone := filepath.Join(t.TempDir(), "gone-wt")
+	git("worktree", "add", gone, "-b", "gone-branch")
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	list, err := listWorktrees(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].prunable == "" {
+		t.Fatalf("expected prunable worktree, got %+v", list)
+	}
+	if err := pruneWorktrees(ctx, dir); err != nil {
+		t.Fatalf("pruneWorktrees: %v", err)
+	}
+	list, err = listWorktrees(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected 0 worktrees after prune, got %+v", list)
+	}
+
+	// 2. 活跃工作树预检：干净且已合并 -> 脏 -> 强制移除。
+	active := filepath.Join(t.TempDir(), "active-wt")
+	git("worktree", "add", active, "-b", "active-branch")
+	list, err = listWorktrees(ctx, dir)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list active: %v %+v", err, list)
+	}
+	check := inspectWorktreeRemoval(ctx, dir, list[0])
+	if check.dirty || check.ignored || check.unmerged || check.locked != "" {
+		t.Fatalf("expected clean check, got %+v", check)
+	}
+	if err := os.WriteFile(filepath.Join(active, "untracked.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check = inspectWorktreeRemoval(ctx, dir, list[0])
+	if !check.dirty {
+		t.Fatalf("expected dirty check, got %+v", check)
+	}
+	if err := removeWorktree(ctx, dir, active, true); err != nil {
+		t.Fatalf("removeWorktree force: %v", err)
+	}
+	if _, err := os.Stat(active); !os.IsNotExist(err) {
+		t.Fatalf("expected removed directory, stat err=%v", err)
+	}
+}
+
+func TestWorktreeSummaryAndModalUI(t *testing.T) {
+	if !isTempWorktreePath("/tmp/agent-wt") || !isTempWorktreePath("/private/tmp/agent-wt") {
+		t.Fatal("expected /tmp paths to be detected as temp worktree paths")
+	}
+	if isTempWorktreePath("/Users/dev/project-wt") {
+		t.Fatal("unexpected temp path match for normal directory")
+	}
+
+	a := &app{
+		repoSummaries: map[string]repoSummary{
+			"/repo/main": {
+				branch: "main",
+				worktrees: []repoWorktree{
+					{path: "/private/tmp/gone", branch: "fix/gone", prunable: "gitdir missing"},
+				},
+			},
+		},
+	}
+	if wts := a.repoWorktrees("/repo/main"); len(wts) != 1 || wts[0].branch != "fix/gone" {
+		t.Fatalf("expected fallback to repoSummaries worktrees, got %+v", wts)
+	}
+
+	a.openWorktreeRemoveModal("/repo/main", repoWorktree{
+		path:     "/private/tmp/gone",
+		branch:   "fix/gone",
+		prunable: "gitdir missing",
+	})
+	tt := ui.NewTester(a.worktreeRemoveModal, 700, 500)
+	if !tt.HasText("清理失效工作树") || !tt.HasText("清理记录") {
+		t.Fatal("expected prunable modal title and confirm button")
+	}
+
+	a.openWorktreeRemoveModal("/repo/main", repoWorktree{
+		path:   "/repo/wt",
+		branch: "feat/side",
+	})
+	a.wtRemove.check = worktreeRemoveCheck{dirty: true, ignored: true, unmerged: true}
+	tt = ui.NewTester(a.worktreeRemoveModal, 700, 500)
+	if !tt.HasText("移除工作树") || !tt.HasText("存在未提交或未跟踪的改动，强制移除将丢失这些改动。") {
+		t.Fatal("expected dirty warning in worktree remove modal")
 	}
 }
