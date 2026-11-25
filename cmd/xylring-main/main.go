@@ -89,6 +89,8 @@ type app struct {
 	repoListState     ui.ListState
 	repoSel           int
 	repoOrder         []string
+	repoColors        map[string]string
+	repoColorFilter   string
 	repoSplit         float32
 	sidebarHidden     bool
 	bottomFullWidth   bool
@@ -183,11 +185,17 @@ func newApp() *app {
 		}
 	}
 	a.repoAutoFetch = session.RepoAutoFetch
+	a.repoColors = session.RepoColors
 	a.gitExecutable = setGitExecutablePath(a.gitExecutable)
 	a.gitPathDraft = a.gitExecutable
 	for path, value := range a.repoAutoFetch {
 		if !validAutoFetch(value) {
 			delete(a.repoAutoFetch, path)
+		}
+	}
+	for path, id := range a.repoColors {
+		if !validRepoColor(id) {
+			delete(a.repoColors, path)
 		}
 	}
 	if session.BottomFullWidth != nil {
@@ -198,6 +206,7 @@ func newApp() *app {
 }
 
 func (a *app) view(c *ui.Context) {
+	c.SetMenuPresentation(ui.PopoverMenus)
 	switch a.themeMode {
 	case "light":
 		c.SetTheme(ui.LightTheme())
@@ -811,6 +820,7 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 	}
 	remove := false
 	row.ContextMenu(func(m *ui.Menu) {
+		a.repoColorMenu(m, path)
 		a.dockerTerminalMenu(m, path)
 		if !isDockerRepoPath(path) {
 			revealName := "在访达中显示"
@@ -851,7 +861,12 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 	row.Children(func() {
 		ui.Icon(c, iconFolder).Size(16, 16).TextColor(t.TextMuted).Shrink(0)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, title).SingleLine().MinWidth(0)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(0).Children(func() {
+				if tag, ok := a.repoColor(path); ok {
+					ui.Box(c).Size(8, 8).Radius(4).Background(tag.color).Shrink(0)
+				}
+				ui.Text(c, title).SingleLine().MinWidth(0)
+			})
 			shown := homePath(path)
 			sub := ui.Text(c, shown).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
 			// 路径看得全就不弹黑框；只有副行被裁掉时才把整条路径放上去。
@@ -978,7 +993,23 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 	}
 	ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		items := a.repoItems()
-		rows := a.sidebarRows(items)
+		usedColors := a.usedRepoColors(items)
+		if a.repoColorFilter != "" && !slices.ContainsFunc(usedColors, func(tag repoColorTag) bool { return tag.id == a.repoColorFilter }) {
+			a.repoColorFilter = ""
+		}
+		if len(usedColors) > 0 {
+			a.sidebarColorFilterBar(c, usedColors)
+		}
+		visibleItems := items
+		if a.repoColorFilter != "" {
+			visibleItems = make([]string, 0, len(items))
+			for _, p := range items {
+				if a.repoColors[p] == a.repoColorFilter {
+					visibleItems = append(visibleItems, p)
+				}
+			}
+		}
+		rows := a.sidebarRows(visibleItems)
 		a.repoSel = -1
 		for i, row := range rows {
 			if row.path == active {
@@ -988,16 +1019,23 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 		}
 		a.repoListState.Selected = &a.repoSel
 		a.repoListState.Key = func(i int) any { return rows[i].path }
-		a.repoListState.Reorder = func(dragged []int, to int) {
-			a.reorderRepos(items, repoIndexes(rows, dragged), repoIndexAt(rows, to, len(items)))
+		if a.repoColorFilter == "" {
+			a.repoListState.Reorder = func(dragged []int, to int) {
+				a.reorderRepos(items, repoIndexes(rows, dragged), repoIndexAt(rows, to, len(items)))
+			}
+		} else {
+			a.repoListState.Reorder = nil
 		}
 		closing := ""
 		requestClose := func(p string) {
 			closing = p
 		}
 		// 工作树子行沿用仓库行的菜单：都是同一个目录上的动作。
-		contextMenu := func(p string) func(m *ui.Menu) {
+		contextMenu := func(p string, allowColor bool) func(m *ui.Menu) {
 			return func(m *ui.Menu) {
+				if allowColor {
+					a.repoColorMenu(m, p)
+				}
 				a.dockerTerminalMenu(m, p)
 				if !isDockerRepoPath(p) {
 					revealName := "在访达中显示"
@@ -1040,16 +1078,16 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			record := rows[i]
 			p := record.path
 			tabIdx := a.tabIndex(p)
-			level := repoNestLevel(items, items[record.repo])
+			level := repoNestLevel(visibleItems, visibleItems[record.repo])
 			if record.worktree != nil {
 				level++
 			}
 			padL := float32(10) + float32(level)*c.Theme().Space(4)
 			if record.worktree != nil {
-				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p))
+				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, false))
 				return
 			}
-			label := repoListLabel(a.foundFrom, items, p)
+			label := repoListLabel(a.foundFrom, visibleItems, p)
 			branch, dirty, ahead, behind := a.repoStatus(p)
 			if tabIdx < 0 || !a.tabs[tabIdx].loaded {
 				if !a.isRepoSummaryFresh(p) {
@@ -1063,8 +1101,11 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				tip += tr("（工作区有未提交或未跟踪的代码）")
 			}
 			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
-			row.ContextMenu(contextMenu(p))
+			row.ContextMenu(contextMenu(p, true))
 			row.Children(func() {
+				if tag, ok := a.repoColor(p); ok {
+					ui.Box(c).Size(8, 8).Radius(4).Background(tag.color).Shrink(0)
+				}
 				if isDockerRepoPath(p) {
 					// 类型标记只出现一次：名字已经说明是哪个容器。
 					ui.Icon(c, iconContainer).Size(12, 12).TextColor(c.Theme().TextMuted).Shrink(0).Tooltip(tr("容器仓库"))
@@ -1093,8 +1134,64 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			if wt := rows[a.repoSel].worktree; wt != nil {
 				a.openRepo(wt.path)
 			} else {
-				a.openRoot(items[rows[a.repoSel].repo])
+				a.openRoot(visibleItems[rows[a.repoSel].repo])
 			}
+		}
+	})
+}
+
+func (a *app) sidebarColorFilterBar(c *ui.Context, usedColors []repoColorTag) {
+	t := c.Theme()
+	ui.Row(c).FillWidth().Padding(0, 4, 6, 4).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+		allActive := a.repoColorFilter == ""
+		allBtn := ui.ButtonBase(c.Key("color-filter-all")).
+			Label(tr("全部")).
+			Padding(2, 7).
+			Radius(10).
+			Cursor(ui.CursorPointer)
+		if allActive {
+			allBtn.Background(t.SurfaceHover)
+		} else if allBtn.Hovered() {
+			allBtn.Background(t.SurfaceHover.Alpha(0.6))
+		}
+		allBtn.Children(func() {
+			col := t.TextMuted
+			if allActive {
+				col = t.Text
+			}
+			ui.Text(c, tr("全部")).FontSize(11).TextColor(col).SingleLine()
+		})
+		if allBtn.Clicked() {
+			a.repoColorFilter = ""
+		}
+		for _, tag := range usedColors {
+			active := a.repoColorFilter == tag.id
+			dotBtn := ui.ButtonBase(c.Key("color-filter-"+tag.id)).
+				Label(tr(tag.label)).
+				Tooltip(tr(tag.label)).
+				Size(16, 16).
+				Radius(8).
+				Center().
+				Cursor(ui.CursorPointer)
+			if active {
+				dotBtn.Border(1.5, t.Text)
+			} else if dotBtn.Hovered() {
+				dotBtn.Background(t.SurfaceHover)
+			}
+			dotBtn.Children(func() {
+				ui.Box(c).Size(10, 10).Radius(5).Background(tag.color).Shrink(0)
+			})
+			if dotBtn.Clicked() {
+				if active {
+					a.repoColorFilter = ""
+				} else {
+					a.repoColorFilter = tag.id
+				}
+			}
+		}
+		ui.Box(c).Grow(1)
+		if paneIconButton(c, "sort-repos-by-color", "按标签颜色排序", iconExpandAll).Clicked() {
+			a.sortReposByColor()
 		}
 	})
 }

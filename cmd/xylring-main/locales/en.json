@@ -1001,5 +1001,16 @@
   "进入容器终端，运行 ps -ef 检查是否还有 Git 或 Hook 命令；确认上次操作已结束后再解除保护。": "Open the container terminal and run ps -ef to check for Git or hook commands. Unlock after confirming the previous operation has ended.",
   "复制检查命令": "Copy check command",
   "容器不支持文件句柄校验，无法安全读取文件": "The container cannot validate file descriptors; safe file reads are unavailable",
-  "容器仓库暂不支持修改 Git 配置": "Editing Git configuration for container repositories is not supported yet"
+  "容器仓库暂不支持修改 Git 配置": "Editing Git configuration for container repositories is not supported yet",
+  "标签颜色": "Tag color",
+  "红色": "Red",
+  "橙色": "Orange",
+  "黄色": "Yellow",
+  "绿色": "Green",
+  "蓝色": "Blue",
+  "紫色": "Purple",
+  "灰色": "Gray",
+  "清除标签": "Clear tag",
+  "全部": "All",
+  "按标签颜色排序": "Sort by tag color"
 }
