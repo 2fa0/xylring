@@ -84,7 +84,7 @@ func TestDockerDiscardAndBranchWorkflow(t *testing.T) {
 
 func TestDockerUnknownWriteBlocksNewActions(t *testing.T) {
 	a, tab := dockerTestApp(t)
-	a.dockerWrites.unknown = map[string]string{tab.path: "连接中断"}
+	seedUnknownDockerWrite(t, tab.path)
 	a.runCheckoutBranch(tab, "dev")
 	if a.write.busy || a.writeSeq != 0 {
 		t.Fatal("branch switch bypassed write protection")
