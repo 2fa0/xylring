@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/2fa0/xylring/internal/crashlog"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -948,4 +950,176 @@ func (a *app) selectCommit(t *repoTab, i int) {
 	t.selection.Add(item.hash)
 	t.list.ScrollIntoView(i)
 	a.showInspection(t, item)
+}
+
+type repoColorTag struct {
+	id       string
+	label    string
+	hex      string
+	color    ui.Color
+	menuIcon *mygo.MenuIcon
+}
+
+var repoColorTags = []repoColorTag{
+	newRepoColorTag("red", "红色", "#FF3B30"),
+	newRepoColorTag("orange", "橙色", "#FF9500"),
+	newRepoColorTag("yellow", "黄色", "#FFCC00"),
+	newRepoColorTag("green", "绿色", "#34C759"),
+	newRepoColorTag("blue", "蓝色", "#007AFF"),
+	newRepoColorTag("purple", "紫色", "#AF52DE"),
+	newRepoColorTag("gray", "灰色", "#8E8E93"),
+}
+
+func newRepoColorTag(id, label, hex string) repoColorTag {
+	svg := ui.MustParseSVG([]byte(fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="%s" stroke="rgba(0,0,0,0.18)" stroke-width="0.75"/></svg>`,
+		hex,
+	)))
+	icon, _ := mygo.NewMenuIconSVG(svg, false)
+	return repoColorTag{
+		id:       id,
+		label:    label,
+		hex:      hex,
+		color:    ui.Hex(hex),
+		menuIcon: icon,
+	}
+}
+
+func repoColorTagByID(id string) (repoColorTag, bool) {
+	for _, tag := range repoColorTags {
+		if tag.id == id {
+			return tag, true
+		}
+	}
+	return repoColorTag{}, false
+}
+
+func repoColorIndex(id string) int {
+	for i, tag := range repoColorTags {
+		if tag.id == id {
+			return i
+		}
+	}
+	return len(repoColorTags)
+}
+
+func validRepoColor(id string) bool {
+	_, ok := repoColorTagByID(id)
+	return ok
+}
+
+func (a *app) repoColor(path string) (repoColorTag, bool) {
+	if len(a.repoColors) == 0 {
+		return repoColorTag{}, false
+	}
+	return repoColorTagByID(a.repoColors[path])
+}
+
+func (a *app) setRepoColor(path, colorID string) {
+	if colorID == "" || !validRepoColor(colorID) {
+		if len(a.repoColors) == 0 {
+			return
+		}
+		if _, ok := a.repoColors[path]; !ok {
+			return
+		}
+		delete(a.repoColors, path)
+		a.queueSession()
+		return
+	}
+	if a.repoColors == nil {
+		a.repoColors = make(map[string]string)
+	}
+	if a.repoColors[path] == colorID {
+		return
+	}
+	a.repoColors[path] = colorID
+	a.queueSession()
+}
+
+func (a *app) usedRepoColors(items []string) []repoColorTag {
+	if len(a.repoColors) == 0 || len(items) == 0 {
+		return nil
+	}
+	used := make(map[string]bool)
+	for _, p := range items {
+		if tag, ok := a.repoColor(p); ok {
+			used[tag.id] = true
+		}
+	}
+	if len(used) == 0 {
+		return nil
+	}
+	out := make([]repoColorTag, 0, len(used))
+	for _, tag := range repoColorTags {
+		if used[tag.id] {
+			out = append(out, tag)
+		}
+	}
+	return out
+}
+
+func (a *app) sortReposByColor() {
+	items := a.repoItems()
+	if len(items) <= 1 {
+		return
+	}
+	sorted := slices.Clone(items)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return repoColorIndex(a.repoColors[sorted[i]]) < repoColorIndex(a.repoColors[sorted[j]])
+	})
+	a.repoOrder = sorted
+	a.queueSession()
+}
+
+func (a *app) repoColorMenu(m *ui.Menu, path string) {
+	currentColor := a.repoColors[path]
+	m.Item(tr("标签颜色")).ID("repo-color-picker").Content(func(mc ui.MenuItemContent) {
+		ui.Row(mc.Context).Gap(6).AlignItems(ui.Center).Children(func() {
+			for _, tag := range repoColorTags {
+				selected := currentColor == tag.id
+				btn := ui.ButtonBase(mc.Context.Key("menu-color-"+tag.id)).
+					Label(tr(tag.label)).
+					Tooltip(tr(tag.label)).
+					Size(18, 18).
+					Radius(9).
+					Center().
+					Cursor(ui.CursorPointer)
+				if selected {
+					btn.Border(1.5, mc.Text)
+				} else if btn.Hovered() {
+					btn.Background(mc.Text.Alpha(0.14))
+				}
+				btn.Children(func() {
+					ui.Box(mc.Context).Size(12, 12).Radius(6).Background(tag.color).Shrink(0)
+				})
+				if btn.Clicked() {
+					if selected {
+						a.setRepoColor(path, "")
+					} else {
+						a.setRepoColor(path, tag.id)
+					}
+				}
+			}
+			if currentColor != "" {
+				clearBtn := ui.ButtonBase(mc.Context.Key("menu-color-clear")).
+					Label(tr("清除标签")).
+					Tooltip(tr("清除标签")).
+					Size(18, 18).
+					Radius(9).
+					Center().
+					Cursor(ui.CursorPointer)
+				if clearBtn.Hovered() {
+					clearBtn.Background(mc.Text.Alpha(0.14))
+				}
+				clearBtn.Children(func() {
+					ui.Icon(mc.Context, iconClose).Size(11, 11).TextColor(mc.Muted)
+				})
+				if clearBtn.Clicked() {
+					a.setRepoColor(path, "")
+				}
+			}
+		})
+	})
+	m.Separator()
 }

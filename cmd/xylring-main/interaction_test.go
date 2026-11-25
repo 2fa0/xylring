@@ -326,3 +326,143 @@ func initBareAndWorktree(t *testing.T, dir string) {
 	_, _ = runGit(ctx, dir, "add", ".")
 	_, _ = runGit(ctx, dir, "commit", "-m", "init commit")
 }
+
+func TestSidebarRepoColorTagsAndFilter(t *testing.T) {
+	dir1 := filepath.Join(t.TempDir(), "repo-one")
+	dir2 := filepath.Join(t.TempDir(), "repo-two")
+	dir3 := filepath.Join(t.TempDir(), "repo-three")
+	wtDir := filepath.Join(t.TempDir(), "repo-wt")
+	for _, d := range []string{dir1, dir2, dir3, wtDir} {
+		_ = os.MkdirAll(d, 0o755)
+	}
+
+	tab1 := newTab(1, dir1)
+	tab1.loaded = true
+	tab1.title = "repo-one"
+	tab1.branch = "main"
+	tab1.worktrees = []repoWorktree{{path: wtDir, branch: "feat-wt"}}
+
+	tab2 := newTab(2, dir2)
+	tab2.loaded = true
+	tab2.title = "repo-two"
+	tab2.branch = "dev"
+
+	tab3 := newTab(3, dir3)
+	tab3.loaded = true
+	tab3.title = "repo-three"
+	tab3.branch = "topic"
+
+	a := &app{
+		tabs:     []*repoTab{tab1, tab2, tab3},
+		active:   0,
+		dispatch: func(fn func()) {},
+	}
+	for _, tag := range repoColorTags {
+		if tag.menuIcon == nil {
+			t.Fatalf("expected non-nil menuIcon for color tag %q", tag.id)
+		}
+	}
+
+	tt := ui.NewTester(a.view, 1200, 760)
+	defer retireTester(tt)
+	tt.Frame()
+
+	// 1. Finder-style first-level dot picker in PopoverMenu
+	if err := tt.RightClick("repo-two"); err != nil {
+		t.Fatalf("RightClick failed: %v", err)
+	}
+	if err := tt.Click("蓝色"); err != nil {
+		t.Fatalf("Click(蓝色) in popover menu failed: %v", err)
+	}
+	tt.CloseMenu()
+	tt.Frame()
+	if got := a.repoColors[dir2]; got != "blue" {
+		t.Fatalf("expected repo-two color blue, got %q", got)
+	}
+
+	// Clear color tag via × button in popover menu
+	if err := tt.RightClick("repo-two"); err != nil {
+		t.Fatalf("RightClick failed: %v", err)
+	}
+	if err := tt.Click("清除标签"); err != nil {
+		t.Fatalf("Click(清除标签) failed: %v", err)
+	}
+	tt.CloseMenu()
+	tt.Frame()
+	if _, ok := a.repoColors[dir2]; ok {
+		t.Fatalf("expected repo-two color cleared, got %+v", a.repoColors)
+	}
+
+	// Worktree sub-row should not show 标签颜色
+	if err := tt.RightClick("feat-wt"); err != nil {
+		t.Fatalf("RightClick on worktree failed: %v", err)
+	}
+	for _, it := range tt.Menu() {
+		if it == "标签颜色" {
+			t.Fatalf("worktree row should not have 标签颜色 menu item, got %+v", tt.Menu())
+		}
+	}
+	tt.CloseMenu()
+	tt.Frame()
+
+	// 2. Color filter bar & sort by color
+	a.setRepoColor(dir1, "blue")
+	a.setRepoColor(dir2, "red")
+	tt.Frame()
+
+	if !tt.HasText("全部") {
+		t.Fatalf("expected color filter bar with 全部, texts=%v", tt.Texts())
+	}
+	if err := tt.Click("红色"); err != nil {
+		t.Fatalf("Click(红色) filter failed: %v", err)
+	}
+	tt.Frame()
+	if a.repoColorFilter != "red" {
+		t.Fatalf("expected repoColorFilter=red, got %q", a.repoColorFilter)
+	}
+	if tt.HasText("repo-one") || !tt.HasText("repo-two") || tt.HasText("repo-three") {
+		t.Fatalf("expected only red repo-two visible when filtered, texts=%v", tt.Texts())
+	}
+
+	if err := tt.Click("全部"); err != nil {
+		t.Fatalf("Click(全部) filter failed: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("repo-one") || !tt.HasText("repo-two") || !tt.HasText("repo-three") {
+		t.Fatalf("expected all repos visible after clearing filter, texts=%v", tt.Texts())
+	}
+
+	if err := tt.Click("按标签颜色排序"); err != nil {
+		t.Fatalf("Click(按标签颜色排序) failed: %v", err)
+	}
+	tt.Frame()
+	wantOrder := []string{dir2, dir1, dir3}
+	if len(a.repoOrder) != len(wantOrder) || a.repoOrder[0] != wantOrder[0] || a.repoOrder[1] != wantOrder[1] || a.repoOrder[2] != wantOrder[2] {
+		t.Fatalf("expected repoOrder %v, got %v", wantOrder, a.repoOrder)
+	}
+}
+
+func TestRecentRepoColorTag(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "my-recent-project")
+	_ = os.MkdirAll(dir, 0o755)
+
+	a := &app{
+		showHome: true,
+		recent:   []string{dir},
+		dispatch: func(fn func()) {},
+	}
+	tt := ui.NewTester(a.view, 1000, 700)
+	defer retireTester(tt)
+	tt.Frame()
+
+	if err := tt.RightClick("my-recent-project"); err != nil {
+		t.Fatalf("RightClick on recent repo failed: %v", err)
+	}
+	if err := tt.Click("绿色"); err != nil {
+		t.Fatalf("Click(绿色) on recent repo menu failed: %v", err)
+	}
+	tt.Frame()
+	if got := a.repoColors[dir]; got != "green" {
+		t.Fatalf("expected recent repo color green, got %q", got)
+	}
+}

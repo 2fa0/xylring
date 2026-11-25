@@ -28,6 +28,7 @@ type savedProvenance struct {
 type savedSession struct {
 	Preferences      *appPreferences   `json:"preferences,omitempty"`
 	RepoAutoFetch    map[string]string `json:"repo_auto_fetch,omitempty"`
+	RepoColors       map[string]string `json:"repo_colors,omitempty"`
 	ThemeMode        string            `json:"theme_mode,omitempty"`
 	RingSkipNotice   bool              `json:"ring_skip_notice,omitempty"`
 	RecentProvenance []savedProvenance `json:"recent_provenance,omitempty"`
@@ -86,6 +87,7 @@ func (a *app) queueSession() {
 	s := savedSession{
 		Preferences:     &prefs,
 		RepoAutoFetch:   a.repoAutoFetch,
+		RepoColors:      a.repoColors,
 		ThemeMode:       a.themeMode,
 		RingSkipNotice:  a.ringSkipNotice,
 		Repos:           make([]savedRepo, 0, len(a.tabs)),
@@ -134,7 +136,7 @@ func (a *app) queueSession() {
 	repoOrderEqual := (a.lastSession == nil && len(s.RepoOrder) == 0) ||
 		(a.lastSession != nil && slices.Equal(s.RepoOrder, a.lastSession.RepoOrder))
 	prefsEqual := a.lastSession != nil && a.lastSession.Preferences != nil && *a.lastSession.Preferences == prefs
-	if prefsEqual && maps.Equal(s.RepoAutoFetch, a.lastSession.RepoAutoFetch) && s.ThemeMode == a.lastSession.ThemeMode && s.Active == a.lastSession.Active && s.RingSkipNotice == a.lastSession.RingSkipNotice && slices.Equal(s.RecentProvenance, a.lastSession.RecentProvenance) && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
+	if prefsEqual && maps.Equal(s.RepoAutoFetch, a.lastSession.RepoAutoFetch) && maps.Equal(s.RepoColors, a.lastSession.RepoColors) && s.ThemeMode == a.lastSession.ThemeMode && s.Active == a.lastSession.Active && s.RingSkipNotice == a.lastSession.RingSkipNotice && slices.Equal(s.RecentProvenance, a.lastSession.RecentProvenance) && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
 		return
 	}
 	if a.sessionWrites == nil {
@@ -153,6 +155,7 @@ func (a *app) queueSession() {
 		}()
 	}
 	s.RepoAutoFetch = maps.Clone(s.RepoAutoFetch)
+	s.RepoColors = maps.Clone(s.RepoColors)
 	s.RepoOrder = slices.Clone(s.RepoOrder)
 	s.Found = slices.Clone(s.Found)
 	a.lastSession = &s
