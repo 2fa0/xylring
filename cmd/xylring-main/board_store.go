@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -529,7 +530,9 @@ func withBoardLock(path string, fn func() error) error {
 			defer os.Remove(lockPath)
 			return fn()
 		}
-		if !os.IsExist(err) {
+		// Windows NTFS 会在锁文件刚被 os.Remove 标记为待删除（DELETE_PENDING）时返回 Access is denied，
+		// 因此在 Windows 上把 os.IsPermission 也视作瞬态锁冲突重试，直到超时再返回原始错误。
+		if !os.IsExist(err) && !(runtime.GOOS == "windows" && os.IsPermission(err)) {
 			return err
 		}
 		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > 30*time.Second {
@@ -537,6 +540,9 @@ func withBoardLock(path string, fn func() error) error {
 			continue
 		}
 		if time.Now().After(deadline) {
+			if !os.IsExist(err) {
+				return err
+			}
 			return errors.New("等待看板文件锁超时")
 		}
 		time.Sleep(15 * time.Millisecond)
