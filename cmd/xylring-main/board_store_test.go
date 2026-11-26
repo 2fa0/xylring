@@ -569,3 +569,138 @@ func TestBoardPriorityAndDueDateStore(t *testing.T) {
 		t.Fatalf("clear priority/due: %+v err=%v", cleared, err)
 	}
 }
+
+func TestBoardChecklistParseAndToggle(t *testing.T) {
+	desc := strings.Join([]string{
+		"Background context line",
+		"- [ ] First item",
+		"  - [x] Nested done item",
+		"* [X] Starred done item",
+		"  * [ ] Starred todo item",
+		"- plain bullet",
+		"Trailing note",
+	}, "\n")
+
+	items := parseBoardChecklist(desc)
+	if len(items) != 4 {
+		t.Fatalf("expected 4 checklist items, got %d: %+v", len(items), items)
+	}
+	if items[0] != (boardChecklistItem{LineIndex: 1, Checked: false, Text: "First item"}) {
+		t.Fatalf("item[0] = %+v", items[0])
+	}
+	if items[1] != (boardChecklistItem{LineIndex: 2, Checked: true, Text: "Nested done item"}) {
+		t.Fatalf("item[1] = %+v", items[1])
+	}
+	if items[2] != (boardChecklistItem{LineIndex: 3, Checked: true, Text: "Starred done item"}) {
+		t.Fatalf("item[2] = %+v", items[2])
+	}
+	if items[3] != (boardChecklistItem{LineIndex: 4, Checked: false, Text: "Starred todo item"}) {
+		t.Fatalf("item[3] = %+v", items[3])
+	}
+
+	// Toggle unchecked -> checked and back
+	toggled := toggleBoardChecklistLine(desc, 1)
+	if !strings.Contains(toggled, "\n- [x] First item\n") {
+		t.Fatalf("expected line 1 checked, got:\n%s", toggled)
+	}
+	roundtrip := toggleBoardChecklistLine(toggled, 1)
+	if roundtrip != desc {
+		t.Fatalf("roundtrip mismatch:\ngot:\n%s\nwant:\n%s", roundtrip, desc)
+	}
+
+	// Toggle indented starred item preserves indentation and bullet char
+	toggledStar := toggleBoardChecklistLine(desc, 4)
+	if !strings.Contains(toggledStar, "\n  * [x] Starred todo item\n") {
+		t.Fatalf("expected indented star preserved, got:\n%s", toggledStar)
+	}
+	// Non-checklist line or out-of-range index is a no-op
+	if got := toggleBoardChecklistLine(desc, 0); got != desc {
+		t.Fatalf("non-checklist line should not change")
+	}
+	if got := toggleBoardChecklistLine(desc, 99); got != desc {
+		t.Fatalf("out-of-range line should not change")
+	}
+}
+
+func TestBoardPinnedPersistence(t *testing.T) {
+	withTempBoardConfig(t)
+	_, created, err := boardAddTask("置顶聚焦任务", "", boardDoing, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Pinned {
+		t.Fatalf("new task should default to unpinned")
+	}
+
+	pin := true
+	if _, updated, err := boardUpdateTask(created.ID, boardTaskPatch{Pinned: &pin}); err != nil || !updated.Pinned {
+		t.Fatalf("pin task failed: updated=%+v err=%v", updated, err)
+	}
+	loaded, err := loadBoardFile()
+	if err != nil || len(loaded.Tasks) != 1 || !loaded.Tasks[0].Pinned {
+		t.Fatalf("expected pinned persisted to disk: %+v err=%v", loaded.Tasks, err)
+	}
+
+	unpin := false
+	if _, updated, err := boardUpdateTask(created.ID, boardTaskPatch{Pinned: &unpin}); err != nil || updated.Pinned {
+		t.Fatalf("unpin task failed: updated=%+v err=%v", updated, err)
+	}
+	loaded, err = loadBoardFile()
+	if err != nil || len(loaded.Tasks) != 1 || loaded.Tasks[0].Pinned {
+		t.Fatalf("expected unpinned persisted to disk: %+v err=%v", loaded.Tasks, err)
+	}
+}
+
+func TestFormatBoardAgentContext(t *testing.T) {
+	task := boardTask{
+		ID:          "T-42",
+		Title:       "Refactor Context Wall",
+		Status:      boardDoing,
+		Description: "- [x] Add data model\n- [ ] Build masonry canvas\n- [ ] Write UI tests",
+		Repos:       []string{"/tmp/xylring"},
+		Commits: []boardCommitLink{
+			{Repo: "/tmp/xylring", Hash: "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Subject: "oldest commit"},
+			{Repo: "/tmp/xylring", Hash: "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Subject: "second commit", Agent: "Codex"},
+			{Repo: "/tmp/xylring", Hash: "3333333ccccccccccccccccccccccccccccccccc", Subject: "latest commit", Agent: "Claude Code"},
+		},
+		Notes: []boardNote{
+			{ID: "N-1", Text: "Old note", Author: "human", CreatedAt: time.Now().Add(-time.Hour)},
+			{ID: "N-2", Text: "Card layout ready, next add tests.", Author: "Codex", CreatedAt: time.Now()},
+		},
+	}
+
+	out := formatBoardAgentContext(task)
+	for _, want := range []string{
+		"[T-42] Refactor Context Wall",
+		"/tmp/xylring",
+		"- [ ] Build masonry canvas",
+		"- [ ] Write UI tests",
+		"3333333 latest commit",
+		"2222222 second commit",
+		"Card layout ready, next add tests.",
+		"xylring board update T-42",
+		"xylring board note T-42",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("formatBoardAgentContext missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Add data model") {
+		t.Fatalf("completed checklist item should be omitted from remaining checklist:\n%s", out)
+	}
+	if strings.Contains(out, "1111111") {
+		t.Fatalf("expected at most latest 2 commits in context:\n%s", out)
+	}
+
+	// Description fallback when no checklist items exist
+	plainTask := boardTask{
+		ID:          "T-43",
+		Title:       "Plain description task",
+		Description: "Investigate flaky test in CI pipeline.",
+	}
+	plainOut := formatBoardAgentContext(plainTask)
+	if !strings.Contains(plainOut, "Investigate flaky test in CI pipeline.") {
+		t.Fatalf("expected description excerpt in plain context:\n%s", plainOut)
+	}
+}
+

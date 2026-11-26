@@ -29,7 +29,6 @@ type boardState struct {
 	jobs               int
 	loading            bool
 	draftWrites        map[string]boardDraftWrite
-	columnLists        [4]ui.ListState
 	filterKey          boardFilterKey
 	filtered           [][]boardTask
 	filteredTotal      int
@@ -40,6 +39,8 @@ type boardState struct {
 	lastSize           int64
 	polling            bool
 	repoFilter         string
+	statusFilter       boardStatus
+	doneExpanded       bool
 	search             string
 	searchInput        ui.Handle
 	showArchived       bool
@@ -1297,20 +1298,6 @@ func boardRepoColor(c *ui.Context, repo string) ui.Color {
 	return palette[h.Sum32()%uint32(len(palette))]
 }
 
-func boardTaskProvenanceSummary(t boardTask) string {
-	for i := len(t.Commits) - 1; i >= 0; i-- {
-		if t.Commits[i].Agent != "" {
-			return t.Commits[i].Agent
-		}
-	}
-	for i := len(t.Notes) - 1; i >= 0; i-- {
-		if t.Notes[i].Author != "" && !strings.EqualFold(t.Notes[i].Author, "human") {
-			return t.Notes[i].Author
-		}
-	}
-	return ""
-}
-
 func (a *app) openNewBoardTaskModal(status boardStatus) {
 	if status == "" {
 		status = boardTodo
@@ -1402,12 +1389,6 @@ func (a *app) sidebarBoardRow(c *ui.Context) {
 	if row.Clicked() {
 		a.openBoard()
 	}
-}
-
-type boardCardDrag struct {
-	taskID string
-	status boardStatus
-	index  int
 }
 
 type boardNoteDrag struct {
@@ -1597,8 +1578,9 @@ func (a *app) boardScreen(c *ui.Context) {
 					}
 				})
 			}
+			a.boardStatusFocusBar(c, cols)
 			ui.Box(c.Key("board-body")).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
-				a.boardColumns(c, cols)
+				a.boardContextWall(c, cols, hasFilter)
 			})
 		})
 	}
@@ -1773,103 +1755,357 @@ func (a *app) boardChromeToolbar(c *ui.Context, padR, rightPadL, rightW float32)
 	})
 }
 
-func (a *app) boardColumns(c *ui.Context, cols [][]boardTask) {
+func (a *app) boardStatusFocusBar(c *ui.Context, cols [][]boardTask) {
 	t := c.Theme()
-	laneBg := t.Surface
-	if t.Dark {
-		laneBg = t.Surface.Alpha(0.55)
+	reviewCount := len(cols[boardStatusIndex(boardReview)])
+	doingCount := len(cols[boardStatusIndex(boardDoing)])
+	todoCount := len(cols[boardStatusIndex(boardTodo)])
+	activeTotal := reviewCount + doingCount + todoCount
+
+	ui.Row(c.Key("board-focus-bar")).FillWidth().Padding(12, 18, 2, 18).Gap(6).
+		AlignItems(ui.Center).Shrink(0).Children(func() {
+		focusPill := func(id, label string, st boardStatus, count int) {
+			active := a.board.statusFilter == st
+			btn := ui.ButtonBase(c.Key("board-focus-"+id)).
+				Label(tr(label)).
+				Height(28).Padding(0, 11).Gap(6).Radius(14).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).
+				Transition(colorMotion())
+
+			fg := t.TextMuted
+			countFg := t.TextMuted.Alpha(0.75)
+			switch {
+			case active:
+				if st == "" {
+					if t.Dark {
+						btn.Background(t.SurfaceHover).Border(1, t.Border)
+					} else {
+						btn.Background(t.Background).Border(1, t.Border)
+					}
+					fg = t.Text
+					countFg = t.TextMuted
+				} else {
+					stCol := boardStatusColor(c, st)
+					btn.Background(stCol.Alpha(0.14)).Border(1, stCol.Alpha(0.5))
+					fg = stCol
+					countFg = stCol
+				}
+			case btn.Pressed():
+				btn.Background(t.SurfacePressed).Border(1, t.Border.Alpha(0.55))
+				fg = t.Text
+			case btn.Hovered():
+				btn.Background(t.SurfaceHover).Border(1, t.Border.Alpha(0.45))
+				fg = t.Text
+			default:
+				btn.Border(1, ui.Transparent)
+			}
+
+			btn.Children(func() {
+				if st != "" {
+					boardStatusDot(c, st, 7)
+				}
+				lbl := ui.Text(c, tr(label)).FontSize(13).TextColor(fg).SingleLine()
+				if active {
+					lbl.FontWeight(600)
+				} else {
+					lbl.FontWeight(500)
+				}
+				ui.Text(c, fmt.Sprintf("%d", count)).FontSize(12).FontFeatures("tnum").
+					TextColor(countFg).SingleLine()
+			})
+			if btn.Clicked() {
+				a.board.statusFilter = st
+			}
+		}
+
+		focusPill("all", "全部未完成", "", activeTotal)
+		focusPill("review", "待审阅", boardReview, reviewCount)
+		focusPill("doing", "进行中", boardDoing, doingCount)
+		focusPill("todo", "待办", boardTodo, todoCount)
+	})
+}
+
+func boardWallAttentionRank(s boardStatus) int {
+	switch s {
+	case boardReview:
+		return 0
+	case boardDoing:
+		return 1
+	case boardTodo:
+		return 2
+	default:
+		return 3
 	}
+}
+
+func sortBoardWallTasks(tasks []boardTask) {
+	slices.SortStableFunc(tasks, func(a, b boardTask) int {
+		if a.Pinned != b.Pinned {
+			if a.Pinned {
+				return -1
+			}
+			return 1
+		}
+		ra, rb := boardWallAttentionRank(a.Status), boardWallAttentionRank(b.Status)
+		if ra != rb {
+			if ra < rb {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	})
+}
+
+func boardMasonryColumnCount(availW float32) int {
+	switch {
+	case availW >= 1220:
+		return 4
+	case availW >= 880:
+		return 3
+	case availW >= 560:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func estimateBoardCardHeight(task boardTask) int {
+	h := 96
+	if len([]rune(task.Title)) > 24 {
+		h += 22
+	}
+	_, _, hasDue := boardTaskDueInfo(task.DueDate, task.Status == boardDone || task.Archived, time.Now())
+	if task.Priority != boardPriorityNone || hasDue {
+		h += 28
+	}
+	if items := parseBoardChecklist(task.Description); len(items) > 0 {
+		shown := min(len(items), 5)
+		h += shown*24 + 8
+		if len(items) > 5 {
+			h += 18
+		}
+	} else if strings.TrimSpace(task.Description) != "" {
+		h += 48
+	}
+	if n := len(task.Commits); n > 0 {
+		h += min(n, 2)*30 + 10
+	}
+	if len(task.Notes) > 0 {
+		h += 58
+	}
+	return h
+}
+
+func distributeBoardMasonry(tasks []boardTask, numCols int) [][]boardTask {
+	if numCols < 1 {
+		numCols = 1
+	}
+	columns := make([][]boardTask, numCols)
+	heights := make([]int, numCols)
+	for _, task := range tasks {
+		best := 0
+		for i := 1; i < numCols; i++ {
+			if heights[i] < heights[best] {
+				best = i
+			}
+		}
+		columns[best] = append(columns[best], task)
+		heights[best] += estimateBoardCardHeight(task) + 14
+	}
+	return columns
+}
+
+func (a *app) boardContextWall(c *ui.Context, cols [][]boardTask, hasFilter bool) {
+	t := c.Theme()
+	var unfinished []boardTask
+	if a.board.statusFilter != "" {
+		unfinished = slices.Clone(cols[boardStatusIndex(a.board.statusFilter)])
+	} else {
+		for _, st := range []boardStatus{boardReview, boardDoing, boardTodo} {
+			unfinished = append(unfinished, cols[boardStatusIndex(st)]...)
+		}
+	}
+	sortBoardWallTasks(unfinished)
+	doneTasks := cols[boardStatusIndex(boardDone)]
+
 	availW, _ := c.Size()
 	if a.showRepoSidebar() {
 		availW -= a.repoSplit + 1
 	}
-	nCols := float32(len(boardStatuses))
-	colW := max(float32(220), (availW-32-(nCols-1)*12)/nCols)
-	ui.ScrollHorizontal(c.Key("board-columns")).Fill().MinWidth(0).MinHeight(0).
-		AlignItems(ui.Stretch).Padding(14, 16, 16, 16).Gap(12).Children(func() {
-		for idx, status := range boardStatuses {
-			st := status
-			tasks := cols[idx]
-			col := ui.Column(c.Key("board-col-"+string(st))).
-				Width(colW).FillHeight().MinHeight(0).Shrink(0).
-				Radius(10).Background(laneBg).Border(1, t.Border.Alpha(0.45)).
-				Padding(12, 10, 10, 10).Gap(10).
-				Transition(ui.ElementTransition{
-					Duration: motionColor,
-					Ease:     ui.EaseOut,
-					Colors:   true,
-				})
-			colCrossHover := false
-			col.Children(func() {
-				ui.Row(c.Key("board-col-head-"+string(st))).FillWidth().Padding(2, 4).Gap(7).AlignItems(ui.Center).Shrink(0).Children(func() {
-					boardStatusDot(c, st, 9)
-					ui.Text(c, tr(boardStatusLabel(st))).FontSize(14.5).FontWeight(600).TextColor(t.Text).SingleLine()
-					ui.Text(c, fmt.Sprintf("%d", len(tasks))).FontSize(13).TextColor(t.TextMuted).SingleLine()
-					ui.Box(c).Grow(1)
-					if paneIconButton(c, "board-col-add-"+string(st), tr("在此列新建任务"), iconPlus).Clicked() {
-						a.openNewBoardTaskModal(st)
-					}
-					if st == boardDone {
-						moreBtn := paneIconButton(c, "board-done-more", tr("已完成列操作"), iconMore)
-						moreBtn.Menu(func(m *ui.Menu) {
-							if m.Item(tr("归档已完成任务")).Disabled(len(tasks) == 0).Chosen() {
-								var count int
-								a.changeBoard(func() (boardFile, error) {
-									bf, n, err := boardArchiveDone()
-									count = n
-									return bf, err
-								}, func(err error) {
-									if err != nil {
-										a.setBanner(err.Error(), "")
-									} else if count > 0 {
-										a.pendingToast = fmt.Sprintf(tr("已归档 %d 个任务"), count)
-									}
-								})
+	numCols := boardMasonryColumnCount(availW)
+	masonryCols := distributeBoardMasonry(unfinished, numCols)
+
+	ui.Scroll(c.Key("board-wall-scroll")).Fill().MinWidth(0).MinHeight(0).Children(func() {
+		ui.Column(c.Key("board-wall-content")).FillWidth().Padding(12, 18, 24, 18).Gap(18).Children(func() {
+			if len(unfinished) > 0 {
+				ui.Row(c.Key("board-masonry")).FillWidth().Gap(14).AlignItems(ui.Start).Children(func() {
+					for colIdx := range numCols {
+						colTasks := masonryCols[colIdx]
+						ui.Column(c.Key(fmt.Sprintf("board-masonry-col-%d", colIdx))).
+							Grow(1).MinWidth(0).Gap(14).Children(func() {
+							for _, task := range colTasks {
+								a.boardCard(c, task)
 							}
 						})
 					}
 				})
-				scroll := ui.List(c.Key("board-col-scroll-"+string(st)), &a.board.columnLists[idx], len(tasks)).
-					Grow(1).MinHeight(0).FillWidth().ItemKey(func(i int) any { return tasks[i].ID })
-				scrollDrag, scrollOver := ui.DragOver[boardCardDrag](scroll)
-				showEndLine := scrollOver && a.board.columnLists[idx].AtEnd() && len(tasks) > 0 && (scrollDrag.status != st || scrollDrag.index < len(tasks)-1)
-				if scrollOver && scrollDrag.status != st {
-					colCrossHover = true
+			} else if !hasFilter {
+				emptyMsg := tr("暂无任务")
+				switch {
+				case a.board.statusFilter != "":
+					emptyMsg = tr("当前状态没有任务")
+				case len(doneTasks) > 0:
+					emptyMsg = tr("所有任务已完成")
 				}
-				scroll.Rows(func(row ui.ListRow) {
-					a.boardCardSlot(row.Context, st, row.Index, tasks[row.Index], &colCrossHover)
+				ui.Row(c.Key("board-wall-empty")).FillWidth().Padding(36, 16).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, emptyMsg).FontSize(13.5).TextColor(t.TextMuted)
 				})
-				if showEndLine {
-					scroll.DrawOver(func(p *ui.Painter, r ui.Rect) {
-						drawBoardDropLine(p, r, true, t.Accent)
+			}
+
+			a.boardDoneSection(c, doneTasks)
+		})
+	})
+}
+
+func (a *app) boardDoneSection(c *ui.Context, doneTasks []boardTask) {
+	t := c.Theme()
+	ui.Column(c.Key("board-done-section")).FillWidth().Gap(8).
+		Padding(14, 0, 0, 0).
+		BorderWidth(1, 0, 0, 0).BorderColor(t.Border.Alpha(0.55)).Children(func() {
+		ui.Row(c.Key("board-done-header")).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			chev := iconChevronRight
+			if a.board.doneExpanded {
+				chev = iconChevronDown
+			}
+			toggleBtn := ui.ButtonBase(c.Key("board-done-toggle")).
+				Label(tr("已完成")).
+				Height(28).Padding(0, 8).Gap(6).Radius(6).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).
+				Transition(colorMotion())
+			switch {
+			case toggleBtn.Pressed():
+				toggleBtn.Background(t.SurfacePressed)
+			case toggleBtn.Hovered():
+				toggleBtn.Background(t.SurfaceHover)
+			}
+			toggleBtn.Children(func() {
+				ui.Icon(c, chev).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+				ui.Text(c, tr("已完成")).FontSize(13).FontWeight(600).TextColor(t.TextMuted).SingleLine()
+				ui.Text(c, fmt.Sprintf("%d", len(doneTasks))).FontSize(12).FontFeatures("tnum").
+					TextColor(t.TextMuted.Alpha(0.8)).SingleLine()
+			})
+			if toggleBtn.Clicked() {
+				a.board.doneExpanded = !a.board.doneExpanded
+			}
+
+			ui.Box(c).Grow(1)
+
+			if a.board.doneExpanded && len(doneTasks) > 0 {
+				archBtn := ui.ButtonBase(c.Key("board-done-archive")).
+					Label(tr("归档已完成任务")).
+					Height(26).Padding(0, 10).Gap(5).Radius(6).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer).
+					Transition(colorMotion())
+				switch {
+				case archBtn.Pressed():
+					archBtn.Background(t.SurfacePressed)
+				case archBtn.Hovered():
+					archBtn.Background(t.SurfaceHover)
+				}
+				archBtn.Children(func() {
+					ui.Icon(c, iconArchive).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
+					ui.Text(c, tr("归档已完成任务")).FontSize(12).TextColor(t.TextMuted).SingleLine()
+				})
+				if archBtn.Clicked() {
+					var count int
+					a.changeBoard(func() (boardFile, error) {
+						bf, n, err := boardArchiveDone()
+						count = n
+						return bf, err
+					}, func(err error) {
+						if err != nil {
+							a.setBanner(err.Error(), "")
+						} else if count > 0 {
+							a.pendingToast = fmt.Sprintf(tr("已归档 %d 个任务"), count)
+						}
 					})
 				}
-				if dropped, ok := ui.Drop[boardCardDrag](scroll); ok {
-					if len(tasks) > 0 {
-						if dropped.status != st || dropped.index < len(tasks)-1 {
-							a.applyBoardTaskMove(dropped.taskID, st, tasks[len(tasks)-1].ID, true)
-						}
-					} else if dropped.status != st {
-						a.applyBoardTaskMove(dropped.taskID, st, "", false)
-					}
-				}
-			})
-			if dragged, over := ui.DragOver[boardCardDrag](col); over && dragged.status != st {
-				colCrossHover = true
 			}
-			if colCrossHover {
-				col.Background(boardStatusColor(c, st).Alpha(0.10)).
-					Border(1, boardStatusColor(c, st).Alpha(0.55))
+		})
+
+		if !a.board.doneExpanded {
+			return
+		}
+		if len(doneTasks) == 0 {
+			ui.Text(c, tr("暂无已完成任务")).FontSize(12.5).TextColor(t.TextMuted.Alpha(0.8)).Padding(4, 10)
+			return
+		}
+		ui.Column(c.Key("board-done-list")).FillWidth().Gap(4).Children(func() {
+			for _, task := range doneTasks {
+				a.boardDoneRow(c, task)
 			}
-			if dropped, ok := ui.Drop[boardCardDrag](col); ok && dropped.status != st {
-				anchorID := ""
-				if len(tasks) > 0 {
-					anchorID = tasks[0].ID
-				}
-				a.applyBoardTaskMove(dropped.taskID, st, anchorID, false)
-			}
+		})
+	})
+}
+
+func (a *app) boardDoneRow(c *ui.Context, task boardTask) {
+	t := c.Theme()
+	selected := a.board.selectedID == task.ID
+	row := ui.ButtonBase(c.Key("board-done-row-"+task.ID)).
+		Label(task.ID+" "+task.Title).
+		FillWidth().Padding(7, 10).Gap(8).Radius(7).
+		AlignItems(ui.Center).Justify(ui.Start).Cursor(ui.CursorPointer).
+		Transition(colorMotion())
+
+	switch {
+	case selected:
+		row.Background(t.Accent.Alpha(0.10)).Border(1, t.Accent.Alpha(0.55))
+	case row.Pressed():
+		row.Background(t.SurfacePressed).Border(1, t.Border.Alpha(0.5))
+	case row.Hovered():
+		row.Background(t.SurfaceHover).Border(1, t.Border.Alpha(0.45))
+	default:
+		row.Background(t.Surface.Alpha(0.45)).Border(1, t.Border.Alpha(0.3))
+	}
+
+	restoreClicked := false
+	row.Children(func() {
+		ui.Icon(c, iconCheckCircle2).Size(14, 14).TextColor(t.Success.Alpha(0.75)).Shrink(0)
+		ui.Text(c, task.ID).Font("monospace").FontSize(11.5).TextColor(t.TextMuted.Alpha(0.85)).SingleLine().Shrink(0)
+		ui.Text(c, task.Title).FontSize(13).TextColor(t.TextMuted).SingleLine().Grow(1).MinWidth(0)
+		if task.Archived {
+			ui.Text(c, tr("已归档")).FontSize(11.5).TextColor(t.TextMuted.Alpha(0.75)).SingleLine().Shrink(0)
+		}
+		restoreBtn := ui.ButtonBase(c.Key("board-done-restore-"+task.ID)).
+			Label(tr("移回待办")).Tooltip(tr("移回待办")).
+			Size(22, 22).Radius(5).Center().Shrink(0).
+			Cursor(ui.CursorPointer).Transition(colorMotion())
+		restoreFg := t.TextMuted.Alpha(0.75)
+		switch {
+		case restoreBtn.Pressed():
+			restoreBtn.Background(t.SurfacePressed)
+			restoreFg = t.Text
+		case restoreBtn.Hovered():
+			restoreBtn.Background(t.SurfaceHover)
+			restoreFg = t.Accent
+		}
+		restoreBtn.Children(func() {
+			ui.Icon(c, iconRotateCcw).Size(13, 13).TextColor(restoreFg)
+		})
+		if restoreBtn.Clicked() {
+			restoreClicked = true
 		}
 	})
+
+	if restoreClicked {
+		next := boardTodo
+		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &next})
+		return
+	}
+	if row.Clicked() {
+		a.selectBoardTask(task.ID)
+	}
 }
 
 func drawBoardDropLine(p *ui.Painter, r ui.Rect, after bool, accent ui.Color) {
@@ -1881,96 +2117,97 @@ func drawBoardDropLine(p *ui.Painter, r ui.Rect, after bool, accent ui.Color) {
 	p.Fill(ui.Rect{X: r.X + 4, Y: y - 1, W: r.W - 4, H: 2}, accent, 1)
 }
 
-func (a *app) boardCardSlot(c *ui.Context, st boardStatus, idx int, task boardTask, colCrossHover *bool) {
-	t := c.Theme()
-	slot := ui.Column(c.Key("board-card-slot-"+task.ID)).FillWidth().Padding(4, 1, 5, 1)
-
-	computeInsert := func(dragged boardCardDrag) (insertAfter bool, valid bool) {
-		if dragged.taskID == task.ID {
-			return false, false
-		}
-		if dragged.status == st {
-			if idx == dragged.index+1 {
-				return true, true
-			}
-			if idx == dragged.index-1 {
-				return false, true
-			}
-		}
-		if b := slot.Bounds(); b.H > 0 {
-			_, py, _ := slot.PointerPosition()
-			return py > b.H/2, true
-		}
-		return dragged.status == st && dragged.index < idx, true
-	}
-
-	var dropOver *boardCardDrag
-	var dropInsertAfter bool
-	if dragged, over := ui.DragOver[boardCardDrag](slot); over {
-		if after, ok := computeInsert(dragged); ok {
-			dropOver = &dragged
-			dropInsertAfter = after
-			if dragged.status != st && colCrossHover != nil {
-				*colCrossHover = true
-			}
-		}
-	}
-
-	slot.Children(func() {
-		a.boardCard(c, idx, task, dropOver != nil)
-	})
-
-	if dropOver != nil {
-		slot.DrawOver(func(p *ui.Painter, r ui.Rect) {
-			drawBoardDropLine(p, r, dropInsertAfter, t.Accent)
-		})
-	}
-
-	if dropped, ok := ui.Drop[boardCardDrag](slot); ok {
-		if after, valid := computeInsert(dropped); valid {
-			a.applyBoardTaskMove(dropped.taskID, st, task.ID, after)
-		}
-	}
-}
-
-func (a *app) boardCard(c *ui.Context, idx int, task boardTask, suppressHover bool) {
+func (a *app) boardCard(c *ui.Context, task boardTask) {
 	t := c.Theme()
 	selected := a.board.selectedID == task.ID
+	isFocus := task.Pinned && task.Status != boardDone
+
 	cardBg := t.Background
+	cardBorder := t.Border.Alpha(0.75)
 	cardShadow := ui.RGBA(0, 0, 0, 0.04)
-	if t.Dark {
-		cardBg = t.Surface
-		cardShadow = ui.RGBA(0, 0, 0, 0.18)
+	primaryText := t.Text
+	mutedText := t.TextMuted
+	chipBg := t.Surface.Alpha(0.85)
+	chipHoverBg := t.SurfaceHover
+	chipBorder := t.Border.Alpha(0.6)
+	dividerCol := t.Border.Alpha(0.55)
+	actionHoverBg := t.SurfaceHover
+
+	switch {
+	case isFocus:
+		if t.Dark {
+			cardBg = ui.Hex("#252834")
+			cardBorder = t.Warning.Alpha(0.72)
+			cardShadow = ui.RGBA(0, 0, 0, 0.34)
+			primaryText = ui.Hex("#F5F6FA")
+			mutedText = ui.Hex("#A5AAB8")
+			chipBg = ui.RGBA(255, 255, 255, 0.08)
+			chipHoverBg = ui.RGBA(255, 255, 255, 0.14)
+			chipBorder = ui.RGBA(255, 255, 255, 0.14)
+			dividerCol = ui.RGBA(255, 255, 255, 0.14)
+			actionHoverBg = ui.RGBA(255, 255, 255, 0.12)
+		} else {
+			cardBg = ui.Hex("#1E2025")
+			cardBorder = t.Warning.Alpha(0.80)
+			cardShadow = ui.RGBA(0, 0, 0, 0.16)
+			primaryText = ui.Hex("#F4F5F7")
+			mutedText = ui.Hex("#A1A6B3")
+			chipBg = ui.RGBA(255, 255, 255, 0.08)
+			chipHoverBg = ui.RGBA(255, 255, 255, 0.15)
+			chipBorder = ui.RGBA(255, 255, 255, 0.14)
+			dividerCol = ui.RGBA(255, 255, 255, 0.14)
+			actionHoverBg = ui.RGBA(255, 255, 255, 0.12)
+		}
+	case task.Status == boardReview:
+		if t.Dark {
+			cardBg = ui.Hex("#241F16")
+			cardShadow = ui.RGBA(0, 0, 0, 0.22)
+		} else {
+			cardBg = ui.Hex("#FFFBF2")
+		}
+		cardBorder = t.Warning.Alpha(0.55)
+	case task.Status == boardDoing:
+		if t.Dark {
+			cardBg = ui.Hex("#161D29")
+			cardShadow = ui.RGBA(0, 0, 0, 0.22)
+		} else {
+			cardBg = ui.Hex("#F5F9FF")
+		}
+		cardBorder = t.Accent.Alpha(0.48)
+	default:
+		if t.Dark {
+			cardBg = t.Surface
+			cardShadow = ui.RGBA(0, 0, 0, 0.18)
+		}
 	}
+
 	card := ui.ButtonBase(c.Key("board-card-"+task.ID)).
 		Label(task.ID+" "+task.Title).
 		FillWidth().
-		Padding(12, 14).
-		Radius(8).
+		Padding(14, 15).
+		Radius(12).
 		Background(cardBg).
 		Cursor(ui.CursorPointer).
-		Drag(boardCardDrag{taskID: task.ID, status: task.Status, index: idx}).
 		Transition(boardCardMotion(task.ID))
 
-	if card.Dragging() {
-		card.Opacity(0.4).Cursor(ui.CursorGrabbing)
-	}
-	hovered := card.Hovered() && !suppressHover
+	hovered := card.Hovered()
 	switch {
 	case selected:
-		selBg := t.Accent.Alpha(0.06)
-		if t.Dark {
-			selBg = t.Accent.Alpha(0.14)
-		}
-		card.Background(selBg).Border(2, t.Accent).Shadow(0, 0, 0, 2, t.Accent.Alpha(0.18))
+		card.Border(2, t.Accent).Shadow(0, 0, 0, 2, t.Accent.Alpha(0.20))
 	case hovered:
-		card.Border(1, t.Accent.Alpha(0.55)).Shadow(0, 2, 6, 0, cardShadow)
+		hoverBorder := t.Accent.Alpha(0.6)
+		if isFocus {
+			hoverBorder = t.Warning
+		}
+		card.Border(1, hoverBorder).Shadow(0, 4, 14, 0, cardShadow)
 	default:
-		card.Border(1, t.Border.Alpha(0.75)).Shadow(0, 1, 2, 0, cardShadow)
+		card.Border(1, cardBorder).Shadow(0, 1, 4, 0, cardShadow)
 	}
 
 	var moveStatus boardStatus
 	hasMove := false
+	doPinToggle := false
+	doCopyCtx := false
 	doArchive := false
 	doUnarchive := false
 	doDelete := false
@@ -1984,6 +2221,16 @@ func (a *app) boardCard(c *ui.Context, idx int, task boardTask, suppressHover bo
 			}
 		}
 		m.Separator()
+		pinLabel := tr("置顶聚焦")
+		if task.Pinned {
+			pinLabel = tr("取消置顶")
+		}
+		if m.Item(pinLabel).Chosen() {
+			doPinToggle = true
+		}
+		if m.Item(tr("复制 Agent 上下文")).Chosen() {
+			doCopyCtx = true
+		}
 		if m.Item(tr("复制任务编号")).Chosen() {
 			c.Services().WriteClipboard(task.ID)
 			c.Toast(tr("已复制任务编号"))
@@ -2002,63 +2249,121 @@ func (a *app) boardCard(c *ui.Context, idx int, task boardTask, suppressHover bo
 		}
 	})
 
+	copyClicked := false
+	pinClicked := false
 	checkClicked := false
+	toggledLineIdx := -1
+	var clickedCommit *boardCommitLink
+
 	repos := boardTaskAllRepos(task)
-	prov := boardTaskProvenanceSummary(task)
+	checklist := parseBoardChecklist(task.Description)
+	stCol := boardStatusColor(c, task.Status)
+
 	card.Children(func() {
-		ui.Column(c).FillWidth().Gap(7).Children(func() {
+		ui.Column(c).FillWidth().Gap(9).Children(func() {
+			// Card Header
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, task.ID).Font("monospace").FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
-				if a.board.repoFilter == "" && len(repos) > 0 {
-					boardRepoDot(c, repos[0], 7)
-					repoText := repoTitle(repos[0])
-					if len(repos) > 1 {
-						repoText += fmt.Sprintf(" +%d", len(repos)-1)
+				ui.Row(c).Grow(1).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
+					if a.board.repoFilter == "" && len(repos) > 0 {
+						boardRepoDot(c, repos[0], 7)
+						repoText := repoTitle(repos[0])
+						if len(repos) > 1 {
+							repoText += fmt.Sprintf(" +%d", len(repos)-1)
+						}
+						ui.Text(c, repoText).FontSize(11.5).FontWeight(500).TextColor(mutedText).SingleLine().MinWidth(0)
 					}
-					ui.Text(c, repoText).FontSize(12).TextColor(t.TextMuted).SingleLine().MinWidth(0)
-				}
-				ui.Box(c).Grow(1)
-				tip := tr("标记为已完成")
-				if task.Status == boardDone {
-					tip = tr("移回待办")
-				}
-				chk := ui.ButtonBase(c.Key("board-card-check-"+task.ID)).
-					Label(tip).Tooltip(tip).
-					Size(20, 20).Radius(10).Center().Shrink(0).
-					Cursor(ui.CursorPointer).Transition(colorMotion())
-				chkIcon := iconCircle
-				chkColor := t.TextMuted.Alpha(0.32)
-				switch {
-				case task.Status == boardDone:
-					chkIcon = iconCheckCircle2
-					chkColor = t.Success
-					if chk.Hovered() {
-						chk.Background(t.Success.Alpha(0.12))
+					ui.Text(c, task.ID).Font("monospace").FontSize(11.5).TextColor(mutedText.Alpha(0.85)).SingleLine().Shrink(0)
+					pillBg := stCol.Alpha(0.13)
+					pillFg := stCol
+					if task.Status == boardTodo {
+						pillBg = mutedText.Alpha(0.14)
+						pillFg = mutedText
+					} else if isFocus {
+						pillBg = stCol.Alpha(0.22)
 					}
-				case chk.Hovered():
-					chkIcon = iconCheckCircle2
-					chkColor = t.Accent
-					chk.Background(t.Accent.Alpha(0.12))
-				case hovered || selected:
-					chkColor = t.TextMuted.Alpha(0.75)
-				}
-				chk.Children(func() {
-					ui.Icon(c, chkIcon).Size(15, 15).TextColor(chkColor)
+					ui.Row(c).Padding(1, 6).Gap(4).Radius(9).Background(pillBg).AlignItems(ui.Center).Shrink(0).Children(func() {
+						ui.Box(c).Size(5, 5).Radius(2.5).Background(pillFg).Shrink(0)
+						ui.Text(c, tr(boardStatusLabel(task.Status))).FontSize(11).FontWeight(500).TextColor(pillFg).SingleLine()
+					})
 				})
-				if chk.Clicked() {
-					checkClicked = true
-				}
+
+				// Compact icon actions: Copy Agent Context, Pin/Unpin, Mark Done
+				ui.Row(c).Gap(2).AlignItems(ui.Center).Shrink(0).Children(func() {
+					copyBtn := ui.ButtonBase(c.Key("board-card-copy-ctx-"+task.ID)).
+						Label(tr("复制 Agent 上下文")).Tooltip(tr("复制 Agent 上下文")).
+						Size(22, 22).Radius(5).Center().Shrink(0).
+						Cursor(ui.CursorPointer).Transition(colorMotion())
+					copyFg := mutedText.Alpha(0.65)
+					if copyBtn.Hovered() || copyBtn.Pressed() {
+						copyBtn.Background(actionHoverBg)
+						copyFg = primaryText
+					} else if hovered || selected {
+						copyFg = mutedText
+					}
+					copyBtn.Children(func() {
+						ui.Icon(c, iconCopy).Size(12.5, 12.5).TextColor(copyFg)
+					})
+					if copyBtn.Clicked() {
+						copyClicked = true
+					}
+
+					pinTip := tr("置顶聚焦")
+					pinIcon := iconStar
+					pinFg := mutedText.Alpha(0.65)
+					if task.Pinned {
+						pinTip = tr("取消置顶")
+						pinIcon = iconStarFilled
+						pinFg = t.Warning
+					}
+					pinBtn := ui.ButtonBase(c.Key("board-card-pin-"+task.ID)).
+						Label(pinTip).Tooltip(pinTip).
+						Size(22, 22).Radius(5).Center().Shrink(0).
+						Cursor(ui.CursorPointer).Transition(colorMotion())
+					if pinBtn.Hovered() || pinBtn.Pressed() {
+						pinBtn.Background(actionHoverBg)
+						if !task.Pinned {
+							pinFg = t.Warning
+						}
+					} else if !task.Pinned && (hovered || selected) {
+						pinFg = mutedText
+					}
+					pinBtn.Children(func() {
+						ui.Icon(c, pinIcon).Size(13, 13).TextColor(pinFg)
+					})
+					if pinBtn.Clicked() {
+						pinClicked = true
+					}
+
+					chkTip := tr("标记为已完成")
+					chkBtn := ui.ButtonBase(c.Key("board-card-check-"+task.ID)).
+						Label(chkTip).Tooltip(chkTip).
+						Size(22, 22).Radius(11).Center().Shrink(0).
+						Cursor(ui.CursorPointer).Transition(colorMotion())
+					chkIcon := iconCircle
+					chkColor := mutedText.Alpha(0.5)
+					if chkBtn.Hovered() || chkBtn.Pressed() {
+						chkIcon = iconCheckCircle2
+						chkColor = t.Success
+						chkBtn.Background(t.Success.Alpha(0.14))
+					} else if hovered || selected {
+						chkColor = mutedText
+					}
+					chkBtn.Children(func() {
+						ui.Icon(c, chkIcon).Size(14, 14).TextColor(chkColor)
+					})
+					if chkBtn.Clicked() {
+						checkClicked = true
+					}
+				})
 			})
 
-			titleEl := ui.Text(c, task.Title).FontSize(14.5).FontWeight(500).LineHeight(1.35).MaxLines(2).FillWidth().MinWidth(0)
-			if task.Status == boardDone || task.Archived {
-				titleEl.TextColor(t.TextMuted)
-			} else {
-				titleEl.TextColor(t.Text)
-			}
+			// Title
+			ui.Text(c, task.Title).FontSize(14.5).FontWeight(600).LineHeight(1.35).
+				MaxLines(2).FillWidth().MinWidth(0).TextColor(primaryText)
 
+			// Priority & Due chips
 			dueParsed, dueState, hasDue := boardTaskDueInfo(task.DueDate, task.Status == boardDone || task.Archived, time.Now())
-			if task.Priority != boardPriorityNone || hasDue {
+			if task.Priority != boardPriorityNone || hasDue || task.Archived {
 				ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 					if task.Priority != boardPriorityNone {
 						boardPriorityPill(c, "board-card-prio-"+task.ID, task.Priority, 11.5)
@@ -2077,41 +2382,150 @@ func (a *app) boardCard(c *ui.Context, idx int, task boardTask, suppressHover bo
 							}
 						})
 					}
+					if task.Archived {
+						ui.Text(c, tr("已归档")).FontSize(11.5).TextColor(mutedText).SingleLine()
+					}
 				})
 			}
 
-			if len(task.Commits) > 0 || len(task.Notes) > 0 || prov != "" || task.Archived {
-				ui.Row(c).FillWidth().Gap(9).AlignItems(ui.Center).Children(func() {
-					if len(task.Commits) > 0 {
-						ui.Row(c).Gap(3).AlignItems(ui.Center).Tooltip(fmt.Sprintf(tr("%d 提交"), len(task.Commits))).Children(func() {
-							ui.Icon(c, iconGitCommit).Size(13, 13).TextColor(t.TextMuted)
-							ui.Text(c, fmt.Sprintf("%d", len(task.Commits))).FontSize(12).TextColor(t.TextMuted).SingleLine()
+			// Live Checklist or Description Excerpt
+			if len(checklist) > 0 {
+				ui.Column(c.Key("board-card-checklist-"+task.ID)).FillWidth().Gap(3).Children(func() {
+					limit := min(len(checklist), 5)
+					for i := range limit {
+						item := checklist[i]
+						rowBtn := ui.ButtonBase(c.Key(fmt.Sprintf("board-card-chk-%s-%d", task.ID, item.LineIndex))).
+							Label(item.Text).
+							FillWidth().Padding(3, 5).Gap(6).Radius(5).
+							AlignItems(ui.Center).Justify(ui.Start).
+							Cursor(ui.CursorPointer).Transition(colorMotion())
+						if rowBtn.Hovered() || rowBtn.Pressed() {
+							rowBtn.Background(actionHoverBg)
+						}
+						rowBtn.Children(func() {
+							if item.Checked {
+								ui.Icon(c, iconCheckCircle2).Size(13.5, 13.5).TextColor(t.Success).Shrink(0)
+								ui.Text(c, item.Text).FontSize(12.5).TextColor(mutedText.Alpha(0.75)).SingleLine().Grow(1).MinWidth(0)
+							} else {
+								ui.Icon(c, iconCircle).Size(13.5, 13.5).TextColor(mutedText.Alpha(0.75)).Shrink(0)
+								ui.Text(c, item.Text).FontSize(12.5).TextColor(primaryText.Alpha(0.92)).SingleLine().Grow(1).MinWidth(0)
+							}
 						})
+						if rowBtn.Clicked() {
+							toggledLineIdx = item.LineIndex
+						}
 					}
-					if len(task.Notes) > 0 {
-						ui.Row(c).Gap(3).AlignItems(ui.Center).Tooltip(fmt.Sprintf(tr("%d 备注"), len(task.Notes))).Children(func() {
-							ui.Icon(c, iconMessage).Size(13, 13).TextColor(t.TextMuted)
-							ui.Text(c, fmt.Sprintf("%d", len(task.Notes))).FontSize(12).TextColor(t.TextMuted).SingleLine()
+					if len(checklist) > 5 {
+						ui.Text(c, fmt.Sprintf("+%d", len(checklist)-5)).FontSize(11.5).
+							TextColor(mutedText.Alpha(0.8)).Padding(1, 5).SingleLine()
+					}
+				})
+			} else if desc := strings.TrimSpace(task.Description); desc != "" {
+				ui.Text(c, desc).FontSize(12.5).LineHeight(1.45).MaxLines(3).
+					FillWidth().MinWidth(0).TextColor(mutedText)
+			}
+
+			// Embedded Recent Commits (latest 1–2)
+			if len(task.Commits) > 0 {
+				ui.Column(c.Key("board-card-commits-"+task.ID)).FillWidth().Gap(4).Children(func() {
+					start := max(0, len(task.Commits)-2)
+					for i := len(task.Commits) - 1; i >= start; i-- {
+						link := task.Commits[i]
+						short := link.Hash
+						if len(short) > 7 {
+							short = short[:7]
+						}
+						label := short
+						if link.Subject != "" {
+							label = short + " " + link.Subject
+						}
+						cBtn := ui.ButtonBase(c.Key(fmt.Sprintf("board-card-commit-%s-%s", task.ID, link.Hash))).
+							Label(label).
+							Tooltip(link.Repo + " @ " + link.Hash).
+							FillWidth().Padding(4, 7).Gap(5).Radius(6).
+							AlignItems(ui.Center).Justify(ui.Start).
+							Cursor(ui.CursorPointer).Transition(colorMotion())
+						if cBtn.Hovered() || cBtn.Pressed() {
+							cBtn.Background(chipHoverBg).Border(1, t.Accent.Alpha(0.5))
+						} else {
+							cBtn.Background(chipBg).Border(1, chipBorder)
+						}
+						cBtn.Children(func() {
+							ui.Icon(c, iconGitCommit).Size(12, 12).TextColor(mutedText).Shrink(0)
+							ui.Text(c, short).Font("monospace").FontSize(11).TextColor(mutedText).SingleLine().Shrink(0)
+							if link.Subject != "" {
+								ui.Text(c, link.Subject).FontSize(11.5).TextColor(primaryText.Alpha(0.9)).SingleLine().Grow(1).MinWidth(0)
+							} else {
+								ui.Box(c).Grow(1)
+							}
+							if link.Agent != "" {
+								ui.Row(c).Padding(1, 5).Radius(4).Background(t.Accent.Alpha(0.14)).Shrink(0).Children(func() {
+									ui.Text(c, link.Agent).FontSize(10.5).FontWeight(500).TextColor(t.Accent).SingleLine()
+								})
+							}
 						})
+						if cBtn.Clicked() {
+							copyLink := link
+							clickedCommit = &copyLink
+						}
 					}
-					if task.Archived {
-						ui.Text(c, tr("已归档")).FontSize(12).TextColor(t.TextMuted).SingleLine()
-					}
-					ui.Box(c).Grow(1)
-					if prov != "" {
-						boardAgentTag(c, "board-card-agent-"+task.ID, prov)
-					}
+				})
+			}
+
+			// Latest Breakpoint Note
+			if len(task.Notes) > 0 {
+				latest := task.Notes[len(task.Notes)-1]
+				isHuman := strings.EqualFold(latest.Author, "human") || latest.Author == ""
+				who := latest.Author
+				if isHuman {
+					who = tr("人工")
+				}
+				ui.Column(c.Key("board-card-note-"+task.ID)).FillWidth().Gap(3).
+					Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(dividerCol).Children(func() {
+					ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
+						if !isHuman {
+							ui.Icon(c, iconBot).Size(11.5, 11.5).TextColor(t.Accent).Shrink(0)
+							ui.Text(c, who).FontSize(11.5).FontWeight(600).TextColor(t.Accent).SingleLine()
+						} else {
+							ui.Text(c, who).FontSize(11.5).FontWeight(500).TextColor(mutedText).SingleLine()
+						}
+						if ts := latest.displayTime(); !ts.IsZero() {
+							ui.Text(c, "· "+ts.Local().Format("01-02 15:04")).FontSize(11).
+								TextColor(mutedText.Alpha(0.8)).SingleLine().Shrink(0)
+						}
+					})
+					ui.Text(c, latest.Text).FontSize(12).LineHeight(1.4).MaxLines(2).
+						FillWidth().MinWidth(0).TextColor(mutedText)
 				})
 			}
 		})
 	})
 
+	if copyClicked || doCopyCtx {
+		c.Services().WriteClipboard(formatBoardAgentContext(task))
+		c.Toast(tr("已复制 Agent 上下文"))
+		return
+	}
+	if pinClicked || doPinToggle {
+		next := !task.Pinned
+		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Pinned: &next})
+		return
+	}
 	if checkClicked {
 		next := boardDone
 		if task.Status == boardDone {
 			next = boardTodo
 		}
 		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &next})
+		return
+	}
+	if toggledLineIdx >= 0 {
+		nextDesc := toggleBoardChecklistLine(task.Description, toggledLineIdx)
+		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Description: &nextDesc})
+		return
+	}
+	if clickedCommit != nil {
+		a.openBoardCommit(*clickedCommit)
 		return
 	}
 	if hasMove {
@@ -2146,14 +2560,6 @@ func (a *app) applyBoardTaskPatch(id string, patch boardTaskPatch, toast ...stri
 			a.pendingToast = toast[0]
 		}
 	})
-}
-
-func (a *app) applyBoardTaskMove(id string, status boardStatus, anchorID string, insertAfter bool) {
-	a.commitBoardDrafts()
-	a.changeBoard(func() (boardFile, error) {
-		bf, _, err := boardMoveTask(id, status, anchorID, insertAfter)
-		return bf, err
-	}, nil)
 }
 
 func (a *app) boardDetailDrawer(c *ui.Context) {
@@ -2192,6 +2598,40 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 				})
 			}
 			ui.Box(c).Grow(1)
+			ctxBtn := ui.ButtonBase(c.Key("board-drawer-copy-ctx")).
+				Label(tr("复制 Agent 上下文")).Tooltip(tr("复制 Agent 上下文")).
+				Height(24).Padding(0, 8).Gap(4).Radius(6).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).
+				Transition(colorMotion())
+			switch {
+			case ctxBtn.Pressed():
+				ctxBtn.Background(t.SurfacePressed)
+			case ctxBtn.Hovered():
+				ctxBtn.Background(t.SurfaceHover)
+			}
+			ctxBtn.Children(func() {
+				ui.Icon(c, iconCopy).Size(12.5, 12.5).TextColor(t.TextMuted).Shrink(0)
+				ui.Text(c, tr("复制上下文")).FontSize(12).TextColor(t.TextMuted).SingleLine()
+			})
+			if ctxBtn.Clicked() {
+				c.Services().WriteClipboard(formatBoardAgentContext(task))
+				c.Toast(tr("已复制 Agent 上下文"))
+			}
+
+			pinTip := tr("置顶聚焦")
+			pinIcon := iconStar
+			pinFg := t.TextMuted
+			if task.Pinned {
+				pinTip = tr("取消置顶")
+				pinIcon = iconStarFilled
+				pinFg = t.Warning
+			}
+			pinBtn := ui.ButtonBase(c.Key("board-drawer-pin")).Label(pinTip).Tooltip(pinTip)
+			if styleActionIcon(c, pinBtn, pinIcon, 24, 14, pinFg, task.Pinned).Clicked() {
+				next := !task.Pinned
+				a.applyBoardTaskPatch(task.ID, boardTaskPatch{Pinned: &next})
+			}
+
 			moreBtn := paneIconButton(c, "board-drawer-more", tr("任务操作"), iconMore)
 			moreBtn.Menu(func(m *ui.Menu) {
 				if task.Archived {

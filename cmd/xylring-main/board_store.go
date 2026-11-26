@@ -200,6 +200,7 @@ type boardTask struct {
 	Priority    boardPriority     `json:"priority,omitempty"`
 	DueDate     string            `json:"due_date,omitempty"`
 	Archived    bool              `json:"archived,omitempty"`
+	Pinned      bool              `json:"pinned,omitempty"`
 	Repos       []string          `json:"repos,omitempty"`
 	Commits     []boardCommitLink `json:"commits,omitempty"`
 	Notes       []boardNote       `json:"notes,omitempty"`
@@ -700,6 +701,7 @@ type boardTaskPatch struct {
 	Priority    *boardPriority
 	DueDate     *string
 	Archived    *bool
+	Pinned      *bool
 	Repos       *[]string
 	AddRepos    []string
 }
@@ -811,6 +813,9 @@ func boardUpdateTask(id string, patch boardTaskPatch) (boardFile, boardTask, err
 		}
 		if patch.Archived != nil {
 			t.Archived = *patch.Archived
+		}
+		if patch.Pinned != nil {
+			t.Pinned = *patch.Pinned
 		}
 		if patch.Repos != nil {
 			t.Repos = normalizeBoardRepos(*patch.Repos)
@@ -2023,3 +2028,157 @@ func copyBoardBackups(srcDir, dstDir string) {
 	}
 	pruneBoardBackups(dstDir, maxBoardBackups)
 }
+
+type boardChecklistItem struct {
+	LineIndex int
+	Checked   bool
+	Text      string
+}
+
+func matchBoardChecklistPrefix(rest string) (checked bool, ok bool) {
+	if len(rest) < 6 {
+		return false, false
+	}
+	if (rest[0] != '-' && rest[0] != '*') || rest[1] != ' ' || rest[2] != '[' || rest[4] != ']' || rest[5] != ' ' {
+		return false, false
+	}
+	switch rest[3] {
+	case ' ':
+		return false, true
+	case 'x', 'X':
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func parseBoardChecklist(desc string) []boardChecklistItem {
+	if desc == "" {
+		return nil
+	}
+	lines := strings.Split(desc, "\n")
+	var items []boardChecklistItem
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		checked, ok := matchBoardChecklistPrefix(trimmed)
+		if !ok {
+			continue
+		}
+		text := strings.TrimSpace(strings.TrimSuffix(trimmed[6:], "\r"))
+		items = append(items, boardChecklistItem{
+			LineIndex: i,
+			Checked:   checked,
+			Text:      text,
+		})
+	}
+	return items
+}
+
+func toggleBoardChecklistLine(desc string, lineIndex int) string {
+	if desc == "" || lineIndex < 0 {
+		return desc
+	}
+	lines := strings.Split(desc, "\n")
+	if lineIndex >= len(lines) {
+		return desc
+	}
+	line := lines[lineIndex]
+	trimmed := strings.TrimLeft(line, " \t")
+	checked, ok := matchBoardChecklistPrefix(trimmed)
+	if !ok {
+		return desc
+	}
+	leadLen := len(line) - len(trimmed)
+	mark := byte('x')
+	if checked {
+		mark = ' '
+	}
+	b := []byte(line)
+	b[leadLen+3] = mark
+	lines[lineIndex] = string(b)
+	return strings.Join(lines, "\n")
+}
+
+func formatBoardAgentContext(task boardTask) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "[%s] %s\n", task.ID, task.Title)
+	if task.Status != "" {
+		fmt.Fprintf(&sb, "Status: %s\n", task.Status)
+	}
+	repos := boardTaskAllRepos(task)
+	if len(repos) > 0 {
+		sb.WriteString("Repos:\n")
+		for _, r := range repos {
+			fmt.Fprintf(&sb, "- %s\n", r)
+		}
+	}
+
+	items := parseBoardChecklist(task.Description)
+	if len(items) > 0 {
+		var unchecked []boardChecklistItem
+		for _, item := range items {
+			if !item.Checked {
+				unchecked = append(unchecked, item)
+			}
+		}
+		if len(unchecked) > 0 {
+			sb.WriteString("\nRemaining Checklist:\n")
+			for _, item := range unchecked {
+				fmt.Fprintf(&sb, "- [ ] %s\n", item.Text)
+			}
+		} else {
+			sb.WriteString("\nChecklist: all items completed.\n")
+		}
+	} else if desc := strings.TrimSpace(task.Description); desc != "" {
+		runes := []rune(desc)
+		if len(runes) > 600 {
+			desc = strings.TrimSpace(string(runes[:600])) + "…"
+		}
+		sb.WriteString("\nDescription:\n")
+		sb.WriteString(desc)
+		sb.WriteByte('\n')
+	}
+
+	if len(task.Commits) > 0 {
+		sb.WriteString("\nRecent Commits:\n")
+		start := max(0, len(task.Commits)-2)
+		for i := len(task.Commits) - 1; i >= start; i-- {
+			cm := task.Commits[i]
+			short := cm.Hash
+			if len(short) > 7 {
+				short = short[:7]
+			}
+			line := fmt.Sprintf("- %s", short)
+			if cm.Subject != "" {
+				line += " " + cm.Subject
+			}
+			if cm.Repo != "" {
+				line += fmt.Sprintf(" (%s)", repoTitle(cm.Repo))
+			}
+			if cm.Agent != "" {
+				line += fmt.Sprintf(" [%s]", cm.Agent)
+			}
+			sb.WriteString(line + "\n")
+		}
+	}
+
+	if len(task.Notes) > 0 {
+		latest := task.Notes[len(task.Notes)-1]
+		author := latest.Author
+		if author == "" {
+			author = "human"
+		}
+		sb.WriteString("\nLatest Note:\n")
+		if ts := latest.displayTime(); !ts.IsZero() {
+			fmt.Fprintf(&sb, "%s (%s): %s\n", author, ts.Local().Format("2006-01-02 15:04"), strings.TrimSpace(latest.Text))
+		} else {
+			fmt.Fprintf(&sb, "%s: %s\n", author, strings.TrimSpace(latest.Text))
+		}
+	}
+
+	sb.WriteString("\nXylring Board CLI:\n")
+	fmt.Fprintf(&sb, "- xylring board update %s --status review\n", task.ID)
+	fmt.Fprintf(&sb, "- xylring board note %s \"<progress>\" --agent \"<agent>\" --model \"<model>\"\n", task.ID)
+	return strings.TrimRight(sb.String(), "\n")
+}
+

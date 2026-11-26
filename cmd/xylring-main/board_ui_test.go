@@ -301,12 +301,118 @@ func TestBoardUnifiedChromeDrawerAndPreviews(t *testing.T) {
 	tab.cancel()
 }
 
-func TestBoardCardDragDropBetweenColumns(t *testing.T) {
+func TestBoardContextWallFocusTabsAndPinnedOrdering(t *testing.T) {
 	withTempBoardConfig(t)
-	_, created, err := boardAddTask("可拖拽任务卡片", "", boardTodo, nil)
+	_, tTodo, err := boardAddTask("普通待办任务", "", boardTodo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, tDoing, err := boardAddTask("正在进行的任务", "", boardDoing, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, tReview, err := boardAddTask("等待审阅的任务", "", boardReview, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, tPinned, err := boardAddTask("置顶聚焦任务", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := true
+	if _, _, err := boardUpdateTask(tPinned.ID, boardTaskPatch{Pinned: &pin}); err != nil {
+		t.Fatal(err)
+	}
+	_ = tTodo
+
+	// Verify attention-weight ordering: Pinned > Review > Doing > Todo
+	a := &app{
+		showBoard: true,
+		dispatch:  func(fn func()) { fn() },
+	}
+	a.ensureBoardLoaded()
+
+	var wall []boardTask
+	cols, _ := a.boardFilteredByStatus()
+	for _, st := range []boardStatus{boardReview, boardDoing, boardTodo} {
+		wall = append(wall, cols[boardStatusIndex(st)]...)
+	}
+	sortBoardWallTasks(wall)
+	gotOrder := make([]string, len(wall))
+	for i, task := range wall {
+		gotOrder[i] = task.ID
+	}
+	wantOrder := []string{tPinned.ID, tReview.ID, tDoing.ID, tTodo.ID}
+	if !slices.Equal(gotOrder, wantOrder) {
+		t.Fatalf("unexpected wall attention order: got %v want %v", gotOrder, wantOrder)
+	}
+
+	tt := ui.NewTester(a.view, 1280, 820)
+	defer retireTester(tt)
+	tt.Frame()
+
+	// All active tasks visible by default
+	for _, title := range []string{"置顶聚焦任务", "等待审阅的任务", "正在进行的任务", "普通待办任务"} {
+		if !tt.HasText(title) {
+			t.Fatalf("expected %q visible in All Active view: %q", title, tt.Texts())
+		}
+	}
+
+	// Filter to 待审阅
+	if err := tt.Click("待审阅"); err != nil {
+		t.Fatalf("click review focus pill: %v", err)
+	}
+	tt.Frame()
+	if a.board.statusFilter != boardReview {
+		t.Fatalf("expected statusFilter=review, got %q", a.board.statusFilter)
+	}
+	if !tt.HasText("等待审阅的任务") || tt.HasText("正在进行的任务") || tt.HasText("普通待办任务") {
+		t.Fatalf("review filter mismatch: %q", tt.Texts())
+	}
+
+	// Filter to 进行中
+	if err := tt.Click("进行中"); err != nil {
+		t.Fatalf("click doing focus pill: %v", err)
+	}
+	tt.Frame()
+	if a.board.statusFilter != boardDoing || !tt.HasText("正在进行的任务") || tt.HasText("等待审阅的任务") {
+		t.Fatalf("doing filter mismatch: filter=%q texts=%q", a.board.statusFilter, tt.Texts())
+	}
+
+	// Return to 全部未完成
+	if err := tt.Click("全部未完成"); err != nil {
+		t.Fatalf("click all active pill: %v", err)
+	}
+	tt.Frame()
+	if a.board.statusFilter != "" || !tt.HasText("置顶聚焦任务") || !tt.HasText("普通待办任务") {
+		t.Fatalf("all active filter mismatch: filter=%q texts=%q", a.board.statusFilter, tt.Texts())
+	}
+}
+
+func TestBoardContextWallCardChecklistCommitAndCopyContext(t *testing.T) {
+	withTempBoardConfig(t)
+	_, created, err := boardAddTask(
+		"卡片直接交互验证",
+		"- [ ] 补齐检查项测试\n- [x] 完成数据模型",
+		boardDoing,
+		[]string{"/tmp/xylring"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitHash := "abcdef1234567890abcdef1234567890abcdef12"
+	if _, _, err := boardLinkCommit(created.ID, boardCommitLink{
+		Repo:    "/tmp/xylring",
+		Hash:    commitHash,
+		Subject: "feat: context wall card",
+		Agent:   "Codex",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddNote(created.ID, "断点：待验证内联勾选", "Codex", "GPT-5"); err != nil {
+		t.Fatal(err)
+	}
+
 	a := &app{
 		showBoard: true,
 		dispatch:  func(fn func()) { fn() },
@@ -317,56 +423,75 @@ func TestBoardCardDragDropBetweenColumns(t *testing.T) {
 	defer retireTester(tt)
 	tt.Frame()
 
-	cardBounds, ok := tt.Find("可拖拽任务卡片")
-	if !ok {
-		t.Fatalf("missing task card: %q", tt.Texts())
+	// 1. Toggle checklist item directly on card without opening drawer
+	if err := tt.Click("补齐检查项测试"); err != nil {
+		t.Fatalf("click checklist item on card: %v", err)
 	}
-	doingCol, ok := tt.Find("进行中")
-	if !ok {
-		t.Fatalf("missing doing column: %q", tt.Texts())
-	}
-
-	fromX := cardBounds.X + cardBounds.W/2
-	fromY := cardBounds.Y + cardBounds.H/2
-	toX := doingCol.X + doingCol.W/2
-	toY := doingCol.Y + 140
-
-	tt.Press(fromX, fromY)
-	for k := 1; k <= 4; k++ {
-		f := float32(k) / 4
-		tt.Move(fromX+(toX-fromX)*f, fromY+(toY-fromY)*f)
-	}
-	tt.Release(toX, toY)
 	tt.Frame()
-
+	if a.board.selectedID != "" {
+		t.Fatalf("toggling checklist item should not open drawer, selectedID=%q", a.board.selectedID)
+	}
 	bf, err := loadBoardFile()
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx := findBoardTaskIndex(bf.Tasks, created.ID)
-	if idx < 0 || bf.Tasks[idx].Status != boardDoing {
-		t.Fatalf("expected %s to move to doing after drag-drop, got %+v", created.ID, bf.Tasks)
+	items := parseBoardChecklist(bf.Tasks[0].Description)
+	if len(items) != 2 || !items[0].Checked {
+		t.Fatalf("expected first checklist item checked after click, got %+v (desc=%q)", items, bf.Tasks[0].Description)
 	}
+
+	// 2. Copy Agent Context action on card copies formatted context without opening drawer
+	if err := tt.Click("复制 Agent 上下文"); err != nil {
+		t.Fatalf("click copy agent context: %v", err)
+	}
+	tt.Frame()
 	if a.board.selectedID != "" {
-		t.Fatalf("dragging card should not open drawer, selectedID=%q", a.board.selectedID)
+		t.Fatalf("copying agent context should not open drawer, selectedID=%q", a.board.selectedID)
+	}
+	clip := tt.Clipboard()
+	if clip == "" || !slices.Contains([]string{created.ID}, created.ID) || !hasSubstr(clip, created.ID) || !hasSubstr(clip, "abcdef1") || !hasSubstr(clip, "断点：待验证内联勾选") {
+		t.Fatalf("unexpected copied agent context: %q", clip)
+	}
+
+	// 3. Pin action on card toggles Pinned without opening drawer
+	if err := tt.Click("置顶聚焦"); err != nil {
+		t.Fatalf("click pin on card: %v", err)
+	}
+	tt.Frame()
+	if a.board.selectedID != "" {
+		t.Fatalf("pinning card should not open drawer, selectedID=%q", a.board.selectedID)
+	}
+	bf, err = loadBoardFile()
+	if err != nil || !bf.Tasks[0].Pinned {
+		t.Fatalf("expected task pinned after click, got %+v err=%v", bf.Tasks, err)
+	}
+
+	// 4. Embedded recent commit chip click triggers openBoardCommit without opening drawer
+	if err := tt.Click("abcdef1 feat: context wall card"); err != nil {
+		t.Fatalf("click embedded commit chip: %v", err)
+	}
+	tt.Frame()
+	if a.board.selectedID != "" {
+		t.Fatalf("clicking embedded commit should not open drawer, selectedID=%q", a.board.selectedID)
 	}
 }
 
-func TestBoardCardDragReorderWithinAndAcrossColumns(t *testing.T) {
+func hasSubstr(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBoardContextWallDoneSectionCollapsedAndExpandable(t *testing.T) {
 	withTempBoardConfig(t)
-	if _, _, err := boardAddTask("待办任务三", "", boardTodo, nil); err != nil {
+	if _, _, err := boardAddTask("活跃进行中任务", "", boardDoing, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := boardAddTask("待办任务二", "", boardTodo, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := boardAddTask("待办任务一", "", boardTodo, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := boardAddTask("进行中任务二", "", boardDoing, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := boardAddTask("进行中任务一", "", boardDoing, nil); err != nil {
+	_, doneTask, err := boardAddTask("已完成低权重任务", "", boardDone, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -380,78 +505,38 @@ func TestBoardCardDragReorderWithinAndAcrossColumns(t *testing.T) {
 	defer retireTester(tt)
 	tt.Frame()
 
-	dragBetween := func(fromX, fromY, toX, toY float32) {
-		tt.Press(fromX, fromY)
-		for k := 1; k <= 4; k++ {
-			f := float32(k) / 4
-			tt.Move(fromX+(toX-fromX)*f, fromY+(toY-fromY)*f)
-		}
-		tt.Release(toX, toY)
-		tt.Frame()
+	// Collapsed by default: done task title is hidden
+	if a.board.doneExpanded {
+		t.Fatal("done section should be collapsed by default")
+	}
+	if tt.HasText("已完成低权重任务") {
+		t.Fatalf("done task should not be visible while collapsed: %q", tt.Texts())
 	}
 
-	titlesInCol := func(st boardStatus) []string {
-		bf, err := loadBoardFile()
-		if err != nil {
-			t.Fatal(err)
-		}
-		var out []string
-		for _, task := range bf.Tasks {
-			if task.Status == st {
-				out = append(out, task.Title)
-			}
-		}
-		return out
+	// Expand done section
+	if err := tt.Click("已完成"); err != nil {
+		t.Fatalf("click done section toggle: %v", err)
+	}
+	tt.Frame()
+	if !a.board.doneExpanded || !tt.HasText("已完成低权重任务") || !tt.HasText("归档已完成任务") {
+		t.Fatalf("done section should expand and show done task & archive action: expanded=%v texts=%q", a.board.doneExpanded, tt.Texts())
 	}
 
-	// 1. Drag adjacent first card ("待办任务一") onto second card ("待办任务二") -> swaps them.
-	c1, ok1 := tt.Find("待办任务一")
-	c2, ok2 := tt.Find("待办任务二")
-	if !ok1 || !ok2 {
-		t.Fatalf("missing todo cards: %q", tt.Texts())
+	// Quick restore button moves done task back to todo without opening drawer
+	if err := tt.Click("移回待办"); err != nil {
+		t.Fatalf("click restore done task: %v", err)
 	}
-	dragBetween(c1.X+c1.W/2, c1.Y+c1.H/2, c2.X+c2.W/2, c2.Y+c2.H/2)
-	if got := titlesInCol(boardTodo); !slices.Equal(got, []string{"待办任务二", "待办任务一", "待办任务三"}) {
-		t.Fatalf("after swapping first two cards, got %v", got)
-	}
-
-	// 2. Drag last card ("待办任务三") up onto top edge of first card ("待办任务二") -> moves to top.
-	c3, ok3 := tt.Find("待办任务三")
-	c2, ok2 = tt.Find("待办任务二")
-	if !ok2 || !ok3 {
-		t.Fatalf("missing todo cards before upward drag: %q", tt.Texts())
-	}
-	dragBetween(c3.X+c3.W/2, c3.Y+c3.H/2, c2.X+c2.W/2, c2.Y-4)
-	if got := titlesInCol(boardTodo); !slices.Equal(got, []string{"待办任务三", "待办任务二", "待办任务一"}) {
-		t.Fatalf("after dragging card up to top, got %v", got)
-	}
-
-	// 3. Drag first card ("待办任务三") down into empty scroll area below all cards in the same column -> moves to end.
-	c3, ok3 = tt.Find("待办任务三")
-	c1, ok1 = tt.Find("待办任务一")
-	if !ok3 || !ok1 {
-		t.Fatalf("missing todo cards before empty-space drag: %q", tt.Texts())
-	}
-	dragBetween(c3.X+c3.W/2, c3.Y+c3.H/2, c1.X+c1.W/2, c1.Y+c1.H+100)
-	if got := titlesInCol(boardTodo); !slices.Equal(got, []string{"待办任务二", "待办任务一", "待办任务三"}) {
-		t.Fatalf("after dragging card to end of column, got %v", got)
-	}
-
-	// 4. Drag "待办任务一" across columns onto top edge of "进行中任务二" -> lands between 进行中任务一 and 进行中任务二.
-	c1, ok1 = tt.Find("待办任务一")
-	d2, okD2 := tt.Find("进行中任务二")
-	if !ok1 || !okD2 {
-		t.Fatalf("missing cards for cross-column positioned drop: %q", tt.Texts())
-	}
-	dragBetween(c1.X+c1.W/2, c1.Y+c1.H/2, d2.X+d2.W/2, d2.Y-4)
-	if got := titlesInCol(boardTodo); !slices.Equal(got, []string{"待办任务二", "待办任务三"}) {
-		t.Fatalf("expected 待办任务一 removed from todo, got %v", got)
-	}
-	if got := titlesInCol(boardDoing); !slices.Equal(got, []string{"进行中任务一", "待办任务一", "进行中任务二"}) {
-		t.Fatalf("expected 待办任务一 inserted before 进行中任务二, got %v", got)
-	}
+	tt.Frame()
 	if a.board.selectedID != "" {
-		t.Fatalf("dragging card should not open drawer, selectedID=%q", a.board.selectedID)
+		t.Fatalf("restoring done task should not open drawer, selectedID=%q", a.board.selectedID)
+	}
+	bf, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := findBoardTaskIndex(bf.Tasks, doneTask.ID)
+	if idx < 0 || bf.Tasks[idx].Status != boardTodo {
+		t.Fatalf("expected %s restored to todo, got %+v", doneTask.ID, bf.Tasks)
 	}
 }
 
@@ -791,14 +876,17 @@ func TestBoardNoteEditDeleteAndReorder(t *testing.T) {
 	defer retireTester(tt)
 	tt.Frame()
 
-	// Drag first note down over the third note (near bottom edge) to reorder
+	// Drag first note down over the third note (near bottom edge) to reorder.
+	// Note: the latest note also appears on the card front on the left, so derive
+	// the third note's position inside the drawer from the first two drawer notes.
 	firstNote, ok1 := tt.Find("第一条备注")
-	thirdNote, ok3 := tt.Find("第三条备注")
-	if !ok1 || !ok3 {
+	secondNote, ok2 := tt.Find("第二条备注")
+	if !ok1 || !ok2 {
 		t.Fatalf("missing notes: %q", tt.Texts())
 	}
+	stepY := secondNote.Y - firstNote.Y
 	fromX, fromY := firstNote.X+firstNote.W/2, firstNote.Y+firstNote.H/2
-	toX, toY := thirdNote.X+thirdNote.W/2, thirdNote.Y+thirdNote.H+2
+	toX, toY := firstNote.X+firstNote.W/2, secondNote.Y+stepY+firstNote.H+2
 	tt.Press(fromX, fromY)
 	for k := 1; k <= 4; k++ {
 		f := float32(k) / 4
@@ -820,9 +908,13 @@ func TestBoardNoteEditDeleteAndReorder(t *testing.T) {
 	}
 
 	// Drag last note ("第一条备注") back up onto the first note ("第二条备注")
-	firstNote, _ = tt.Find("第一条备注")
-	topNote, _ := tt.Find("第二条备注")
-	fromX, fromY = firstNote.X+firstNote.W/2, firstNote.Y+firstNote.H/2
+	topNote, okTop := tt.Find("第二条备注")
+	midNote, okMid := tt.Find("第三条备注")
+	if !okTop || !okMid {
+		t.Fatalf("missing reordered notes: %q", tt.Texts())
+	}
+	stepY = midNote.Y - topNote.Y
+	fromX, fromY = topNote.X+topNote.W/2, midNote.Y+stepY+topNote.H/2
 	toX, toY = topNote.X+topNote.W/2, topNote.Y-2
 	tt.Press(fromX, fromY)
 	for k := 1; k <= 4; k++ {
