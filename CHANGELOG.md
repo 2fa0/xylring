@@ -1,3 +1,23 @@
+## 0.11.1 - 2026-11-26
+
+### 更新内容
+
+- 重构设置界面：新增侧栏导航、项目设置页与内联提交引用支持。
+- 修复仓库列表颜色筛选、排序及嵌套工作树归属，颜色标签与排序仅作用于顶层仓库分组。
+- 增强工作树移除与失效记录清理的安全校验。
+- 修复命令行启动时覆盖既有会话的问题，并支持配置目录增量迁移。
+- 修复 Windows 外部编辑器启动及非工作区右键菜单文案。
+- 完善发布产物校验与原子替换流程，更新 README 品牌名称与动态版本下载链接。
+
+### Changes
+
+- Refactor Settings with sidebar navigation, a project settings page, and inline commit reference support.
+- Fix repository list color filtering, sorting, and nested worktree grouping so color tags and sorting apply only to top-level repository groups.
+- Strengthen safety checks for worktree removal and stale record cleanup.
+- Preserve existing sessions when launching from the CLI and support incremental config directory migration.
+- Fix external editor launching on Windows and context menu labels outside workspaces.
+- Improve release artifact verification and atomic replacement, and update README branding and dynamic download links.
+
 ## 0.11.0
 
 ### 更新内容
