@@ -673,6 +673,7 @@ func (a *app) chrome(c *ui.Context) {
 			} else {
 				ui.Box(c).Grow(1).MinWidth(8)
 			}
+			a.commitScrollTopButton(c, tab)
 			disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
 			container := isDockerRepoPath(tab.path)
 			if container {
@@ -1775,6 +1776,22 @@ func (a *app) searchFilterBanner(c *ui.Context, tab *repoTab) {
 			msg := fmt.Sprintf(tr("正在按%s筛选：“%s”"), tr(tab.query.kind), tab.query.term)
 			ui.Text(c, msg).FontSize(12).TextColor(th.Text).Grow(1).SingleLine()
 		})
+}
+
+const commitScrollTopThreshold = 8
+
+func (a *app) commitScrollTopButton(c *ui.Context, tab *repoTab) {
+	if tab.unavailable || tab.contentTab != 0 || tab.rows() == 0 || (tab.diffMaximized && a.hasInspectBottom(tab)) {
+		return
+	}
+	first, _ := tab.list.Visible()
+	if first < commitScrollTopThreshold {
+		return
+	}
+	chromeIconButton(c, fmt.Sprintf("commit-scroll-top-%d", tab.id), "回到顶部", iconScrollTop).OnClick(func() {
+		tab.list.ScrollTo(0, ui.Start)
+		tab.list.Focus(c)
+	})
 }
 
 func (a *app) commitTableFooter(c *ui.Context, tab *repoTab) {

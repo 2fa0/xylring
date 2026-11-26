@@ -19,6 +19,7 @@ var (
 	iconDownload     = lucide.Download()
 	iconUpload       = lucide.Upload()
 	iconArrowDown    = lucide.ArrowDown()
+	iconScrollTop    = lucide.ArrowUpToLine()
 	iconChevronDown  = lucide.ChevronDown()
 	iconGitCompare   = lucide.GitCompare()
 	iconGitBranch    = lucide.GitBranch()
