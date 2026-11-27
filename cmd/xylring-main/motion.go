@@ -11,6 +11,8 @@ const (
 	motionPane  = 180 * time.Millisecond
 )
 
+var uiSpring = ui.Animation{Spring: ui.SpringOptions{Duration: 280 * time.Millisecond, Bounce: 0.12}}
+
 func colorMotion() ui.ElementTransition {
 	return ui.ElementTransition{Colors: true, Duration: motionColor, Ease: ui.EaseOut}
 }

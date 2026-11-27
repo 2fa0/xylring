@@ -758,7 +758,7 @@ type boardTaskDrag struct {
 	pinned bool
 }
 
-var boardSpring = ui.Animation{Spring: ui.SpringOptions{Duration: 280 * time.Millisecond, Bounce: 0.12}}
+var boardSpring = uiSpring
 
 func boardPageMotion() ui.ElementTransition {
 	// Keep the page opaque to avoid a window-sized offscreen render target.

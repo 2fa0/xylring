@@ -490,19 +490,25 @@ func (a *app) chromeBranchButton(c *ui.Context, tab *repoTab, sidebarOpen, unifi
 	if tab.branch != "" {
 		tip += "\n" + branchText
 	}
-	btn := ui.ButtonBase(c.Key("topbar-branch")).Height(28).Padding(0, 8).Gap(5).
-		Radius(th.Radius).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+	btn := ui.ButtonBase(c.Key("topbar-branch")).Height(28).Padding(0, 10).Gap(5).
+		Radius(14).AlignItems(ui.Center).Cursor(ui.CursorPointer).
 		Tooltip(tip).Label(label).MinWidth(0).Shrink(1).Transition(colorMotion())
 	if unified {
 		btn.MaxWidth(210)
 	} else {
 		btn.MaxWidthPercent(55)
 	}
+	defaultBg := ui.RGBA(15, 23, 42, 0.035)
+	if th.Dark {
+		defaultBg = ui.RGBA(255, 255, 255, 0.04)
+	}
 	switch {
 	case btn.Pressed():
-		btn.Background(th.SurfacePressed)
+		btn.Background(th.SurfacePressed).Border(1, th.Border.Alpha(0.75))
 	case btn.Hovered():
-		btn.Background(th.SurfaceHover)
+		btn.Background(th.SurfaceHover).Border(1, th.Border.Alpha(0.7))
+	default:
+		btn.Background(defaultBg).Border(1, th.Border.Alpha(0.5))
 	}
 	btn.Children(func() {
 		ui.Icon(c, iconGitBranch).Size(13, 13).TextColor(th.TextMuted).Shrink(0)
@@ -684,8 +690,7 @@ func (a *app) chrome(c *ui.Context) {
 				pushTip = tr("容器仓库暂不支持远程同步")
 			}
 			// 拉取会改本地代码，藏在菜单里点两下不亏；推送最常用，一颗按钮一步到位（再一次确认）。
-			chromeIconButton(c, "topbar-pull", "拉取或获取远程更新", iconDownload).
-				Tooltip(pullTip).
+			chromeSyncButton(c, "topbar-pull", "拉取或获取远程更新", pullTip, iconDownload, tab.behind, disabled).
 				Menu(func(m *ui.Menu) {
 					if m.Item(tr("获取远程更新")).Disabled(disabled).
 						Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
@@ -703,14 +708,36 @@ func (a *app) chrome(c *ui.Context) {
 					if m.Item(tr("获取选项…")).Disabled(disabled).Chosen() {
 						a.openFetch(tab)
 					}
-				}).Disabled(disabled)
-			if chromeIconButton(c, "topbar-push", "推送当前分支", iconUpload).
-				Tooltip(pushTip).
-				Disabled(disabled).Clicked() {
+				})
+			if chromeSyncButton(c, "topbar-push", "推送当前分支", pushTip, iconUpload, tab.ahead, disabled).Clicked() {
 				a.requestPush(tab)
 			}
 		})
 	})
+}
+
+func chromeSyncButton(c *ui.Context, key, name, tip string, icon *ui.SVG, count int, disabled bool) ui.Element {
+	if count > 0 && !disabled {
+		t := c.Theme()
+		b := ui.ButtonBase(c.Key(key)).Label(tr(name)).Tooltip(tip).
+			Height(26).Padding(0, 8).Gap(4).Radius(13).Center().Shrink(0).
+			Cursor(ui.CursorPointer).Transition(colorMotion())
+		bg := t.Accent.Alpha(0.12)
+		switch {
+		case b.Pressed():
+			bg = t.Accent.Alpha(0.22)
+		case b.Hovered():
+			bg = t.Accent.Alpha(0.18)
+		}
+		b.Background(bg).Border(1, t.Accent.Alpha(0.38))
+		b.Children(func() {
+			ui.Icon(c, icon).Size(14, 14).TextColor(t.Accent).Shrink(0)
+			ui.Text(c, fmt.Sprintf("%d", count)).FontSize(11.5).FontWeight(600).
+				FontFeatures("tnum").TextColor(t.Accent).SingleLine().Shrink(0)
+		})
+		return b
+	}
+	return chromeIconButton(c, key, name, icon).Tooltip(tip).Disabled(disabled)
 }
 
 func (a *app) globalAlertBanner(c *ui.Context, tab *repoTab) {

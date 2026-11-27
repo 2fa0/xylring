@@ -107,8 +107,8 @@ func fileTabIndicator(c *ui.Context, tab *repoTab) {
 func omniSearchField(c *ui.Context, tab *repoTab) (input ui.Element, submit bool) {
 	t := c.Theme()
 	busy := tab.loading && strings.TrimSpace(tab.searchText) == tab.query.term && tab.searchKind == tab.query.kind
-	root := ui.Row(c.Key("search-field")).Grow(1).MinWidth(0).Height(32).Padding(0, 4).Gap(4).
-		AlignItems(ui.Center).Radius(t.Radius).Background(t.Background).Transition(colorMotion())
+	root := ui.Row(c.Key("search-field")).Grow(1).MinWidth(0).Height(30).Padding(0, 6).Gap(4).
+		AlignItems(ui.Center).Radius(15).Background(t.Background).Transition(colorMotion())
 	root.Children(func() {
 		if busy {
 			ui.Spinner(c.Key("search-loading")).Size(16, 16).Margin(4).Shrink(0).Label(tr("正在搜索"))

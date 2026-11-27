@@ -625,63 +625,113 @@ func (a *app) omniSuggestionsPopover(c *ui.Context, t *repoTab, anchor ui.Elemen
 			return
 		}
 		ui.Scroll(c.Key(fmt.Sprintf("suggest-scroll-%d", t.id))).MaxHeight(320).FillWidth().Children(func() {
-			keySeen := map[string]int{}
-			for _, item := range items {
-				itemCopy := item
-				baseKey := itemCopy.kind + "\x00" + itemCopy.title
-				n := keySeen[baseKey]
-				keySeen[baseKey] = n + 1
-				rowKey := fmt.Sprintf("suggest-item-%d-%s-%d", t.id, baseKey, n)
-				row := ui.ButtonBase(c.Key(rowKey)).
-					FillWidth().
-					Shrink(0).
-					Padding(6, 10).
-					Radius(th.Radius).
-					Cursor(ui.CursorPointer).
-					Transition(colorMotion())
-				if row.Pressed() {
-					row.Background(th.SurfacePressed)
-				} else if row.Hovered() {
-					row.Background(th.SurfaceHover)
-				}
-				if row.Clicked() {
-					itemCopy.action()
-				}
-				row.Children(func() {
-					ui.Row(c).Gap(8).AlignItems(ui.Center).FillWidth().Children(func() {
-						if itemCopy.icon != nil {
-							ui.Icon(c, itemCopy.icon).Size(14, 14).TextColor(th.TextMuted).Shrink(0)
-						}
-						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-							ui.Text(c, func() string {
-								if itemCopy.kind == "搜索" || itemCopy.kind == "Agent" || itemCopy.kind == "模型" {
-									return trMessage(itemCopy.title)
-								}
-								return itemCopy.title
-							}()).FontSize(13).FontWeight(500).SingleLine().TextColor(th.Text)
-							if itemCopy.subtitle != "" {
-								ui.Text(c, tr(itemCopy.subtitle)).FontSize(11).SingleLine().TextColor(th.TextMuted)
+			ui.Column(c).FillWidth().Padding(4).Gap(2).Children(func() {
+				keySeen := map[string]int{}
+				for _, item := range items {
+					itemCopy := item
+					baseKey := itemCopy.kind + "\x00" + itemCopy.title
+					n := keySeen[baseKey]
+					keySeen[baseKey] = n + 1
+					rowKey := fmt.Sprintf("suggest-item-%d-%s-%d", t.id, baseKey, n)
+					row := ui.ButtonBase(c.Key(rowKey)).
+						FillWidth().
+						Shrink(0).
+						Padding(6, 10).
+						Radius(7).
+						Cursor(ui.CursorPointer).
+						Transition(colorMotion())
+					if row.Pressed() {
+						row.Background(th.SurfacePressed)
+					} else if row.Hovered() {
+						row.Background(th.SurfaceHover)
+					}
+					if row.Clicked() {
+						itemCopy.action()
+					}
+					row.Children(func() {
+						ui.Row(c).Gap(8).AlignItems(ui.Center).FillWidth().Children(func() {
+							if itemCopy.icon != nil {
+								ui.Icon(c, itemCopy.icon).Size(14, 14).TextColor(th.TextMuted).Shrink(0)
 							}
+							ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+								ui.Text(c, func() string {
+									if itemCopy.kind == "搜索" || itemCopy.kind == "Agent" || itemCopy.kind == "模型" {
+										return trMessage(itemCopy.title)
+									}
+									return itemCopy.title
+								}()).FontSize(13).FontWeight(500).SingleLine().TextColor(th.Text)
+								if itemCopy.subtitle != "" {
+									ui.Text(c, tr(itemCopy.subtitle)).FontSize(11).SingleLine().TextColor(th.TextMuted)
+								}
+							})
+							ui.Text(c, tr(itemCopy.kind)).FontSize(10).FontFeatures("tnum").
+								Background(th.Border.Alpha(0.4)).
+								Padding(1, 7).
+								Radius(9).
+								TextColor(th.TextMuted).
+								Shrink(0)
 						})
-						ui.Text(c, tr(itemCopy.kind)).FontSize(10).
-							Background(th.Border.Alpha(0.4)).
-							Padding(1, 6).
-							Radius(3).
-							TextColor(th.TextMuted).
-							Shrink(0)
 					})
-				})
-			}
+				}
+			})
 		})
 	})
 }
 
+type historyScopePillMatch struct{}
+
 func (a *app) historyScopeControls(c *ui.Context, t *repoTab) {
+	th := c.Theme()
 	scope := 0
 	if !t.query.hideRemote {
 		scope = 1
 	}
-	if ui.Segmented(c.Key("branch-visibility"), &scope, tr("本地分支"), tr("全部分支")).Label(tr("分支显示范围")).Shrink(0).Changed() {
+	trackBg := ui.RGBA(15, 23, 42, 0.045)
+	pillActiveBg := ui.Hex("#FFFFFF")
+	if th.Dark {
+		trackBg = ui.RGBA(255, 255, 255, 0.05)
+		pillActiveBg = ui.Hex("#232630")
+	}
+	seg := ui.SegmentedBase(c.Key("branch-visibility"), &scope, 2)
+	seg.Track.Height(28).Shrink(0).AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(14).
+		Background(trackBg).Border(1, th.Border.Alpha(0.55)).Label(tr("分支显示范围"))
+	seg.Track.Children(func() {
+		labels := [2]string{"本地分支", "全部分支"}
+		for i, name := range labels {
+			active := i == scope
+			lblText := tr(name)
+			s := seg.Segment(i).Label(lblText).Padding(0, 9).Radius(12).Center().
+				Cursor(ui.CursorPointer).Transition(colorMotion())
+			if !active && s.Hovered() {
+				s.Background(th.SurfaceHover.Alpha(0.7))
+			}
+			s.Children(func() {
+				if active {
+					pill := ui.Box(c.Key("branch-visibility-active-pill")).Absolute().Fill().
+						Radius(12).Background(pillActiveBg).
+						Border(1, th.Border.Alpha(0.55)).
+						IgnoreInput(true).ZIndex(0).
+						Transition(ui.ElementTransition{
+							Animation: &uiSpring,
+							Match:     historyScopePillMatch{},
+						})
+					if th.Dark {
+						pill.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
+					} else {
+						pill.Shadow(0, 1, 3, 0, ui.RGBA(15, 23, 42, 0.10))
+					}
+				}
+				fg := th.TextMuted
+				weight := 500
+				if active {
+					fg = th.Text
+					weight = 600
+				}
+				ui.Text(c, lblText).FontSize(12).FontWeight(weight).TextColor(fg).SingleLine().ZIndex(1)
+			})
+		}
+	})
+	if seg.Track.Changed() {
 		q := t.query
 		q.ref, q.hideRemote = "", scope == 0
 		a.changeScope(t, q)
@@ -791,26 +841,44 @@ func (a *app) scopeMenu(c *ui.Context, t *repoTab) {
 	}
 	th := c.Theme()
 	sel := ui.SelectBase(c.Key("history-scope"), &t.query.ref)
-	bg := th.Surface
-	if sel.Trigger.Pressed() {
-		bg = th.SurfacePressed
-	} else if sel.Trigger.Hovered() {
-		bg = th.SurfaceHover
+	activeRef := t.query.ref != ""
+	bg := ui.RGBA(15, 23, 42, 0.035)
+	if th.Dark {
+		bg = ui.RGBA(255, 255, 255, 0.04)
 	}
-	sel.Trigger.Padding(th.Space(1.5), th.Space(3)).Gap(th.Space(1.5)).Radius(th.Radius).
-		Background(bg).Border(1, th.Border).Justify(ui.SpaceBetween).MinWidth(88).MaxWidth(148).Shrink(0).Label(tr("筛选分支"))
+	borderCol := th.Border.Alpha(0.55)
+	fgCol := th.Text
+	chevronCol := th.TextMuted
+	fontWeight := 500
+	switch {
+	case activeRef:
+		bg = th.Accent.Alpha(0.11)
+		borderCol = th.Accent.Alpha(0.42)
+		fgCol = th.Accent
+		chevronCol = th.Accent
+		fontWeight = 600
+	case sel.Trigger.Pressed():
+		bg = th.SurfacePressed
+		borderCol = th.Border.Alpha(0.75)
+	case sel.Trigger.Hovered():
+		bg = th.SurfaceHover
+		borderCol = th.Border.Alpha(0.7)
+	}
+	sel.Trigger.Height(28).Padding(0, 10).Gap(5).Radius(14).
+		Background(bg).Border(1, borderCol).Justify(ui.SpaceBetween).AlignItems(ui.Center).
+		MinWidth(88).MaxWidth(156).Shrink(0).Label(tr("筛选分支")).Transition(colorMotion())
 	sel.Trigger.Children(func() {
-		ui.Text(c, label).SingleLine().MinWidth(0)
+		ui.Text(c, label).FontSize(12).FontWeight(fontWeight).TextColor(fgCol).SingleLine().MinWidth(0)
 		ui.Box(c).Size(th.Space(2.5), th.Space(2.5)).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
 			var path ui.Path
 			path.MoveTo(r.X+r.W*0.1, r.Y+r.H*0.3).LineTo(r.X+r.W*0.5, r.Y+r.H*0.7).LineTo(r.X+r.W*0.9, r.Y+r.H*0.3)
-			p.StrokePath(&path, 1.5, th.TextMuted)
+			p.StrokePath(&path, 1.5, chevronCol)
 		})
 	})
 	maxH := th.Space(70)
 	sel.Popup(func(panel ui.Element) {
-		panel.Margin(th.Space(1), 0, 0, 0).Padding(th.Space(1.5)).Radius(th.Radius+2).Background(th.Background).Border(1, th.Border).MinWidth(220)
-		panel.Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18))
+		panel.Margin(th.Space(1), 0, 0, 0).Padding(th.Space(1.5)).Radius(th.Radius+4).Background(th.Background).Border(1, th.Border).MinWidth(220)
+		panel.Shadow(0, 8, 24, -2, ui.RGBA(0, 0, 0, 0.22))
 		ui.SearchField(c.Key(fmt.Sprintf("branch-filter-%d", t.id)), &t.branchFilter).Placeholder(tr("搜索分支…")).Margin(0, 0, th.Space(1), 0)
 		filter := strings.ToLower(strings.TrimSpace(t.branchFilter))
 		ui.Scroll(c).MaxHeight(maxH).Children(func() {

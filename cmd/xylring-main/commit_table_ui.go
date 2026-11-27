@@ -306,7 +306,26 @@ func (a *app) commitScrollTopButton(c *ui.Context, tab *repoTab) {
 	if first < commitScrollTopThreshold {
 		return
 	}
-	chromeIconButton(c, fmt.Sprintf("commit-scroll-top-%d", tab.id), "回到顶部", iconScrollTop).OnClick(func() {
+	t := c.Theme()
+	b := ui.ButtonBase(c.Key(fmt.Sprintf("commit-scroll-top-%d", tab.id))).
+		Label(tr("回到顶部")).Tooltip(tr("回到顶部")).
+		Size(26, 26).Radius(13).Center().Shrink(0).
+		Cursor(ui.CursorPointer).Transition(fadeEnter())
+	fg := t.TextMuted
+	switch {
+	case b.Pressed():
+		b.Background(t.SurfacePressed).Border(1, t.Border.Alpha(0.8))
+		fg = t.Text
+	case b.Hovered():
+		b.Background(t.Accent.Alpha(0.12)).Border(1, t.Accent.Alpha(0.4))
+		fg = t.Accent
+	default:
+		b.Background(t.Surface).Border(1, t.Border.Alpha(0.65))
+	}
+	b.Children(func() {
+		ui.Icon(c, iconScrollTop).Size(14, 14).TextColor(fg)
+	})
+	b.OnClick(func() {
 		tab.list.ScrollTo(0, ui.Start)
 		tab.list.Focus(c)
 	})
