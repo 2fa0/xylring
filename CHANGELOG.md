@@ -1,3 +1,19 @@
+## 0.11.2 - 2026-11-27
+
+### 更新内容
+
+- 重构看板为并行 Agent 上下文墙：采用自适应多列瀑布流与状态聚焦胶囊，默认折叠已完成任务，支持任务置顶、按状态着色、卡片内勾选 Markdown 清单、最新提交跳图谱及一键复制 Agent 上下文。
+- 看板新增快速新建任务、排序偏好持久化、外部更新提示与可见区虚拟化渲染，并修复并发勾选、归档范围、搜索与窄窗口工具栏适配等审计缺陷。
+- 提交历史顶栏新增一键回顶按钮，回顶后保留列表焦点与当前选中项。
+- 抽离 `internal/board`、`internal/i18n` 与 `internal/provenance` 子包并拆分大型 UI 文件，优化代码结构。
+
+### Changes
+
+- Redesign the board as a parallel Agent context wall with adaptive masonry columns, status focus pills, collapsed completed tasks, pinning, semantic status colors, inline Markdown checklist toggling, latest commit graph jump, and one-click Agent context copy.
+- Add quick task creation, persisted board sort preferences, external update indicators, and visible-range masonry virtualization, while fixing concurrent checklist writes, archive scope, search state, and narrow toolbar layout.
+- Add a scroll-to-top button to the commit history top bar while preserving list focus and selection.
+- Extract `internal/board`, `internal/i18n`, and `internal/provenance` packages and split large UI files for cleaner structure.
+
 ## 0.11.1 - 2026-11-26
 
 ### 更新内容
