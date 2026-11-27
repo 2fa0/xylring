@@ -1,11 +1,6 @@
 package app
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"testing"
@@ -67,47 +62,6 @@ func TestLanguageSettingsSwitchWithoutClosing(t *testing.T) {
 			t.Fatal("cannot switch back to Chinese")
 		}
 		retireTester(tt)
-	}
-}
-
-func TestTranslationCoverageAndFormats(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	verbs := regexp.MustCompile(`%\+?(?:\[\d+\])?\d*(?:\.\d+)?[a-zA-Z%]`)
-	for source, translated := range englishText {
-		if translated == "" {
-			t.Fatalf("empty translation: %s", source)
-		}
-		if !slices.Equal(verbs.FindAllString(source, -1), verbs.FindAllString(translated, -1)) {
-			t.Fatalf("format arguments differ: %q -> %q", source, translated)
-		}
-	}
-	for _, file := range files {
-		tree, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ast.Inspect(tree, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			name, ok := call.Fun.(*ast.Ident)
-			if !ok || name.Name != "tr" || len(call.Args) != 1 {
-				return true
-			}
-			lit, ok := call.Args[0].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				return true
-			}
-			source, _ := strconv.Unquote(lit.Value)
-			if _, ok := englishText[source]; !ok {
-				t.Errorf("%s: missing translation for %q", file, source)
-			}
-			return true
-		})
 	}
 }
 

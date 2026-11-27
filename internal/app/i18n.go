@@ -14,6 +14,10 @@ func tr(text string) string {
 	return i18n.Tr(text)
 }
 
+func trMessage(text string) string {
+	return i18n.TrMessage(text)
+}
+
 func validLanguage(language string) bool {
 	return language == "" || language == "zh-Hans" || language == "en"
 }

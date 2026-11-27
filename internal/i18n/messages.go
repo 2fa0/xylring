@@ -1,4 +1,4 @@
-package app
+package i18n
 
 import (
 	"regexp"
@@ -16,20 +16,22 @@ type messagePattern struct {
 	weight int
 }
 
-var formatPlaceholder = regexp.MustCompile(`%(?:\[\d+\])?[-+# 0]*\d*(?:\.\d+)?[a-zA-Z%]`)
+// FormatPlaceholder matches printf-style verbs in translation source strings.
+var FormatPlaceholder = regexp.MustCompile(`%(?:\[\d+\])?[-+# 0]*\d*(?:\.\d+)?[a-zA-Z%]`)
+
 var messagePatterns struct {
 	sync.Once
 	english []messagePattern
 }
 
 func buildMessagePatterns() {
-	keys := make([]string, 0, len(englishText))
-	for source := range englishText {
+	keys := make([]string, 0, len(EnglishText))
+	for source := range EnglishText {
 		keys = append(keys, source)
 	}
 	sort.Strings(keys)
 	for _, source := range keys {
-		translated := englishText[source]
+		translated := EnglishText[source]
 		if p, ok := compileMessagePattern(source, translated); ok {
 			messagePatterns.english = append(messagePatterns.english, p)
 		}
@@ -38,8 +40,8 @@ func buildMessagePatterns() {
 }
 
 func compileMessagePattern(source, translated string) (messagePattern, bool) {
-	indices := formatPlaceholder.FindAllStringIndex(source, -1)
-	targetIndices := formatPlaceholder.FindAllStringIndex(translated, -1)
+	indices := FormatPlaceholder.FindAllStringIndex(source, -1)
+	targetIndices := FormatPlaceholder.FindAllStringIndex(translated, -1)
 	p := messagePattern{}
 	var pattern strings.Builder
 	pattern.WriteString(`(?s)^`)
@@ -97,8 +99,10 @@ func compileMessagePattern(source, translated string) (messagePattern, bool) {
 	return p, true
 }
 
-func trMessage(text string) string {
-	if !englishUI.Load() {
+// TrMessage translates a stored status or error string at the display boundary
+// while preserving captured user paths, refs, and commit content.
+func TrMessage(text string) string {
+	if !EnglishUI.Load() {
 		return text
 	}
 	messagePatterns.Do(buildMessagePatterns)
@@ -110,7 +114,7 @@ func translateMessage(text string, depth int) string {
 		return text
 	}
 
-	if translated, ok := englishText[text]; ok {
+	if translated, ok := EnglishText[text]; ok {
 		return translated
 	}
 	for _, p := range messagePatterns.english {
