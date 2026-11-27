@@ -915,7 +915,14 @@ func boardDeleteTask(id string) (boardFile, error) {
 	})
 }
 
-func boardArchiveDone() (boardFile, int, error) {
+// boardArchiveDoneTasks archives exactly the listed tasks that are still
+// completed and not archived, checking again under the file lock: a task
+// another client moved or archived meanwhile is left alone.
+func boardArchiveDoneTasks(ids []string) (boardFile, int, error) {
+	if len(ids) == 0 {
+		bf, err := loadBoardFile()
+		return bf, 0, err
+	}
 	if err := ensureCustomBoardDirExists(); err != nil {
 		return boardFile{}, 0, err
 	}
@@ -923,25 +930,27 @@ func boardArchiveDone() (boardFile, int, error) {
 	if err != nil {
 		return boardFile{}, 0, err
 	}
+	targets := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		targets[id] = true
+	}
 	count := 0
 	bf, err := mutateBoardFileAt(path, func(f *boardFile) error {
-		hasDone := false
-		for i := range f.Tasks {
-			if f.Tasks[i].Status == boardDone && !f.Tasks[i].Archived {
-				hasDone = true
-				break
-			}
+		eligible := func(t boardTask) bool {
+			return targets[t.ID] && t.Status == boardDone && !t.Archived
 		}
-		if hasDone {
+		hasAny := slices.ContainsFunc(f.Tasks, eligible)
+		if hasAny {
 			_ = snapshotBoardFileLocked(path, *f, "archive")
 		}
 		now := time.Now().UTC()
 		for i := range f.Tasks {
-			if f.Tasks[i].Status == boardDone && !f.Tasks[i].Archived {
-				f.Tasks[i].Archived = true
-				f.Tasks[i].UpdatedAt = now
-				count++
+			if !eligible(f.Tasks[i]) {
+				continue
 			}
+			f.Tasks[i].Archived = true
+			f.Tasks[i].UpdatedAt = now
+			count++
 		}
 		return nil
 	})
@@ -2033,23 +2042,62 @@ type boardChecklistItem struct {
 	LineIndex int
 	Checked   bool
 	Text      string
+	// MarkIndex is the byte offset in the line of the checkbox character
+	// itself, so toggling rewrites that byte and nothing else.
+	MarkIndex int
 }
 
-func matchBoardChecklistPrefix(rest string) (checked bool, ok bool) {
-	if len(rest) < 6 {
-		return false, false
-	}
-	if (rest[0] != '-' && rest[0] != '*') || rest[1] != ' ' || rest[2] != '[' || rest[4] != ']' || rest[5] != ' ' {
-		return false, false
-	}
-	switch rest[3] {
-	case ' ':
-		return false, true
-	case 'x', 'X':
-		return true, true
+// boardChecklistMarker reads a Markdown task item from a line without its
+// indentation: "- [ ]", "* [x]", "+ [ ]" or "1. [ ]". It reports where the
+// character between the brackets sits so a toggle touches only that byte.
+func boardChecklistMarker(rest string) (checked bool, markIndex int, ok bool) {
+	start := 0
+	switch {
+	case strings.HasPrefix(rest, "- "), strings.HasPrefix(rest, "* "), strings.HasPrefix(rest, "+ "):
+		start = 2
 	default:
-		return false, false
+		digits := 0
+		for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
+			digits++
+		}
+		if digits == 0 || digits > 9 || digits >= len(rest) || (rest[digits] != '.' && rest[digits] != ')') {
+			return false, 0, false
+		}
+		if digits+1 >= len(rest) || rest[digits+1] != ' ' {
+			return false, 0, false
+		}
+		start = digits + 2
 	}
+	if start+2 >= len(rest) || rest[start] != '[' || rest[start+2] != ']' {
+		return false, 0, false
+	}
+	if end := start + 3; end < len(rest) && rest[end] != ' ' && rest[end] != '\t' {
+		return false, 0, false
+	}
+	switch rest[start+1] {
+	case ' ':
+		return false, start + 1, true
+	case 'x', 'X':
+		return true, start + 1, true
+	default:
+		return false, 0, false
+	}
+}
+
+// boardFenceDelimiter reports the code fence a line opens or closes, so
+// checklist examples inside fenced code are not taken for real items.
+func boardFenceDelimiter(trimmed string) string {
+	if len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
+		return ""
+	}
+	n := 0
+	for n < len(trimmed) && trimmed[n] == trimmed[0] {
+		n++
+	}
+	if n < 3 {
+		return ""
+	}
+	return trimmed[:n]
 }
 
 func parseBoardChecklist(desc string) []boardChecklistItem {
@@ -2058,45 +2106,114 @@ func parseBoardChecklist(desc string) []boardChecklistItem {
 	}
 	lines := strings.Split(desc, "\n")
 	var items []boardChecklistItem
+	fence := ""
 	for i, line := range lines {
-		trimmed := strings.TrimLeft(line, " \t")
-		checked, ok := matchBoardChecklistPrefix(trimmed)
+		body := strings.TrimLeft(line, " \t")
+		body = strings.TrimSuffix(body, "\r")
+		trimmed := strings.TrimSpace(body)
+		if delim := boardFenceDelimiter(trimmed); delim != "" {
+			switch {
+			case fence == "":
+				fence = delim
+			case delim[0] == fence[0] && len(delim) >= len(fence):
+				fence = ""
+			}
+			continue
+		}
+		if fence != "" {
+			continue
+		}
+		checked, mark, ok := boardChecklistMarker(body)
 		if !ok {
 			continue
 		}
-		text := strings.TrimSpace(strings.TrimSuffix(trimmed[6:], "\r"))
+		lead := len(line) - len(strings.TrimLeft(line, " \t"))
 		items = append(items, boardChecklistItem{
 			LineIndex: i,
 			Checked:   checked,
-			Text:      text,
+			Text:      strings.TrimSpace(body[mark+2:]),
+			MarkIndex: lead + mark,
 		})
 	}
 	return items
 }
 
-func toggleBoardChecklistLine(desc string, lineIndex int) string {
-	if desc == "" || lineIndex < 0 {
-		return desc
+// findBoardChecklistItem locates the item the user acted on: the line it sat
+// on with the same text first, then the only item carrying that text. A
+// description changed by another client fails instead of toggling a different
+// line, and so does one whose checkbox already moved.
+func findBoardChecklistItem(items []boardChecklistItem, lineIndex int, text string) (boardChecklistItem, bool) {
+	for _, item := range items {
+		if item.LineIndex == lineIndex && item.Text == text {
+			return item, true
+		}
 	}
+	var match boardChecklistItem
+	found := 0
+	for _, item := range items {
+		if item.Text == text {
+			match = item
+			found++
+		}
+	}
+	if found == 1 {
+		return match, true
+	}
+	return boardChecklistItem{}, false
+}
+
+func toggleBoardChecklistMarker(desc string, item boardChecklistItem) (string, bool) {
 	lines := strings.Split(desc, "\n")
-	if lineIndex >= len(lines) {
-		return desc
+	if item.LineIndex < 0 || item.LineIndex >= len(lines) || item.MarkIndex < 0 || item.MarkIndex >= len(lines[item.LineIndex]) {
+		return desc, false
 	}
-	line := lines[lineIndex]
-	trimmed := strings.TrimLeft(line, " \t")
-	checked, ok := matchBoardChecklistPrefix(trimmed)
-	if !ok {
-		return desc
-	}
-	leadLen := len(line) - len(trimmed)
 	mark := byte('x')
-	if checked {
+	if item.Checked {
 		mark = ' '
 	}
+	line := lines[item.LineIndex]
 	b := []byte(line)
-	b[leadLen+3] = mark
-	lines[lineIndex] = string(b)
-	return strings.Join(lines, "\n")
+	b[item.MarkIndex] = mark
+	lines[item.LineIndex] = string(b)
+	return strings.Join(lines, "\n"), true
+}
+
+// toggleBoardChecklistItem flips the expected item in desc, leaving every
+// other byte alone. It fails when the item is gone, ambiguous, or no longer
+// in the state the caller saw.
+func toggleBoardChecklistItem(desc string, lineIndex int, text string, checked bool) (string, bool) {
+	item, ok := findBoardChecklistItem(parseBoardChecklist(desc), lineIndex, text)
+	if !ok || item.Checked != checked {
+		return desc, false
+	}
+	return toggleBoardChecklistMarker(desc, item)
+}
+
+// boardToggleChecklistTask flips one checklist item in the description stored
+// on disk. The line and text identify the item, and checked is the state the
+// user saw: a description another client changed, or an item that moved,
+// fails instead of overwriting it.
+func boardToggleChecklistTask(id string, lineIndex int, text string, checked bool) (boardFile, boardTask, error) {
+	var out boardTask
+	bf, err := mutateBoardFile(func(f *boardFile) error {
+		idx := findBoardTaskIndex(f.Tasks, id)
+		if idx < 0 {
+			return fmt.Errorf("未找到看板任务: %s", id)
+		}
+		t := f.Tasks[idx]
+		next, ok := toggleBoardChecklistItem(t.Description, lineIndex, text, checked)
+		if !ok {
+			return errors.New("清单项已被其他程序改动，请重新打开任务再试")
+		}
+		if next != t.Description {
+			t.Description = next
+			t.UpdatedAt = time.Now().UTC()
+			f.Tasks[idx] = t
+		}
+		out = t
+		return nil
+	})
+	return bf, out, err
 }
 
 func formatBoardAgentContext(task boardTask) string {
@@ -2111,6 +2228,15 @@ func formatBoardAgentContext(task boardTask) string {
 		for _, r := range repos {
 			fmt.Fprintf(&sb, "- %s\n", r)
 		}
+	}
+
+	// The whole description goes out: background, constraints and acceptance
+	// criteria may sit around a checklist, and handoff text must not depend on
+	// whether the description happens to hold one.
+	if desc := strings.TrimSpace(task.Description); desc != "" {
+		sb.WriteString("\nDescription:\n")
+		sb.WriteString(desc)
+		sb.WriteByte('\n')
 	}
 
 	items := parseBoardChecklist(task.Description)
@@ -2129,21 +2255,11 @@ func formatBoardAgentContext(task boardTask) string {
 		} else {
 			sb.WriteString("\nChecklist: all items completed.\n")
 		}
-	} else if desc := strings.TrimSpace(task.Description); desc != "" {
-		runes := []rune(desc)
-		if len(runes) > 600 {
-			desc = strings.TrimSpace(string(runes[:600])) + "…"
-		}
-		sb.WriteString("\nDescription:\n")
-		sb.WriteString(desc)
-		sb.WriteByte('\n')
 	}
 
-	if len(task.Commits) > 0 {
+	if commits := boardNewestCommits(task.Commits, 2); len(commits) > 0 {
 		sb.WriteString("\nRecent Commits:\n")
-		start := max(0, len(task.Commits)-2)
-		for i := len(task.Commits) - 1; i >= start; i-- {
-			cm := task.Commits[i]
+		for _, cm := range commits {
 			short := cm.Hash
 			if len(short) > 7 {
 				short = short[:7]
@@ -2162,8 +2278,7 @@ func formatBoardAgentContext(task boardTask) string {
 		}
 	}
 
-	if len(task.Notes) > 0 {
-		latest := task.Notes[len(task.Notes)-1]
+	if latest, ok := latestBoardNote(task.Notes); ok {
 		author := latest.Author
 		if author == "" {
 			author = "human"
@@ -2176,9 +2291,70 @@ func formatBoardAgentContext(task boardTask) string {
 		}
 	}
 
-	sb.WriteString("\nXylring Board CLI:\n")
-	fmt.Fprintf(&sb, "- xylring board update %s --status review\n", task.ID)
-	fmt.Fprintf(&sb, "- xylring board note %s \"<progress>\" --agent \"<agent>\" --model \"<model>\"\n", task.ID)
+	// Only standard task IDs can be pasted back into a shell: an imported or
+	// hand-edited ID would make the samples fail or run something else.
+	if isStandardBoardTaskID(task.ID) {
+		sb.WriteString("\nXylring Board CLI:\n")
+		fmt.Fprintf(&sb, "- xylring board update %s --status review\n", task.ID)
+		fmt.Fprintf(&sb, "- xylring board note %s \"<progress>\" --agent \"<agent>\" --model \"<model>\"\n", task.ID)
+	}
 	return strings.TrimRight(sb.String(), "\n")
 }
 
+// isStandardBoardTaskID reports whether id is one the CLI generates: T-
+// followed by a positive decimal number without padding.
+func isStandardBoardTaskID(id string) bool {
+	digits, ok := strings.CutPrefix(id, "T-")
+	if !ok || digits == "" || len(digits) > 12 || digits[0] == '0' {
+		return false
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return false
+		}
+	}
+	n, err := strconv.Atoi(digits)
+	return err == nil && n > 0 && strconv.Itoa(n) == digits
+}
+
+// latestBoardNote picks the note with the most recent effective time, and
+// the later one in the list on a tie. Notes saved without times keep their
+// stored order, as older clients wrote them.
+func latestBoardNote(notes []boardNote) (boardNote, bool) {
+	if len(notes) == 0 {
+		return boardNote{}, false
+	}
+	best := notes[len(notes)-1]
+	bestTime := best.displayTime()
+	for i := len(notes) - 2; i >= 0; i-- {
+		t := notes[i].displayTime()
+		if t.After(bestTime) {
+			best, bestTime = notes[i], t
+		}
+	}
+	return best, true
+}
+
+// boardNewestCommits returns up to n commit links, most recently linked
+// first. Links saved without a time keep their stored order.
+func boardNewestCommits(links []boardCommitLink, n int) []boardCommitLink {
+	if n <= 0 || len(links) == 0 {
+		return nil
+	}
+	order := make([]int, len(links))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := links[order[i]].AddedAt, links[order[j]].AddedAt
+		if a.Equal(b) {
+			return order[i] > order[j]
+		}
+		return a.After(b)
+	})
+	out := make([]boardCommitLink, 0, min(n, len(order)))
+	for _, idx := range order[:min(n, len(order))] {
+		out = append(out, links[idx])
+	}
+	return out
+}

@@ -130,6 +130,8 @@ xylring board link <ID> <COMMIT_HASH>
 xylring board note <ID> "Traced it to the token refresh path"
 ```
 
+The app and the command share one `board.json`. After upgrading the app, upgrade the `xylring` command on the same machine: an older command rewrites that file whole and drops fields it does not know, such as the pinned state. When both versions are in use, check the board again from the new command before relying on it.
+
 ---
 
 ## 🐳 Container repositories (first version)

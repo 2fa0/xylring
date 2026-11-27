@@ -1841,7 +1841,7 @@ func TestBoardCraftWallShowcasePreviews(t *testing.T) {
 					tReview.ID: time.Now(),
 				},
 				commitValid: map[string]bool{
-					boardCommitCacheKey("/tmp/xylring", "762ae643754c80756f7de6346b93e4523d70dd64"):    true,
+					boardCommitCacheKey("/tmp/xylring", "762ae643754c80756f7de6346b93e4523d70dd64"):     true,
 					boardCommitCacheKey("/tmp/mygo-engine", "2222222222222222222222222222222222222222"): true,
 				},
 			},
@@ -1984,5 +1984,23 @@ func TestBoardWallSortModesAndSessionPersistence(t *testing.T) {
 	fallbackApp.applySharedSessionState(savedSession{BoardSort: "unknown-mode"})
 	if fallbackApp.board.sortMode != boardSortDefault {
 		t.Fatalf("expected unknown sort to fall back to default, got %q", fallbackApp.board.sortMode)
+	}
+
+	// The mode also survives the file: write the session the app saves, read it
+	// back the way a restart does, and restore the mode from what came back.
+	sessionPath, err := configFile("session.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionPath, []byte(`{"board_sort":"due","repos":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := loadSession(); loaded.BoardSort != string(boardSortDue) {
+		t.Fatalf("session file kept board_sort=%q, want %q", loaded.BoardSort, boardSortDue)
+	}
+	var restarted app
+	restarted.applySharedSessionState(loadSession())
+	if restarted.board.sortMode != boardSortDue {
+		t.Fatalf("restored sort after reopening the session = %q, want %q", restarted.board.sortMode, boardSortDue)
 	}
 }

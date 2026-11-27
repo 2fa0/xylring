@@ -449,6 +449,8 @@
   "已开启（v1）": "Enabled (v1)",
   "已归档": "Archived",
   "已归档 %d 个任务": "Archived %d tasks",
+  "已创建任务 %s": "Created task %s",
+  "状态筛选": "Status filter",
   "已恢复 %d 个任务": "Restored %d tasks",
   "已成功卸载命令行工具 (%s)": "Command-line tool uninstalled (%s)",
   "已成功安装 'xylring' 命令到: %s": "Installed 'xylring' command at: %s",

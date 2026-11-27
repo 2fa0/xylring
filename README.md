@@ -130,6 +130,8 @@ xylring board link <ID> <COMMIT_HASH>
 xylring board note <ID> "定位到 token 刷新逻辑"
 ```
 
+桌面端与命令行共用同一份 `board.json`。升级桌面端后请同步升级同一台机器上的 `xylring` 命令：旧版命令会整份重写该文件，遇到它不认识的字段（例如置顶状态）会直接丢弃。混用新旧版本时，退出看板前先用新版命令确认结果。
+
 ---
 
 ## 🐳 容器仓库（第一版）

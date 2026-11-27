@@ -108,6 +108,14 @@ type boardState struct {
 	commitValid        map[string]bool
 	checkingLinks      map[string]bool
 	recentUpdated      map[string]time.Time
+	dataGen            int
+	wall               boardWallLayout
+	wallScroll         ui.ScrollState
+	wallHandles        map[string]*ui.Handle
+	wallHeights        map[string]boardWallHeight
+	wallPending        []boardWallPending
+	refreshAt          time.Time
+	refreshPending     bool
 }
 
 func (a *app) boardModalOpen() bool {
@@ -223,6 +231,10 @@ func (a *app) reloadBoardSync() {
 
 func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
 	a.board.writeGen++
+	// Every view derived from the tasks is stale now; the wall rebuilds from
+	// this generation and keeps its measured card heights per task.
+	a.board.dataGen++
+	a.board.wall.valid = false
 	// The previous file is only needed to tell what the open drawer's drafts
 	// differ from, so keep that one task and let the rest go before the new
 	// file is held: the two files no longer sit side by side in memory.
@@ -1450,6 +1462,7 @@ type boardFocusPillMatch struct{}
 type boardTaskDrag struct {
 	taskID string
 	status boardStatus
+	pinned bool
 }
 
 var boardSpring = ui.Animation{Spring: ui.SpringOptions{Duration: 280 * time.Millisecond, Bounce: 0.12}}
@@ -1583,8 +1596,7 @@ func (a *app) boardFilteredByStatus() ([][]boardTask, int) {
 func (a *app) boardScreen(c *ui.Context) {
 	a.ensureBoardLoaded()
 	t := c.Theme()
-	cols, total := a.boardFilteredByStatus()
-	hasFilter := a.board.repoFilter != "" || strings.TrimSpace(a.board.search) != ""
+	cols, _ := a.boardFilteredByStatus()
 	canvasBg := ui.Hex("#F4F3EF")
 	if t.Dark {
 		canvasBg = ui.Hex("#111215")
@@ -1650,20 +1662,9 @@ func (a *app) boardScreen(c *ui.Context) {
 					}
 				})
 			}
-			if hasFilter && total == 0 {
-				ui.Row(c.Key("board-filter-empty")).FillWidth().Padding(6, 16).Gap(8).AlignItems(ui.Center).
-					Background(t.Surface.Alpha(0.65)).BorderWidth(0, 0, 1, 0).BorderColor(t.Border.Alpha(0.6)).Children(func() {
-					ui.Icon(c, iconSearch).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
-					ui.Text(c, tr("没有匹配的任务")).FontSize(12.5).TextColor(t.TextMuted).Grow(1).MinWidth(0)
-					if ui.Button(c.Key("board-clear-filter"), tr("清除筛选")).Padding(2, 8).FontSize(12).Clicked() {
-						a.board.repoFilter = ""
-						a.board.search = ""
-					}
-				})
-			}
 			a.boardStatusFocusBar(c, cols)
 			ui.Box(c.Key("board-body")).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
-				a.boardContextWall(c, cols, hasFilter)
+				a.boardContextWall(c)
 			})
 		})
 	}
@@ -1857,103 +1858,114 @@ func (a *app) boardStatusFocusBar(c *ui.Context, cols [][]boardTask) {
 		pillActiveBg = ui.Hex("#232630")
 	}
 
-	ui.Row(c.Key("board-focus-bar")).FillWidth().Padding(14, 20, 4, 20).Gap(12).
-		AlignItems(ui.Center).Shrink(0).Children(func() {
-		ui.Row(c.Key("board-focus-track")).Padding(3).Gap(2).Radius(16).
-			Background(trackBg).Border(1, t.Border.Alpha(0.5)).AlignItems(ui.Center).Shrink(0).Children(func() {
-			focusPill := func(id, label string, st boardStatus, count int) {
-				active := a.board.statusFilter == st
-				btn := ui.ButtonBase(c.Key("board-focus-"+id)).
-					Label(tr(label)).
-					Height(26).Padding(0, 11).Radius(13).
-					AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).
-					Transition(colorMotion())
+	// The pills, the sort menu and the quick capture share one row while there
+	// is room; below that the pills get their own row, wrapping if they must,
+	// so no control is pushed past the window's edge.
+	stacked := availW < 860
+	focusPill := func(id, label string, st boardStatus, count int) {
+		active := a.board.statusFilter == st
+		btn := ui.ButtonBase(c.Key("board-focus-"+id)).
+			Label(tr(label)).
+			Role(ui.RoleTab).
+			AccessSelected(active).
+			Height(26).Padding(0, 11).Radius(13).
+			AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).
+			Transition(colorMotion())
 
-				var dropHover bool
-				if st != "" {
-					if dragged, over := ui.DragOver[boardTaskDrag](btn); over && dragged.status != st {
-						dropHover = true
-					}
-				}
+		var dropHover bool
+		if st != "" {
+			if dragged, over := ui.DragOver[boardTaskDrag](btn); over && dragged.status != st {
+				dropHover = true
+			}
+		}
 
-				stCol := boardStatusColor(c, st)
-				fg := t.TextMuted
-				countFg := t.TextMuted.Alpha(0.75)
-				switch {
-				case dropHover:
-					btn.Background(stCol.Alpha(0.18)).Border(1.5, stCol)
-					fg = stCol
-					countFg = stCol
-				case active:
-					if st == "" {
-						fg = t.Text
-						countFg = t.TextMuted
-					} else {
-						fg = stCol
-						countFg = stCol
-					}
-				case btn.Pressed():
-					btn.Background(t.SurfacePressed.Alpha(0.6))
-					fg = t.Text
-				case btn.Hovered():
-					btn.Background(t.SurfaceHover.Alpha(0.7))
-					fg = t.Text
-				}
+		stCol := boardStatusColor(c, st)
+		fg := t.TextMuted
+		countFg := t.TextMuted.Alpha(0.75)
+		switch {
+		case dropHover:
+			btn.Background(stCol.Alpha(0.18)).Border(1.5, stCol)
+			fg = stCol
+			countFg = stCol
+		case active:
+			if st == "" {
+				fg = t.Text
+				countFg = t.TextMuted
+			} else {
+				fg = stCol
+				countFg = stCol
+			}
+		case btn.Pressed():
+			btn.Background(t.SurfacePressed.Alpha(0.6))
+			fg = t.Text
+		case btn.Hovered():
+			btn.Background(t.SurfaceHover.Alpha(0.7))
+			fg = t.Text
+		}
 
-				btn.Children(func() {
-					if active && !dropHover {
-						pill := ui.Box(c.Key("board-focus-active-pill")).Absolute().Fill().
-							Radius(13).Background(pillActiveBg).
-							IgnoreInput(true).ZIndex(0).
-							Transition(ui.ElementTransition{
-								Animation: &boardSpring,
-								Match:     boardFocusPillMatch{},
-							})
-						if st != "" {
-							pill.Border(1, stCol.Alpha(0.42))
-						} else {
-							pill.Border(1, t.Border.Alpha(0.55))
-						}
-						if t.Dark {
-							pill.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
-						} else {
-							pill.Shadow(0, 1, 3, 0, ui.RGBA(15, 23, 42, 0.10))
-						}
-					}
-					ui.Row(c).AlignItems(ui.Center).Gap(6).ZIndex(1).Children(func() {
-						if st != "" {
-							boardStatusDot(c, st, 7)
-						}
-						lbl := ui.Text(c, tr(label)).FontSize(12.5).TextColor(fg).SingleLine()
-						if active || dropHover {
-							lbl.FontWeight(600)
-						} else {
-							lbl.FontWeight(500)
-						}
-						ui.Text(c, fmt.Sprintf("%d", count)).FontSize(11.5).FontFeatures("tnum").
-							TextColor(countFg).SingleLine()
+		btn.Children(func() {
+			if active && !dropHover {
+				pill := ui.Box(c.Key("board-focus-active-pill")).Absolute().Fill().
+					Radius(13).Background(pillActiveBg).
+					IgnoreInput(true).ZIndex(0).
+					Transition(ui.ElementTransition{
+						Animation: &boardSpring,
+						Match:     boardFocusPillMatch{},
 					})
-				})
-
 				if st != "" {
-					if dropped, ok := ui.Drop[boardTaskDrag](btn); ok && dropped.status != st {
-						target := st
-						a.applyBoardTaskPatch(dropped.taskID, boardTaskPatch{Status: &target})
-					}
+					pill.Border(1, stCol.Alpha(0.42))
+				} else {
+					pill.Border(1, t.Border.Alpha(0.55))
 				}
-				if btn.Clicked() {
-					a.board.statusFilter = st
+				if t.Dark {
+					pill.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
+				} else {
+					pill.Shadow(0, 1, 3, 0, ui.RGBA(15, 23, 42, 0.10))
 				}
 			}
+			ui.Row(c).AlignItems(ui.Center).Gap(6).ZIndex(1).Children(func() {
+				if st != "" {
+					boardStatusDot(c, st, 7)
+				}
+				lbl := ui.Text(c, tr(label)).FontSize(12.5).TextColor(fg).SingleLine()
+				if active || dropHover {
+					lbl.FontWeight(600)
+				} else {
+					lbl.FontWeight(500)
+				}
+				ui.Text(c, fmt.Sprintf("%d", count)).FontSize(11.5).FontFeatures("tnum").
+					TextColor(countFg).SingleLine()
+			})
+		})
 
+		if st != "" {
+			if dropped, ok := ui.Drop[boardTaskDrag](btn); ok && dropped.status != st {
+				target := st
+				a.applyBoardTaskPatch(dropped.taskID, boardTaskPatch{Status: &target})
+			}
+		}
+		if btn.Clicked() {
+			a.board.statusFilter = st
+		}
+	}
+
+	pills := func(fill bool) {
+		track := ui.Row(c.Key("board-focus-track")).Padding(3).Gap(2).Radius(16).
+			Role(ui.RoleTabList).Label(tr("状态筛选")).
+			Background(trackBg).Border(1, t.Border.Alpha(0.5)).AlignItems(ui.Center)
+		if fill {
+			track.FillWidth().Wrap()
+		} else {
+			track.Shrink(0)
+		}
+		track.Children(func() {
 			focusPill("all", "全部未完成", "", activeTotal)
 			focusPill("review", "待审阅", boardReview, reviewCount)
 			focusPill("doing", "进行中", boardDoing, doingCount)
 			focusPill("todo", "待办", boardTodo, todoCount)
 		})
-
-		ui.Box(c).Grow(1).MinWidth(8)
-
+	}
+	right := func() {
 		ui.Row(c.Key("board-focus-right")).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
 			sortLabel := tr(boardSortLabel(a.board.sortMode))
 			isCustomSort := a.board.sortMode != boardSortDefault
@@ -2039,6 +2051,23 @@ func (a *app) boardStatusFocusBar(c *ui.Context, cols [][]boardTask) {
 				}
 			}
 		})
+	}
+	bar := ui.Column(c.Key("board-focus-bar")).FillWidth().Padding(14, 20, 4, 20).Gap(8).Shrink(0)
+	bar.Children(func() {
+		if stacked {
+			ui.Row(c.Key("board-focus-row-pills")).FillWidth().Children(func() {
+				pills(true)
+			})
+			ui.Row(c.Key("board-focus-row-controls")).FillWidth().Justify(ui.End).Children(func() {
+				right()
+			})
+			return
+		}
+		ui.Row(c.Key("board-focus-row")).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+			pills(false)
+			ui.Box(c).Grow(1).MinWidth(8)
+			right()
+		})
 	})
 }
 
@@ -2057,18 +2086,27 @@ func (a *app) submitQuickBoardTask() {
 	}
 	a.board.quickSaving = true
 	a.board.quickTitle = ""
+	var created boardTask
 	a.changeBoard(func() (boardFile, error) {
-		bf, _, err := boardAddTaskWithOptions(boardAddTaskOptions{
+		bf, task, err := boardAddTaskWithOptions(boardAddTaskOptions{
 			Title:  title,
 			Status: status,
 			Repos:  repos,
 		})
+		created = task
 		return bf, err
 	}, func(err error) {
 		a.board.quickSaving = false
 		if err != nil {
+			// The draft stays so nothing typed is lost.
 			a.board.quickTitle = title
 			a.setBanner(err.Error(), "")
+			return
+		}
+		if created.ID != "" {
+			// The new card can be hidden by the search or the status focus; the
+			// task number says it was created either way.
+			a.pendingToast = fmt.Sprintf(tr("已创建任务 %s"), created.ID)
 		}
 	})
 }
@@ -2263,7 +2301,7 @@ func boardMasonryColumnCount(availW float32) int {
 	}
 }
 
-func estimateBoardCardHeight(task boardTask) int {
+func estimateBoardCardHeight(task boardTask, checklistItems int) int {
 	h := 96
 	if len([]rune(task.Title)) > 24 {
 		h += 22
@@ -2272,10 +2310,10 @@ func estimateBoardCardHeight(task boardTask) int {
 	if task.Priority != boardPriorityNone || hasDue {
 		h += 28
 	}
-	if items := parseBoardChecklist(task.Description); len(items) > 0 {
-		shown := min(len(items), 5)
+	if checklistItems > 0 {
+		shown := min(checklistItems, 5)
 		h += 18 + shown*24 + 8
-		if len(items) > 5 {
+		if checklistItems > 5 {
 			h += 18
 		}
 	} else if strings.TrimSpace(task.Description) != "" {
@@ -2290,121 +2328,524 @@ func estimateBoardCardHeight(task boardTask) int {
 	return h
 }
 
-func distributeBoardMasonry(tasks []boardTask, numCols int) [][]boardTask {
-	if numCols < 1 {
-		numCols = 1
-	}
-	columns := make([][]boardTask, numCols)
-	heights := make([]int, numCols)
-	for _, task := range tasks {
-		best := 0
-		for i := 1; i < numCols; i++ {
-			if heights[i] < heights[best] {
-				best = i
-			}
-		}
-		columns[best] = append(columns[best], task)
-		heights[best] += estimateBoardCardHeight(task) + 14
-	}
-	return columns
+// boardWallCard is one card of the wall, with everything only the task's own
+// data decides kept: the parsed checklist, the repositories, and the height
+// the card took when it was last built.
+type boardWallCard struct {
+	task      boardTask
+	repos     []string
+	items     []boardChecklistItem
+	signature uint64
+	height    float32
+	measured  bool
+	y         float32
 }
 
-func (a *app) boardContextWall(c *ui.Context, cols [][]boardTask, hasFilter bool) {
-	t := c.Theme()
+// boardWallHeight remembers the height a card's content took at a width.
+type boardWallHeight struct {
+	signature uint64
+	width     float32
+	height    float32
+}
+
+type boardWallPending struct {
+	id        string
+	signature uint64
+}
+
+// boardWallKey is everything the built wall depends on: the board data it
+// shows and the place it shows it in.
+type boardWallKey struct {
+	filter  boardFilterKey
+	status  boardStatus
+	sort    boardSortMode
+	dataGen int
+	width   int
+}
+
+// boardWallLayout keeps the sorted, distributed and measured wall between
+// frames, so a frame builds only the cards its window shows.
+type boardWallLayout struct {
+	byID     map[string]*boardWallCard
+	pinned   []boardWallCard
+	columns  [][]boardWallCard
+	done     []boardTask
+	heights  []float32
+	key      boardWallKey
+	numCols  int
+	total    int
+	colWidth float32
+	pinnedH  float32
+	masonryH float32
+	valid    bool
+	relative bool
+}
+
+const boardWallGap = 16
+
+// boardHeroWidth is how wide a pinned card gets in the flow the hero section
+// lays out: full width on narrow windows, a capped single card, or one of two
+// side by side.
+func boardHeroWidth(availW float32, pinnedCount int) float32 {
+	inner := max(availW-40, 120)
+	switch {
+	case availW < 740:
+		return inner
+	case pinnedCount <= 1:
+		return min(inner, 640)
+	default:
+		return (inner - boardWallGap) / 2
+	}
+}
+
+// boardCardSignature changes when anything that sizes the card changes, so a
+// measured height is reused only for the same content.
+func boardCardSignature(task boardTask, checklistItems int) uint64 {
+	h := fnv.New64a()
+	// Done and archived tasks hide their due chip, so the status counts too.
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%t\x00%t\x00%d\x00%d",
+		task.Title, task.Status, task.DueDate, checklistItems, task.Pinned, task.Archived,
+		len(task.Commits), len(task.Notes))
+	if note, ok := latestBoardNote(task.Notes); ok {
+		fmt.Fprintf(h, "\x00%d\x00%d", len([]rune(note.Text)), len(note.Author))
+	}
+	return h.Sum64()
+}
+
+func (a *app) boardWallAvailWidth(c *ui.Context) float32 {
+	availW, _ := c.Size()
+	if a.showRepoSidebar() {
+		availW -= a.repoSplit + 1
+	}
+	return availW
+}
+
+// boardWallCardHandle keeps the identity assistive technology and the
+// keyboard use, and reads the card's laid-out height a frame later.
+func (a *app) boardWallCardHandle(id string) *ui.Handle {
+	if a.board.wallHandles == nil {
+		a.board.wallHandles = make(map[string]*ui.Handle)
+	}
+	h := a.board.wallHandles[id]
+	if h == nil {
+		h = &ui.Handle{}
+		a.board.wallHandles[id] = h
+	}
+	return h
+}
+
+func (a *app) boardWallCachedHeight(id string, signature uint64, width float32) (float32, bool) {
+	got, ok := a.board.wallHeights[id]
+	if !ok || got.signature != signature || got.height <= 0 || max(got.width-width, width-got.width) > 1 {
+		return 0, false
+	}
+	return got.height, true
+}
+
+func (a *app) boardWallMakeCard(task boardTask, width float32) boardWallCard {
+	items := parseBoardChecklist(task.Description)
+	card := boardWallCard{
+		task:      task,
+		repos:     boardTaskAllRepos(task),
+		items:     items,
+		signature: boardCardSignature(task, len(items)),
+	}
+	if h, ok := a.boardWallCachedHeight(task.ID, card.signature, width); ok {
+		card.height, card.measured = h, true
+	} else {
+		card.height = float32(estimateBoardCardHeight(task, len(items)))
+	}
+	return card
+}
+
+// boardWallLayoutFor returns the wall for the current data and window,
+// rebuilding it only when one of them changed.
+func (a *app) boardWallLayoutFrom(c *ui.Context) *boardWallLayout {
+	availW := a.boardWallAvailWidth(c)
+	key := boardWallKey{
+		dataGen: a.board.dataGen,
+		filter:  boardFilterKey{repo: a.board.repoFilter, search: a.board.search, archived: a.board.showArchived, english: englishUI.Load()},
+		status:  a.board.statusFilter,
+		sort:    a.board.sortMode,
+		width:   int(availW),
+	}
+	l := &a.board.wall
+	if l.valid && l.key == key {
+		return l
+	}
+	// Read the columns here, not from the caller's build: a quick capture can
+	// write the file while this frame is still being built, and the layout must
+	// belong to the data it was keyed with.
+	cols, _ := a.boardFilteredByStatus()
+	*l = boardWallLayout{valid: true, key: key, byID: make(map[string]*boardWallCard)}
+	l.numCols = boardMasonryColumnCount(availW)
+	l.colWidth = max((availW-40-float32(l.numCols-1)*boardWallGap)/float32(l.numCols), 120)
+
 	var unfinished []boardTask
 	if a.board.statusFilter != "" {
-		unfinished = slices.Clone(cols[boardStatusIndex(a.board.statusFilter)])
+		unfinished = append(unfinished, cols[boardStatusIndex(a.board.statusFilter)]...)
 	} else {
 		for _, st := range []boardStatus{boardReview, boardDoing, boardTodo} {
 			unfinished = append(unfinished, cols[boardStatusIndex(st)]...)
 		}
 	}
 	sortBoardWallTasksByMode(unfinished, a.board.sortMode)
-	doneTasks := cols[boardStatusIndex(boardDone)]
 
-	var pinned, regular []boardTask
+	pinnedCount := 0
 	for _, task := range unfinished {
 		if task.Pinned && task.Status != boardDone {
-			pinned = append(pinned, task)
-		} else {
-			regular = append(regular, task)
+			pinnedCount++
 		}
 	}
-
-	availW, _ := c.Size()
-	if a.showRepoSidebar() {
-		availW -= a.repoSplit + 1
+	heroW := boardHeroWidth(availW, pinnedCount)
+	var regular []boardWallCard
+	for _, task := range unfinished {
+		isPinned := task.Pinned && task.Status != boardDone
+		width := l.colWidth
+		if isPinned {
+			width = heroW
+		}
+		card := a.boardWallMakeCard(task, width)
+		if isPinned {
+			l.pinned = append(l.pinned, card)
+		} else {
+			regular = append(regular, card)
+		}
 	}
-	numCols := boardMasonryColumnCount(availW)
-	masonryCols := distributeBoardMasonry(regular, numCols)
-
-	ui.Scroll(c.Key("board-wall-scroll")).Fill().MinWidth(0).MinHeight(0).Children(func() {
-		ui.Column(c.Key("board-wall-content")).FillWidth().Padding(12, 20, 28, 20).Gap(20).Children(func() {
-			if len(pinned) > 0 {
-				ui.Column(c.Key("board-hero-section")).FillWidth().Gap(12).Children(func() {
-					if availW >= 740 {
-						if len(pinned) == 1 {
-							ui.Row(c.Key("board-hero-row-0")).FillWidth().Children(func() {
-								ui.Box(c).Grow(1).MinWidth(0).MaxWidth(640).Children(func() {
-									a.boardCard(c, pinned[0], true)
-								})
-							})
-						} else {
-							for i := 0; i < len(pinned); i += 2 {
-								rowIdx := i / 2
-								ui.Row(c.Key(fmt.Sprintf("board-hero-row-%d", rowIdx))).FillWidth().Gap(16).AlignItems(ui.Start).Children(func() {
-									ui.Box(c).Grow(1).MinWidth(0).Children(func() {
-										a.boardCard(c, pinned[i], true)
-									})
-									if i+1 < len(pinned) {
-										ui.Box(c).Grow(1).MinWidth(0).Children(func() {
-											a.boardCard(c, pinned[i+1], true)
-										})
-									} else {
-										ui.Box(c).Grow(1).MinWidth(0)
-									}
-								})
-							}
-						}
-					} else {
-						for _, task := range pinned {
-							a.boardCard(c, task, true)
-						}
-					}
-				})
+	// Masonry keeps the sorted order and drops each card into the shortest
+	// column, which keeps the top of every column level.
+	l.columns = make([][]boardWallCard, l.numCols)
+	columnHeights := make([]float32, l.numCols)
+	for _, card := range regular {
+		best := 0
+		for i := 1; i < l.numCols; i++ {
+			if columnHeights[i] < columnHeights[best] {
+				best = i
 			}
+		}
+		l.columns[best] = append(l.columns[best], card)
+		columnHeights[best] += card.height + boardWallGap
+	}
+	l.total = len(regular) + len(l.pinned)
+	l.done = cols[boardStatusIndex(boardDone)]
+	// Relative note times go stale as time passes; only such notes need a
+	// frame a minute, and none do while the board is hidden.
+	now := time.Now()
+	seen := func(task boardTask) {
+		if note, ok := latestBoardNote(task.Notes); ok {
+			if ts := note.displayTime(); !ts.IsZero() && now.Sub(ts) < 24*time.Hour {
+				l.relative = true
+			}
+		}
+	}
+	for i := range l.pinned {
+		seen(l.pinned[i].task)
+	}
+	for ci := range l.columns {
+		for i := range l.columns[ci] {
+			seen(l.columns[ci][i].task)
+		}
+	}
+	for i := range l.pinned {
+		l.byID[l.pinned[i].task.ID] = &l.pinned[i]
+	}
+	for ci := range l.columns {
+		for i := range l.columns[ci] {
+			l.byID[l.columns[ci][i].task.ID] = &l.columns[ci][i]
+		}
+	}
+	for id := range a.board.wallHeights {
+		if _, ok := l.byID[id]; !ok {
+			delete(a.board.wallHeights, id)
+		}
+	}
+	a.boardWallRelayout(l, availW)
+	return l
+}
 
-			if len(regular) > 0 {
-				ui.Row(c.Key("board-masonry")).FillWidth().Gap(16).AlignItems(ui.Start).Children(func() {
-					for colIdx := range numCols {
-						colTasks := masonryCols[colIdx]
-						ui.Column(c.Key(fmt.Sprintf("board-masonry-col-%d", colIdx))).
-							Grow(1).MinWidth(0).Gap(16).Children(func() {
-							for _, task := range colTasks {
-								a.boardCard(c, task, false)
-							}
-						})
-					}
-				})
-			} else if len(pinned) == 0 && !hasFilter {
-				emptyMsg := tr("暂无任务")
-				switch {
-				case a.board.statusFilter != "":
-					emptyMsg = tr("当前状态没有任务")
-				case len(doneTasks) > 0:
-					emptyMsg = tr("所有任务已完成")
+// boardWallRelayout puts every card at the offset its column gives it, so the
+// window can find the cards near the scroll place.
+func (a *app) boardWallRelayout(l *boardWallLayout, availW float32) {
+	l.heights = l.heights[:0]
+	l.masonryH = 0
+	for ci := range l.columns {
+		y := float32(0)
+		for i := range l.columns[ci] {
+			card := &l.columns[ci][i]
+			card.y = y
+			y += card.height + boardWallGap
+		}
+		if len(l.columns[ci]) > 0 {
+			y -= boardWallGap
+		}
+		l.heights = append(l.heights, y)
+		l.masonryH = max(l.masonryH, y)
+	}
+	const heroGap = float32(12)
+	var pinnedH float32
+	if n := len(l.pinned); n > 0 {
+		if availW >= 740 && n > 1 {
+			for i := 0; i < n; i += 2 {
+				rowH := l.pinned[i].height
+				if i+1 < n {
+					rowH = max(rowH, l.pinned[i+1].height)
 				}
-				ui.Row(c.Key("board-wall-empty")).FillWidth().Padding(36, 16).Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, emptyMsg).FontSize(13.5).TextColor(t.TextMuted)
+				if i > 0 {
+					pinnedH += heroGap
+				}
+				pinnedH += rowH
+			}
+		} else {
+			for i := 0; i < n; i++ {
+				if i > 0 {
+					pinnedH += heroGap
+				}
+				pinnedH += l.pinned[i].height
+			}
+		}
+	}
+	l.pinnedH = pinnedH
+}
+
+// boardWallNoteBuilt remembers a card the frame built, to read its real height
+// once the frame is laid out. Cards keep the estimate until then.
+func (a *app) boardWallNoteBuilt(id string) {
+	card, ok := a.board.wall.byID[id]
+	if !ok || card.measured {
+		return
+	}
+	for _, pending := range a.board.wallPending {
+		if pending.id == id {
+			return
+		}
+	}
+	a.board.wallPending = append(a.board.wallPending, boardWallPending{id: id, signature: card.signature})
+}
+
+// boardWallSyncMeasured reads the heights of the cards the last frame built and
+// relayouts when one moved its column.
+func (a *app) boardWallSyncMeasured(c *ui.Context, l *boardWallLayout) {
+	if len(a.board.wallPending) == 0 {
+		return
+	}
+	pending := a.board.wallPending
+	a.board.wallPending = nil
+	changed := false
+	for _, item := range pending {
+		card, ok := l.byID[item.id]
+		if !ok || card.measured || card.signature != item.signature {
+			continue
+		}
+		h := a.board.wallHandles[item.id]
+		if h == nil {
+			continue
+		}
+		b := h.Bounds(c)
+		if b.W <= 0 || b.H <= 0 {
+			continue
+		}
+		card.height, card.measured = b.H, true
+		changed = true
+		if a.board.wallHeights == nil {
+			a.board.wallHeights = make(map[string]boardWallHeight)
+		}
+		a.board.wallHeights[item.id] = boardWallHeight{signature: item.signature, width: b.W, height: b.H}
+	}
+	if changed {
+		a.boardWallRelayout(l, a.boardWallAvailWidth(c))
+	}
+}
+
+// boardWallCardInWindow reports whether a card is near the scroll place, or
+// holds the keyboard focus and must stay reachable however far it scrolled.
+func (a *app) boardWallCardInWindow(c *ui.Context, card *boardWallCard, top, bottom float32) bool {
+	if card.y+card.height >= top && card.y <= bottom {
+		return true
+	}
+	if h := a.board.wallHandles[card.task.ID]; h != nil && h.FocusWithin(c) {
+		return true
+	}
+	return false
+}
+
+func (a *app) boardWallPinned(c *ui.Context, l *boardWallLayout, availW float32) {
+	ui.Column(c.Key("board-hero-section")).FillWidth().Gap(12).Children(func() {
+		if availW >= 740 {
+			if len(l.pinned) == 1 {
+				ui.Row(c.Key("board-hero-row-0")).FillWidth().Children(func() {
+					ui.Box(c).Grow(1).MinWidth(0).MaxWidth(640).Children(func() {
+						a.boardCard(c, l.pinned[0], true)
+					})
+				})
+				return
+			}
+			for i := 0; i < len(l.pinned); i += 2 {
+				i := i
+				ui.Row(c.Key(fmt.Sprintf("board-hero-row-%d", i/2))).FillWidth().Gap(boardWallGap).AlignItems(ui.Start).Children(func() {
+					ui.Box(c).Grow(1).MinWidth(0).Children(func() {
+						a.boardCard(c, l.pinned[i], true)
+					})
+					if i+1 < len(l.pinned) {
+						ui.Box(c).Grow(1).MinWidth(0).Children(func() {
+							a.boardCard(c, l.pinned[i+1], true)
+						})
+					} else {
+						ui.Box(c).Grow(1).MinWidth(0)
+					}
 				})
 			}
+			return
+		}
+		for _, card := range l.pinned {
+			a.boardCard(c, card, true)
+		}
+	})
+}
 
-			a.boardDoneSection(c, doneTasks)
+// boardNextRefreshAt is the earliest moment the wall must repaint itself for
+// reasons no input caused: an external-update highlight ending, or a relative
+// time crossing into the next minute.
+func (a *app) boardNextRefreshAt(now time.Time, layout *boardWallLayout) time.Time {
+	var target time.Time
+	add := func(t time.Time) {
+		if t.IsZero() || !t.After(now) {
+			return
+		}
+		if target.IsZero() || t.Before(target) {
+			target = t
+		}
+	}
+	for _, ts := range a.board.recentUpdated {
+		if !ts.IsZero() {
+			add(ts.Add(12 * time.Second))
+		}
+	}
+	if layout.relative {
+		add(now.Truncate(time.Minute).Add(time.Minute))
+	}
+	return target
+}
+
+// boardScheduleRefresh asks for the frame that lets an external-update
+// highlight expire and a relative time tick, and only while the board shows:
+// a hidden board keeps no timer running.
+func (a *app) boardScheduleRefresh(layout *boardWallLayout) {
+	if a.closed || !a.showBoard {
+		return
+	}
+	now := time.Now()
+	target := a.boardNextRefreshAt(now, layout)
+	if target.IsZero() || !target.After(now.Add(100*time.Millisecond)) {
+		return
+	}
+	// A pending timer that fires no later than this target covers it; an
+	// earlier target, as a fresh highlight, gets its own.
+	if a.board.refreshPending && !a.board.refreshAt.After(target) {
+		return
+	}
+	a.board.refreshPending = true
+	a.board.refreshAt = target
+	delay := time.Until(target)
+	time.AfterFunc(delay, func() {
+		a.onMain(func() {
+			fire := a.board.refreshPending && !a.closed && a.showBoard
+			a.board.refreshPending = false
+			a.board.refreshAt = time.Time{}
+			if fire {
+				a.post(func() {})
+			}
 		})
 	})
 }
 
-func (a *app) boardDoneSection(c *ui.Context, doneTasks []boardTask) {
+// boardWallEmpty is the board's only words when nothing matches: what is empty
+// and, while filtering, the one action that brings tasks back.
+func (a *app) boardWallEmpty(c *ui.Context, msg string, clearable bool) {
+	t := c.Theme()
+	ui.Row(c.Key("board-wall-empty")).FillWidth().Padding(36, 16).Gap(10).
+		Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+		if clearable {
+			ui.Icon(c, iconSearch).Size(14, 14).TextColor(t.TextMuted).Shrink(0)
+		}
+		ui.Text(c, msg).FontSize(13.5).TextColor(t.TextMuted)
+		if clearable {
+			if ui.Button(c.Key("board-clear-filter"), tr("清除筛选")).Padding(2, 8).FontSize(12).Clicked() {
+				a.board.repoFilter = ""
+				a.board.search = ""
+			}
+		}
+	})
+}
+
+func (a *app) boardContextWall(c *ui.Context) {
+	filtering := a.board.repoFilter != "" || strings.TrimSpace(a.board.search) != ""
+	layout := a.boardWallLayoutFrom(c)
+	a.boardWallSyncMeasured(c, layout)
+	doneTasks := layout.done
+	// Search shows what it matched, including completed tasks, without
+	// touching the fold the user chose for the quiet list below the wall.
+	doneExpanded := a.board.doneExpanded || (filtering && len(doneTasks) > 0)
+
+	availW := a.boardWallAvailWidth(c)
+	masonryTop := float32(12) // the wall content's top padding
+	if len(layout.pinned) > 0 {
+		masonryTop += layout.pinnedH + 20
+	}
+	scrollTop := a.board.wallScroll.Y
+	viewportH := float32(600)
+	if b := a.board.wallScroll.Handle.Bounds(c); b.H > 0 {
+		viewportH = b.H
+	}
+	top := scrollTop - masonryTop - viewportH*0.5
+	bottom := scrollTop - masonryTop + viewportH
+	a.boardScheduleRefresh(layout)
+
+	ui.Scroll(c.Key("board-wall-scroll")).Fill().MinWidth(0).MinHeight(0).
+		TrackScroll(&a.board.wallScroll).Children(func() {
+		ui.Column(c.Key("board-wall-content")).FillWidth().Padding(12, 20, 28, 20).Gap(20).Children(func() {
+			if len(layout.pinned) > 0 {
+				a.boardWallPinned(c, layout, availW)
+			}
+			if layout.total > 0 {
+				ui.Box(c.Key("board-masonry")).FillWidth().Height(layout.masonryH).Children(func() {
+					for colIdx := range layout.columns {
+						x := float32(colIdx) * (layout.colWidth + boardWallGap)
+						for i := range layout.columns[colIdx] {
+							card := &layout.columns[colIdx][i]
+							if !a.boardWallCardInWindow(c, card, top, bottom) {
+								// Offscreen cards are not built: their column keeps
+								// the place the measured height gives them.
+								continue
+							}
+							ui.Box(c.Key("board-masonry-slot-" + card.task.ID)).Absolute().
+								Left(x).Top(card.y).Width(layout.colWidth).Children(func() {
+								a.boardCard(c, *card, false)
+							})
+						}
+					}
+				})
+			}
+			if layout.total == 0 {
+				switch {
+				case len(doneTasks) == 0 && filtering:
+					a.boardWallEmpty(c, tr("没有匹配的任务"), true)
+				case len(doneTasks) == 0 && a.board.statusFilter != "":
+					a.boardWallEmpty(c, tr("当前状态没有任务"), false)
+				case len(doneTasks) == 0:
+					a.boardWallEmpty(c, tr("暂无任务"), false)
+				case !filtering && a.board.statusFilter == "":
+					a.boardWallEmpty(c, tr("所有任务已完成"), false)
+				}
+			}
+
+			a.boardDoneSection(c, doneTasks, doneExpanded)
+		})
+	})
+}
+
+// boardDoneSection shows the completed tasks. expanded is how the list shows
+// this frame, which search makes true without changing the user's preference.
+func (a *app) boardDoneSection(c *ui.Context, doneTasks []boardTask, expanded bool) {
 	t := c.Theme()
 	doneSec := ui.Column(c.Key("board-done-section")).FillWidth().Gap(8).
 		Padding(14, 0, 0, 0).
@@ -2423,11 +2864,12 @@ func (a *app) boardDoneSection(c *ui.Context, doneTasks []boardTask) {
 		}
 		doneHeader.Children(func() {
 			chev := iconChevronRight
-			if a.board.doneExpanded {
+			if expanded {
 				chev = iconChevronDown
 			}
 			toggleBtn := ui.ButtonBase(c.Key("board-done-toggle")).
 				Label(tr("已完成")).
+				Expanded(expanded).
 				Height(28).Padding(0, 8).Gap(6).Radius(6).
 				AlignItems(ui.Center).Cursor(ui.CursorPointer).
 				Transition(colorMotion())
@@ -2444,12 +2886,12 @@ func (a *app) boardDoneSection(c *ui.Context, doneTasks []boardTask) {
 					TextColor(t.TextMuted.Alpha(0.8)).SingleLine()
 			})
 			if toggleBtn.Clicked() {
-				a.board.doneExpanded = !a.board.doneExpanded
+				a.board.doneExpanded = !expanded
 			}
 
 			ui.Box(c).Grow(1)
 
-			if a.board.doneExpanded && len(doneTasks) > 0 {
+			if expanded && len(doneTasks) > 0 {
 				archBtn := ui.ButtonBase(c.Key("board-done-archive")).
 					Label(tr("归档已完成任务")).
 					Height(26).Padding(0, 10).Gap(5).Radius(6).
@@ -2466,9 +2908,18 @@ func (a *app) boardDoneSection(c *ui.Context, doneTasks []boardTask) {
 					ui.Text(c, tr("归档已完成任务")).FontSize(12).TextColor(t.TextMuted).SingleLine()
 				})
 				if archBtn.Clicked() {
+					// Only the completed tasks on screen at the click, checked again
+					// under the file lock: a hidden project or a search result the
+					// user cannot see must not be archived behind their back.
+					ids := make([]string, 0, len(doneTasks))
+					for _, task := range doneTasks {
+						if !task.Archived {
+							ids = append(ids, task.ID)
+						}
+					}
 					var count int
 					a.changeBoard(func() (boardFile, error) {
-						bf, n, err := boardArchiveDone()
+						bf, n, err := boardArchiveDoneTasks(ids)
 						count = n
 						return bf, err
 					}, func(err error) {
@@ -2482,7 +2933,7 @@ func (a *app) boardDoneSection(c *ui.Context, doneTasks []boardTask) {
 			}
 		})
 
-		if !a.board.doneExpanded {
+		if !expanded {
 			return
 		}
 		if len(doneTasks) == 0 {
@@ -2547,8 +2998,10 @@ func (a *app) boardDoneRow(c *ui.Context, task boardTask) {
 	})
 
 	if restoreClicked {
-		next := boardTodo
-		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &next})
+		// Moving an archived task back to the todo list also takes it out of
+		// the archive: left archived it would vanish from the default board.
+		next, archived := boardTodo, false
+		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &next, Archived: &archived})
 		return
 	}
 	if row.Clicked() {
@@ -2579,6 +3032,20 @@ func formatBoardRelativeTime(ts time.Time) string {
 	}
 }
 
+// boardCardBranch picks the repository whose branch a pinned card shows: the
+// project the board is filtered to when the task belongs to it, so filtering a
+// multi-repository task shows the branch the user is looking at.
+func (a *app) boardCardBranch(repos []string) (chosen, branch string) {
+	if len(repos) == 0 {
+		return "", ""
+	}
+	chosen = repos[0]
+	if filter := normalizeBoardRepo(a.board.repoFilter); filter != "" && slices.Contains(repos, filter) {
+		chosen = filter
+	}
+	return chosen, a.boardRepoActiveBranch(chosen)
+}
+
 func (a *app) boardRepoActiveBranch(repo string) string {
 	norm := normalizeBoardRepo(repo)
 	if norm == "" {
@@ -2592,7 +3059,8 @@ func (a *app) boardRepoActiveBranch(repo string) string {
 	return ""
 }
 
-func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
+func (a *app) boardCard(c *ui.Context, wallCard boardWallCard, hero bool) {
+	task := wallCard.task
 	t := c.Theme()
 	selected := a.board.selectedID == task.ID
 	isFocus := task.Pinned && task.Status != boardDone
@@ -2635,13 +3103,21 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 		actionPillBg = ui.RGBA(255, 255, 255, 0.09)
 	}
 
-	card := ui.ButtonBase(c.Key("board-card-"+task.ID)).
-		Label(task.ID+" "+task.Title).
+	// The card is a group, not one big button: its copy, pin, done and
+	// checklist actions must stay reachable to assistive technology, which
+	// reads nothing inside a button. A click anywhere else still opens it.
+	card := ui.ButtonBase(c.Key("board-card-" + task.ID)).
+		Label(task.ID + " " + task.Title).
+		Role(ui.RoleGroup).
 		FillWidth().
 		Radius(radius).
 		Cursor(ui.CursorPointer).
-		Drag(boardTaskDrag{taskID: task.ID, status: task.Status}).
+		Drag(boardTaskDrag{taskID: task.ID, status: task.Status, pinned: isFocus}).
 		Transition(boardCardMotion(task.ID))
+	// The card keeps its identity for focus and assistive technology, and the
+	// wall reads the height it took once the frame is laid out.
+	card.Bind(a.boardWallCardHandle(task.ID))
+	a.boardWallNoteBuilt(task.ID)
 	if hero {
 		card.Padding(18, 20)
 	} else {
@@ -2806,11 +3282,10 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 	copyClicked := false
 	pinClicked := false
 	checkClicked := false
-	toggledLineIdx := -1
+	var toggledItem *boardChecklistItem
 	var clickedCommit *boardCommitLink
 
-	repos := boardTaskAllRepos(task)
-	checklist := parseBoardChecklist(task.Description)
+	repos, checklist := wallCard.repos, wallCard.items
 
 	card.Children(func() {
 		ui.Column(c).FillWidth().Gap(9).Children(func() {
@@ -2843,18 +3318,28 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 							ui.Text(c, tr(boardStatusLabel(task.Status))).FontSize(11).FontWeight(500).TextColor(pillFg).SingleLine()
 						})
 					}
-					if hero && len(repos) > 0 {
-						if branch := a.boardRepoActiveBranch(repos[0]); branch != "" {
-							ui.Row(c).Padding(1, 6).Gap(4).Radius(9).Background(chipBg).AlignItems(ui.Center).Shrink(0).Children(func() {
-								ui.Icon(c, iconGitBranch).Size(10.5, 10.5).TextColor(mutedText).Shrink(0)
-								ui.Text(c, branch).FontSize(11).TextColor(mutedText).SingleLine()
-							})
+					if hero {
+						if chosen, branch := a.boardCardBranch(repos); branch != "" {
+							label := branch
+							if len(repos) > 1 {
+								// With several repositories the branch alone does not
+								// say whose it is once the project row is hidden.
+								label = repoTitle(chosen) + " · " + branch
+							}
+							ui.Row(c).Padding(1, 6).Gap(4).Radius(9).Background(chipBg).
+								AlignItems(ui.Center).Shrink(0).
+								Tooltip(repoTitle(chosen) + " · " + branch + "\n" + chosen).
+								Children(func() {
+									boardRepoDot(c, chosen, 6)
+									ui.Icon(c, iconGitBranch).Size(10.5, 10.5).TextColor(mutedText).Shrink(0)
+									ui.Text(c, label).FontSize(11).TextColor(mutedText).SingleLine()
+								})
 						}
 					}
 				})
 
 				// Quiet-at-rest floating action capsule: Copy Agent Context, Pin/Unpin, Mark Done
-				actionRow := ui.Row(c.Key("board-card-actions-"+task.ID)).Gap(2).Padding(2).Radius(8).
+				actionRow := ui.Row(c.Key("board-card-actions-" + task.ID)).Gap(2).Padding(2).Radius(8).
 					AlignItems(ui.Center).Shrink(0).Transition(colorMotion())
 				var actionActive bool
 				actionRow.Children(func() {
@@ -3010,10 +3495,10 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 					trackCol = ui.RGBA(255, 255, 255, 0.14)
 				}
 
-				ui.Column(c.Key("board-card-checklist-"+task.ID)).FillWidth().Gap(3).Children(func() {
+				ui.Column(c.Key("board-card-checklist-" + task.ID)).FillWidth().Gap(3).Children(func() {
 					ui.Row(c.Key("board-card-chk-prog-"+task.ID)).FillWidth().Gap(8).AlignItems(ui.Center).Padding(0, 4, 2, 4).Children(func() {
 						ui.Box(c).Grow(1).MinWidth(0).Height(3).Radius(1.5).Background(trackCol).Clip().Children(func() {
-							ui.Box(c.Key("board-card-chk-fill-"+task.ID)).Height(3).WidthPercent(pct).Radius(1.5).
+							ui.Box(c.Key("board-card-chk-fill-" + task.ID)).Height(3).WidthPercent(pct).Radius(1.5).
 								Background(barCol).Transition(ui.ElementTransition{Animation: &boardSpring, Width: true, Colors: true})
 						})
 						ui.Text(c, fmt.Sprintf("%d/%d", doneCount, len(checklist))).FontSize(11).FontFeatures("tnum").
@@ -3024,6 +3509,7 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 						item := checklist[i]
 						rowBtn := ui.ButtonBase(c.Key(fmt.Sprintf("board-card-chk-%s-%d", task.ID, item.LineIndex))).
 							Label(item.Text).
+							Role(ui.RoleCheckBox).Checked(item.Checked).
 							FillWidth().Padding(3, 5).Gap(6).Radius(5).
 							AlignItems(ui.Center).Justify(ui.Start).
 							Cursor(ui.CursorPointer).Transition(colorMotion())
@@ -3042,7 +3528,8 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 							}
 						})
 						if rowBtn.Clicked() {
-							toggledLineIdx = item.LineIndex
+							picked := item
+							toggledItem = &picked
 						}
 					}
 					if len(checklist) > 5 {
@@ -3057,10 +3544,8 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 
 			// Embedded Recent Commits (latest 1–2)
 			if len(task.Commits) > 0 {
-				ui.Column(c.Key("board-card-commits-"+task.ID)).FillWidth().Gap(4).Children(func() {
-					start := max(0, len(task.Commits)-2)
-					for i := len(task.Commits) - 1; i >= start; i-- {
-						link := task.Commits[i]
+				ui.Column(c.Key("board-card-commits-" + task.ID)).FillWidth().Gap(4).Children(func() {
+					for _, link := range boardNewestCommits(task.Commits, 2) {
 						short := link.Hash
 						if len(short) > 7 {
 							short = short[:7]
@@ -3069,9 +3554,12 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 						if link.Subject != "" {
 							label = short + " " + link.Subject
 						}
-						cBtn := ui.ButtonBase(c.Key(fmt.Sprintf("board-card-commit-%s-%s", task.ID, link.Hash))).
+						// The same commit can hang off a task from two repositories,
+						// so the chip's identity names both.
+						linkKey := boardCommitCacheKey(link.Repo, link.Hash)
+						cBtn := ui.ButtonBase(c.Key("board-card-commit-"+task.ID+"-"+linkKey)).
 							Label(label).
-							Tooltip(link.Repo + " @ " + link.Hash).
+							Tooltip(link.Repo+" @ "+link.Hash).
 							FillWidth().Padding(5, 8).Gap(5).Radius(8).
 							AlignItems(ui.Center).Justify(ui.Start).
 							Cursor(ui.CursorPointer).Transition(colorMotion())
@@ -3103,8 +3591,7 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 			}
 
 			// Latest Breakpoint Note
-			if len(task.Notes) > 0 {
-				latest := task.Notes[len(task.Notes)-1]
+			if latest, ok := latestBoardNote(task.Notes); ok {
 				isHuman := strings.EqualFold(latest.Author, "human") || latest.Author == ""
 				who := latest.Author
 				if isHuman {
@@ -3135,6 +3622,22 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 		})
 	})
 
+	// In the default sort a card can be dropped on another to take its place,
+	// inside the same pin group; a status drop there also moves the card. The
+	// other sorts would put it back, so they offer no target.
+	if dragged, over := ui.DragOver[boardTaskDrag](card); over && a.boardCardDropAllowed(dragged, task) {
+		_, y, _ := card.PointerPosition()
+		after := y > card.Bounds().H/2
+		card.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			drawBoardDropLine(p, r, after, t.Accent)
+		})
+	}
+	if dropped, ok := ui.Drop[boardTaskDrag](card); ok && a.boardCardDropAllowed(dropped, task) {
+		_, y, _ := card.PointerPosition()
+		a.moveBoardTaskNear(dropped.taskID, task, y > card.Bounds().H/2)
+		return
+	}
+
 	if copyClicked || doCopyCtx {
 		c.Services().WriteClipboard(formatBoardAgentContext(task))
 		c.Toast(tr("已复制 Agent 上下文"))
@@ -3153,9 +3656,8 @@ func (a *app) boardCard(c *ui.Context, task boardTask, hero bool) {
 		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Status: &next})
 		return
 	}
-	if toggledLineIdx >= 0 {
-		nextDesc := toggleBoardChecklistLine(task.Description, toggledLineIdx)
-		a.applyBoardTaskPatch(task.ID, boardTaskPatch{Description: &nextDesc})
+	if toggledItem != nil {
+		a.toggleBoardChecklistItem(task.ID, *toggledItem)
 		return
 	}
 	if clickedCommit != nil {
@@ -3196,6 +3698,77 @@ func (a *app) applyBoardTaskPatch(id string, patch boardTaskPatch, toast ...stri
 	})
 }
 
+// boardCardDropAllowed reports whether a card may take the place of target:
+// manual order only exists in the default sort, and only inside one pin group.
+func (a *app) boardCardDropAllowed(dragged boardTaskDrag, target boardTask) bool {
+	if a.board.sortMode != boardSortDefault || dragged.taskID == target.ID {
+		return false
+	}
+	return dragged.pinned == (target.Pinned && target.Status != boardDone)
+}
+
+// moveBoardTaskNear puts a dragged card before or after another one with the
+// stored manual order, moving it to that card's status as well when they differ.
+func (a *app) moveBoardTaskNear(id string, target boardTask, after bool) {
+	status := target.Status
+	a.commitBoardDrafts()
+	a.changeBoard(func() (boardFile, error) {
+		bf, _, err := boardMoveTask(id, status, target.ID, after)
+		return bf, err
+	}, func(err error) {
+		if err != nil {
+			a.setBanner(err.Error(), "")
+		}
+	})
+}
+
+// toggleBoardChecklistItem flips one checklist marker where the task is
+// stored, identifying the item by its line and text. Only the marker byte is
+// rewritten, so a description another client just edited keeps its changes
+// and an item that moved or changed state fails instead of flipping another
+// line. An open drawer for the same task flips the marker in its draft too;
+// the rest of the draft stays unsaved until it is committed.
+func (a *app) toggleBoardChecklistItem(id string, item boardChecklistItem) {
+	if a.board.editTaskID == id && a.board.descDraft != "" {
+		if next, ok := toggleBoardChecklistItem(a.board.descDraft, item.LineIndex, item.Text, item.Checked); ok {
+			a.board.descDraft = next
+		}
+		// An item only the draft has carries no line to flip on disk: the
+		// drawer's next save writes it together with its marker.
+		if !a.boardChecklistItemStored(id, item) {
+			return
+		}
+	}
+	a.changeBoard(func() (boardFile, error) {
+		bf, _, err := boardToggleChecklistTask(id, item.LineIndex, item.Text, item.Checked)
+		return bf, err
+	}, func(err error) {
+		if err == nil {
+			return
+		}
+		// Nothing was written, so the draft must not keep the flip either: it
+		// would be saved later over the text that made the click fail.
+		if a.board.editTaskID == id {
+			if back, ok := toggleBoardChecklistItem(a.board.descDraft, item.LineIndex, item.Text, !item.Checked); ok {
+				a.board.descDraft = back
+			}
+		}
+		a.setBanner(err.Error(), "")
+	})
+}
+
+// boardChecklistItemStored reports whether the saved description still holds
+// this item in the state the caller saw, using the same identity the write
+// uses.
+func (a *app) boardChecklistItemStored(id string, item boardChecklistItem) bool {
+	idx := findBoardTaskIndex(a.board.file.Tasks, id)
+	if idx < 0 {
+		return false
+	}
+	_, ok := toggleBoardChecklistItem(a.board.file.Tasks[idx].Description, item.LineIndex, item.Text, item.Checked)
+	return ok
+}
+
 func (a *app) boardDetailDrawer(c *ui.Context) {
 	t := c.Theme()
 	idx := findBoardTaskIndex(a.board.file.Tasks, a.board.selectedID)
@@ -3216,7 +3789,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 	}
 	h, _, _, _, _, _, _ := a.chromeMetrics(c)
 	drawer := ui.Column(c.Key("board-detail-drawer")).
-		Absolute().Top(h + 12).Bottom(12).Right(12).WidthPercent(50).ZIndex(20).
+		Absolute().Top(h+12).Bottom(12).Right(12).WidthPercent(50).ZIndex(20).
 		Radius(16).Background(t.Background).Border(1, t.Border.Alpha(0.8)).Clip().
 		Transition(boardDrawerMotion())
 	if t.Dark {
@@ -3302,7 +3875,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 		})
 
 		ui.Scroll(c.Key("board-drawer-scroll")).Grow(1).MinHeight(0).FillWidth().Children(func() {
-			ui.Column(c.Key("board-drawer-content-" + task.ID)).FillWidth().Padding(16, 20, 28, 20).Gap(14).
+			ui.Column(c.Key("board-drawer-content-"+task.ID)).FillWidth().Padding(16, 20, 28, 20).Gap(14).
 				Transition(fadeEnter()).Children(func() {
 				// Borderless document-style title input
 				titleEl := ui.TextInputBase(c.Key("board-drawer-title"), &a.board.titleDraft).
@@ -3446,7 +4019,14 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 				// Description & interactive checklist
 				ui.Column(c.Key("board-drawer-desc-sec")).FillWidth().Gap(8).Children(func() {
 					ui.Text(c, tr("任务描述")).FontSize(14.5).FontWeight(600).TextColor(t.TextMuted)
-					if drawerChecklist := parseBoardChecklist(task.Description); len(drawerChecklist) > 0 {
+					// The checklist and the field below show the same text: the draft
+					// holds every edit not saved yet, so an item added in it gets the
+					// line the user sees and a click rewrites only that marker.
+					effectiveDesc := a.board.descDraft
+					if effectiveDesc == "" {
+						effectiveDesc = task.Description
+					}
+					if drawerChecklist := parseBoardChecklist(effectiveDesc); len(drawerChecklist) > 0 {
 						doneCount := 0
 						for _, item := range drawerChecklist {
 							if item.Checked {
@@ -3471,6 +4051,7 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 							for _, item := range drawerChecklist {
 								rowBtn := ui.ButtonBase(c.Key(fmt.Sprintf("board-drawer-chk-%s-%d", task.ID, item.LineIndex))).
 									Label(item.Text).
+									Role(ui.RoleCheckBox).Checked(item.Checked).
 									FillWidth().Padding(4, 6).Gap(7).Radius(6).
 									AlignItems(ui.Center).Justify(ui.Start).
 									Cursor(ui.CursorPointer).Transition(colorMotion())
@@ -3487,13 +4068,8 @@ func (a *app) boardDetailDrawer(c *ui.Context) {
 									}
 								})
 								if rowBtn.Clicked() {
-									baseDesc := a.board.descDraft
-									if baseDesc == "" {
-										baseDesc = task.Description
-									}
-									nextDesc := toggleBoardChecklistLine(baseDesc, item.LineIndex)
-									a.board.descDraft = nextDesc
-									a.applyBoardTaskPatch(task.ID, boardTaskPatch{Description: &nextDesc})
+									picked := item
+									a.toggleBoardChecklistItem(task.ID, picked)
 								}
 							}
 						})
@@ -3797,10 +4373,10 @@ func (a *app) boardCommitChipRow(c *ui.Context, task boardTask, link boardCommit
 					ui.Text(c, short).Font("monospace").FontSize(13.5).TextColor(t.TextMuted).SingleLine().Shrink(0)
 					ui.Box(c).Grow(1)
 					if link.Agent != "" {
-						boardAgentTag(c, "board-commit-agent-"+link.Hash, link.Agent)
+						boardAgentTag(c, "board-commit-agent-"+link.Repo+"-"+link.Hash, link.Agent)
 					}
 					if stale {
-						chipSoft(c, "board-commit-stale-"+link.Hash, tr("提交已失效"), t.Danger, false)
+						chipSoft(c, "board-commit-stale-"+link.Repo+"-"+link.Hash, tr("提交已失效"), t.Danger, false)
 					}
 				})
 				if link.Subject != "" {

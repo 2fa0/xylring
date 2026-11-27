@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -88,9 +89,9 @@ func TestBoardStoreCRUDAndLinks(t *testing.T) {
 	if _, _, err := boardUpdateTask("T-1", boardTaskPatch{Status: &doneStatus}); err != nil {
 		t.Fatalf("mark done: %v", err)
 	}
-	bf, archivedCount, err := boardArchiveDone()
+	bf, archivedCount, err := boardArchiveDoneTasks([]string{"T-1"})
 	if err != nil || archivedCount != 1 {
-		t.Fatalf("boardArchiveDone count=%d err=%v", archivedCount, err)
+		t.Fatalf("boardArchiveDoneTasks count=%d err=%v", archivedCount, err)
 	}
 	if !bf.Tasks[1].Archived && !bf.Tasks[0].Archived {
 		t.Fatalf("expected T-1 archived, tasks=%+v", bf.Tasks)
@@ -585,40 +586,43 @@ func TestBoardChecklistParseAndToggle(t *testing.T) {
 	if len(items) != 4 {
 		t.Fatalf("expected 4 checklist items, got %d: %+v", len(items), items)
 	}
-	if items[0] != (boardChecklistItem{LineIndex: 1, Checked: false, Text: "First item"}) {
-		t.Fatalf("item[0] = %+v", items[0])
-	}
-	if items[1] != (boardChecklistItem{LineIndex: 2, Checked: true, Text: "Nested done item"}) {
-		t.Fatalf("item[1] = %+v", items[1])
-	}
-	if items[2] != (boardChecklistItem{LineIndex: 3, Checked: true, Text: "Starred done item"}) {
-		t.Fatalf("item[2] = %+v", items[2])
-	}
-	if items[3] != (boardChecklistItem{LineIndex: 4, Checked: false, Text: "Starred todo item"}) {
-		t.Fatalf("item[3] = %+v", items[3])
+	for i, want := range []boardChecklistItem{
+		{LineIndex: 1, Checked: false, Text: "First item", MarkIndex: 3},
+		{LineIndex: 2, Checked: true, Text: "Nested done item", MarkIndex: 5},
+		{LineIndex: 3, Checked: true, Text: "Starred done item", MarkIndex: 3},
+		{LineIndex: 4, Checked: false, Text: "Starred todo item", MarkIndex: 5},
+	} {
+		if items[i] != want {
+			t.Fatalf("item[%d] = %+v, want %+v", i, items[i], want)
+		}
 	}
 
 	// Toggle unchecked -> checked and back
-	toggled := toggleBoardChecklistLine(desc, 1)
-	if !strings.Contains(toggled, "\n- [x] First item\n") {
-		t.Fatalf("expected line 1 checked, got:\n%s", toggled)
+	toggled, ok := toggleBoardChecklistItem(desc, 1, "First item", false)
+	if !ok || !strings.Contains(toggled, "\n- [x] First item\n") {
+		t.Fatalf("expected line 1 checked, got ok=%v:\n%s", ok, toggled)
 	}
-	roundtrip := toggleBoardChecklistLine(toggled, 1)
-	if roundtrip != desc {
-		t.Fatalf("roundtrip mismatch:\ngot:\n%s\nwant:\n%s", roundtrip, desc)
+	roundtrip, ok := toggleBoardChecklistItem(toggled, 1, "First item", true)
+	if !ok || roundtrip != desc {
+		t.Fatalf("roundtrip mismatch, ok=%v:\ngot:\n%s\nwant:\n%s", ok, roundtrip, desc)
 	}
 
 	// Toggle indented starred item preserves indentation and bullet char
-	toggledStar := toggleBoardChecklistLine(desc, 4)
-	if !strings.Contains(toggledStar, "\n  * [x] Starred todo item\n") {
-		t.Fatalf("expected indented star preserved, got:\n%s", toggledStar)
+	toggledStar, ok := toggleBoardChecklistItem(desc, 4, "Starred todo item", false)
+	if !ok || !strings.Contains(toggledStar, "\n  * [x] Starred todo item\n") {
+		t.Fatalf("expected indented star preserved, got ok=%v:\n%s", ok, toggledStar)
 	}
-	// Non-checklist line or out-of-range index is a no-op
-	if got := toggleBoardChecklistLine(desc, 0); got != desc {
+	// A line without an item, or one outside the description, changes nothing
+	if got, ok := toggleBoardChecklistItem(desc, 0, "Background context line", false); ok || got != desc {
 		t.Fatalf("non-checklist line should not change")
 	}
-	if got := toggleBoardChecklistLine(desc, 99); got != desc {
-		t.Fatalf("out-of-range line should not change")
+	if got, ok := toggleBoardChecklistItem(desc, 99, "Missing item", false); ok || got != desc {
+		t.Fatalf("an item that is not there should not change the description")
+	}
+	// A line added above moves the index; the text still names the item.
+	shifted, ok := toggleBoardChecklistItem(desc, 99, "First item", false)
+	if !ok || !strings.Contains(shifted, "\n- [x] First item\n") {
+		t.Fatalf("a moved item was not found by its text, ok=%v:\n%s", ok, shifted)
 	}
 }
 
@@ -685,8 +689,13 @@ func TestFormatBoardAgentContext(t *testing.T) {
 			t.Fatalf("formatBoardAgentContext missing %q in:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "Add data model") {
-		t.Fatalf("completed checklist item should be omitted from remaining checklist:\n%s", out)
+	// The whole description travels with the handoff, checklist included: the
+	// background and acceptance text may sit around or inside it.
+	if !strings.Contains(out, "- [x] Add data model") {
+		t.Fatalf("context should keep the full description:\n%s", out)
+	}
+	if !strings.Contains(out, "Remaining Checklist:\n- [ ] Build masonry canvas") {
+		t.Fatalf("context should list the unchecked items separately:\n%s", out)
 	}
 	if strings.Contains(out, "1111111") {
 		t.Fatalf("expected at most latest 2 commits in context:\n%s", out)
@@ -704,3 +713,270 @@ func TestFormatBoardAgentContext(t *testing.T) {
 	}
 }
 
+func TestBoardChecklistIgnoresFencedExamples(t *testing.T) {
+	desc := strings.Join([]string{
+		"Background before the example",
+		"```md",
+		"- [ ] example only",
+		"1. [x] ordered example",
+		"```",
+		"- [ ] real bullet",
+		"+ [ ] plus bullet",
+		"1. [ ] ordered item",
+		"2) [x] parenthesized item",
+		"~~~",
+		"- [ ] tilde example",
+		"~~~",
+		"- [ ] after the fence",
+		"- plain bullet",
+		"- [",
+		"- [ ]nospace",
+	}, "\n")
+	items := parseBoardChecklist(desc)
+	want := []struct {
+		checked bool
+		text    string
+	}{
+		{false, "real bullet"},
+		{false, "plus bullet"},
+		{false, "ordered item"},
+		{true, "parenthesized item"},
+		{false, "after the fence"},
+	}
+	if len(items) != len(want) {
+		t.Fatalf("parsed %d items, want %d: %+v", len(items), len(want), items)
+	}
+	for i, expect := range want {
+		if items[i].Checked != expect.checked || items[i].Text != expect.text {
+			t.Fatalf("item[%d] = %+v, want checked=%v text=%q", i, items[i], expect.checked, expect.text)
+		}
+	}
+	// An unclosed fence hides the rest, so a stray example cannot be toggled.
+	if got := parseBoardChecklist("```\n- [ ] inside\n"); len(got) != 0 {
+		t.Fatalf("unclosed fence should hide examples, got %+v", got)
+	}
+}
+
+func TestBoardChecklistToggleChangesOnlyTheMarker(t *testing.T) {
+	desc := "Intro text\r\n- [ ] keep   spacing  \r\n  1. [x] ordered\r\nOutro\r\n"
+	next, ok := toggleBoardChecklistItem(desc, 1, "keep   spacing", false)
+	if !ok {
+		t.Fatal("toggle failed")
+	}
+	wantLine := "- [x] keep   spacing  \r"
+	if !strings.Contains(next, wantLine) {
+		t.Fatalf("marker toggle changed more than the marker: %q", next)
+	}
+	if strings.Count(next, "\r\n") != strings.Count(desc, "\r\n") {
+		t.Fatalf("line endings changed: %q", next)
+	}
+	if strings.Replace(next, "keep   spacing", "keep   spacing", 1) == "" || !strings.HasSuffix(next, "Outro\r\n") {
+		t.Fatalf("trailing text changed: %q", next)
+	}
+	back, ok := toggleBoardChecklistItem(next, 1, "keep   spacing", true)
+	if !ok || back != desc {
+		t.Fatalf("round trip = %q, want %q", back, desc)
+	}
+	// A different state than the caller saw fails safely.
+	if _, ok := toggleBoardChecklistItem(desc, 1, "keep   spacing", true); ok {
+		t.Fatal("toggling an item that had another state should fail")
+	}
+	if _, ok := toggleBoardChecklistItem(desc, 1, "missing", false); ok {
+		t.Fatal("toggling a missing item should fail")
+	}
+}
+
+func TestBoardToggleChecklistTaskKeepsConcurrentEdits(t *testing.T) {
+	withTempBoardConfig(t)
+	_, task, err := boardAddTask("Concurrent checklist", "- [ ] Alpha\n- [ ] Beta", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another client adds a line before the items while the card is open.
+	edited := "- [ ] Inserted by the CLI\n- [ ] Alpha\n- [ ] Beta"
+	if _, _, err := boardUpdateTask(task.ID, boardTaskPatch{Description: &edited}); err != nil {
+		t.Fatal(err)
+	}
+	// The user clicks Beta as it showed on the card: line 2 used to be Beta.
+	bf, updated, err := boardToggleChecklistTask(task.ID, 2, "Beta", false)
+	if err != nil {
+		t.Fatalf("toggle by identity failed: %v", err)
+	}
+	want := "- [ ] Inserted by the CLI\n- [ ] Alpha\n- [x] Beta"
+	if got := bf.Tasks[0].Description; got != want {
+		t.Fatalf("description = %q, want %q", got, want)
+	}
+	if updated.UpdatedAt.IsZero() {
+		t.Fatal("toggle should touch the task")
+	}
+	// Another client renamed the item; the click fails instead of guessing.
+	renamed := "- [ ] Inserted by the CLI\n- [ ] Alpha renamed\n- [ ] Beta"
+	if _, _, err := boardUpdateTask(task.ID, boardTaskPatch{Description: &renamed}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardToggleChecklistTask(task.ID, 1, "Alpha", false); err == nil {
+		t.Fatal("ambiguous or changed items should fail safely")
+	}
+	after, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Tasks[0].Description != before.Tasks[0].Description {
+		t.Fatalf("failed toggle wrote: %q", after.Tasks[0].Description)
+	}
+}
+
+func TestBoardArchiveDoneTasksOnlyArchivesListedVisibleOnes(t *testing.T) {
+	withTempBoardConfig(t)
+	_, hidden, err := boardAddTask("Hidden done", "", boardDone, []string{"/tmp/hidden-repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, visible, err := boardAddTask("Visible done", "", boardDone, []string{"/tmp/visible-repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, moved, err := boardAddTask("Moved on meanwhile", "", boardDone, []string{"/tmp/visible-repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another client moved one task out of done after the list was built.
+	doing := boardDoing
+	if _, _, err := boardUpdateTask(moved.ID, boardTaskPatch{Status: &doing}); err != nil {
+		t.Fatal(err)
+	}
+	bf, count, err := boardArchiveDoneTasks([]string{visible.ID, moved.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("archived %d tasks, want 1", count)
+	}
+	byID := map[string]boardTask{}
+	for _, task := range bf.Tasks {
+		byID[task.ID] = task
+	}
+	if !byID[visible.ID].Archived {
+		t.Fatalf("listed done task was not archived: %+v", byID[visible.ID])
+	}
+	if byID[moved.ID].Archived {
+		t.Fatalf("task that is no longer done was archived: %+v", byID[moved.ID])
+	}
+	if byID[hidden.ID].Archived {
+		t.Fatalf("task outside the list was archived: %+v", byID[hidden.ID])
+	}
+	// The backup taken before archiving still exists.
+	backups, err := listBoardBackups()
+	if err != nil || len(backups) == 0 {
+		t.Fatalf("expected a backup before archiving, got %v err=%v", backups, err)
+	}
+}
+
+func TestBoardContextKeepsRequirementsAndPicksLatestNote(t *testing.T) {
+	now := time.Now()
+	long := strings.Repeat("背景与约束。", 200) + "\n最后一条验收条件"
+	task := boardTask{
+		ID:          "T-7",
+		Title:       "Long handoff",
+		Description: long + "\n- [ ] Run validation",
+		Commits: []boardCommitLink{
+			{Repo: "/tmp/a", Hash: "aaaaaaa1111111111111111111111111111111111", AddedAt: now.Add(-2 * time.Hour)},
+			{Repo: "/tmp/a", Hash: "bbbbbbb2222222222222222222222222222222222", AddedAt: now.Add(-time.Minute)},
+			{Repo: "/tmp/a", Hash: "ccccccc3333333333333333333333333333333333", AddedAt: now},
+		},
+		Notes: []boardNote{
+			{ID: "N-1", Text: "Edited most recently", CreatedAt: now.Add(-time.Hour), UpdatedAt: now},
+			{ID: "N-2", Text: "Older by creation", CreatedAt: now.Add(-time.Minute)},
+		},
+	}
+	clip := formatBoardAgentContext(task)
+	for _, want := range []string{"最后一条验收条件", "- [ ] Run validation", "Edited most recently", "- ccccccc ", "- bbbbbbb "} {
+		if !strings.Contains(clip, want) {
+			t.Fatalf("context is missing %q:\n%s", want, clip)
+		}
+	}
+	if strings.Contains(clip, "- aaaaaaa ") {
+		t.Fatalf("context should hold the two newest commits by link time:\n%s", clip)
+	}
+	// Notes saved without times keep their stored order.
+	if latest, ok := latestBoardNote([]boardNote{{Text: "first"}, {Text: "second"}}); !ok || latest.Text != "second" {
+		t.Fatalf("timeless notes picked %+v", latest)
+	}
+	if latest, ok := latestBoardNote(nil); ok {
+		t.Fatalf("no notes should not pick one: %+v", latest)
+	}
+	// The same holds for commit links written before times were saved.
+	commits := boardNewestCommits([]boardCommitLink{
+		{Hash: "first"}, {Hash: "second"}, {Hash: "third"},
+	}, 2)
+	if len(commits) != 2 || commits[0].Hash != "third" || commits[1].Hash != "second" {
+		t.Fatalf("timeless commits picked %+v", commits)
+	}
+}
+
+func TestBoardContextCLISamplesOnlyForStandardTaskIDs(t *testing.T) {
+	for _, id := range []string{"OLD-TASK", "T-0", "T- 5", "001", "T-3\nT-4", "T-03", "T-", "T--1", "T-999999999999999999999"} {
+		clip := formatBoardAgentContext(boardTask{ID: id, Title: "Imported task"})
+		if strings.Contains(clip, "xylring board update ") || strings.Contains(clip, "xylring board note ") {
+			t.Fatalf("nonstandard ID %q appears in executable CLI samples:\n%s", id, clip)
+		}
+	}
+	for _, id := range []string{"T-1", "T-52", "T-1000"} {
+		clip := formatBoardAgentContext(boardTask{ID: id, Title: "Valid task"})
+		if !strings.Contains(clip, "xylring board update "+id) || !strings.Contains(clip, "xylring board note "+id) {
+			t.Fatalf("standard ID %q lost its CLI samples:\n%s", id, clip)
+		}
+	}
+}
+
+func TestBoardMoveTaskPersistsManualOrderAndFallsBackToDefaultSort(t *testing.T) {
+	withTempBoardConfig(t)
+	_, first, err := boardAddTask("First todo", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, second, err := boardAddTask("Second todo", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, third, err := boardAddTask("Third todo", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// boardAddTask puts new tasks first: third, second, first.
+	if _, _, err := boardMoveTask(first.ID, "", third.ID, false); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	loaded, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, task := range loaded.Tasks {
+		order = append(order, task.ID)
+	}
+	if want := []string{first.ID, third.ID, second.ID}; !slices.Equal(order, want) {
+		t.Fatalf("saved order = %v, want %v", order, want)
+	}
+	// The default wall sort keeps the stored order inside one status, so the
+	// manual order reads back exactly as it was saved.
+	wall := slices.Clone(loaded.Tasks)
+	sortBoardWallTasks(wall)
+	var wallOrder []string
+	for _, task := range wall {
+		wallOrder = append(wallOrder, task.ID)
+	}
+	if !slices.Equal(wallOrder, order) {
+		t.Fatalf("wall order = %v, want %v", wallOrder, order)
+	}
+	// A reloaded session has no custom sort: the default mode is used again.
+	var restored app
+	restored.applySharedSessionState(savedSession{})
+	if restored.board.sortMode != boardSortDefault {
+		t.Fatalf("missing session sort should fall back to default, got %q", restored.board.sortMode)
+	}
+}
