@@ -252,6 +252,8 @@ func paintWorktreeNode(p *ui.Painter, x, y, radius float32, color, background ui
 	var halo ui.Path
 	halo.Circle(x, y, radius+2)
 	p.FillPath(&halo, background)
+	glowSize := radius*1.65 + 4
+	p.Fill(ui.Rect{X: x - glowSize/2, Y: y - glowSize/2, W: glowSize, H: glowSize}, color.Alpha(0.22), 3.5)
 	size := radius * 1.65
 	p.Fill(ui.Rect{X: x - size/2, Y: y - size/2, W: size, H: size}, color, 2)
 }

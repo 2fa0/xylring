@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -491,6 +492,24 @@ func (a *app) subjectColumnWidth(c *ui.Context, columns []ui.TableColumn) float3
 	return avail
 }
 
+func worktreeBadgeColor(t *ui.Theme, label string, fallback ui.Color) ui.Color {
+	switch {
+	case strings.HasPrefix(label, tr("冲突")):
+		return t.Danger
+	case strings.HasPrefix(label, tr("已暂存")):
+		return t.Success
+	case strings.HasPrefix(label, tr("未暂存")):
+		if t.Dark {
+			return t.Warning
+		}
+		return ui.Hex("#D97706")
+	case strings.HasPrefix(label, tr("未跟踪")):
+		return t.TextMuted
+	default:
+		return fallback
+	}
+}
+
 func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, subjectColW float32, rowHovered func(ui.Rect) bool) {
 	t := c.Theme()
 	item := tab.rowData(i)
@@ -571,9 +590,15 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, subj
 			})
 		case "subject":
 			if worktree {
-				ui.Text(c, tr("未提交改动")).SingleLine().Shrink(0)
+				ui.Text(c, tr("未提交改动")).FontWeight(600).SingleLine().Shrink(0)
 				for _, label := range worktreeBadges(tab.worktreeFiles) {
-					chip(c, "worktree-badge-"+label, label, chipStyle{Text: color, Background: color.Alpha(0.12)})
+					col := worktreeBadgeColor(t, label, color)
+					chip(c, "worktree-badge-"+label, label, chipStyle{
+						Text:       col,
+						Background: col.Alpha(0.12),
+						Border:     col.Alpha(0.32),
+						FontSize:   11.5,
+					})
 				}
 				ui.Box(c).Grow(1).MinWidth(0)
 				return
@@ -594,7 +619,22 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, subj
 						label = prov.Badge
 					}
 				}
-				ui.Text(c, label).SingleLine().MaxWidth(220).Shrink(0).FontSize(11).TextColor(muted).Tooltip(prov.Description()).ContextMenu(func(m *ui.Menu) {
+				tagCol := rowAccent(t)
+				borderAlpha := float32(0.26)
+				if strings.EqualFold(prov.Agent, "human") {
+					tagCol = woodColor(t)
+					borderAlpha = 0.28
+				}
+				bgCol := tagCol.Alpha(0.10)
+				borderCol := tagCol.Alpha(borderAlpha)
+				if selected {
+					bgCol = tagCol.Alpha(0.16)
+					borderCol = tagCol.Alpha(0.40)
+				}
+				pill := ui.Row(c.Key("prov-pill-"+hashHex(item.hash))).
+					Padding(1, 6).Radius(9).AlignItems(ui.Center).Shrink(0).MaxWidth(220).Clip().
+					Background(bgCol).Border(1, borderCol).
+					Tooltip(prov.Description()).ContextMenu(func(m *ui.Menu) {
 					if m.Item(tr("按此 Agent 筛选")).Chosen() {
 						tab.searchKind = "Agent"
 						tab.searchText = prov.Agent
@@ -605,6 +645,9 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, subj
 						tab.searchText = normalizeModel(prov.Model)
 						a.searchHistory(tab)
 					}
+				})
+				pill.Children(func() {
+					ui.Text(c, label).SingleLine().FontSize(11).FontWeight(500).TextColor(tagCol)
 				})
 			}
 			text := item.subject
@@ -624,7 +667,7 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, subj
 			if worktree {
 				text = tr("现在")
 			}
-			ui.Text(c, text).SingleLine().TextColor(muted)
+			ui.Text(c, text).FontFeatures("tnum").SingleLine().TextColor(muted)
 		case "author":
 			ui.Text(c, item.author).SingleLine().TextColor(muted)
 		case "hash":
@@ -633,14 +676,31 @@ func (a *app) commitCell(c *ui.Context, tab *repoTab, i int, column string, subj
 				return
 			}
 			full := hashHex(item.hash)
-			btn := ui.ButtonBase(c.Key("copy-hash-" + full)).Label(tr("复制哈希")).Tooltip(full).Cursor(ui.CursorPointer).Transition(colorMotion())
-			btn.Children(func() {
-				ui.Text(c, shortHash(item.hash)).Font("monospace").SingleLine().TextColor(muted)
-			})
+			btn := ui.ButtonBase(c.Key("copy-hash-"+full)).Label(tr("复制哈希")).Tooltip(full).
+				Padding(1, 5).Radius(5).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+				Transition(colorMotion())
 			if btn.Clicked() {
 				c.Services().WriteClipboard(full)
 				c.Toast(tr("已复制哈希"))
+				btn.Jump("copied", 1)
 			}
+			copied := btn.AnimateTo("copied", 0, ui.Animation{Duration: 1500 * time.Millisecond}) > 0
+			hashFg := muted
+			switch {
+			case copied:
+				btn.Background(t.Success.Alpha(0.12))
+				hashFg = t.Success
+			case btn.Pressed():
+				btn.Background(t.SurfacePressed)
+			case btn.Hovered():
+				btn.Background(t.SurfaceHover)
+			}
+			btn.Children(func() {
+				if copied {
+					ui.Icon(c, iconCheck).Size(11, 11).TextColor(t.Success).Shrink(0)
+				}
+				ui.Text(c, shortHash(item.hash)).Font("monospace").FontFeatures("tnum").SingleLine().TextColor(hashFg)
+			})
 		}
 	})
 }
