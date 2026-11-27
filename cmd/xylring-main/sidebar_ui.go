@@ -273,7 +273,11 @@ func (a *app) repoItems() []string {
 
 func (a *app) repoList(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Padding(6, 8, 8, 8).Children(func() {
+	sidebarBg := ui.Hex("#F7F6F3")
+	if t.Dark {
+		sidebarBg = ui.Hex("#141519")
+	}
+	ui.Column(c).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Background(sidebarBg).Padding(6, 8, 8, 8).Children(func() {
 		a.sidebarBoardRow(c)
 		ui.Box(c).FillWidth().Height(1).Background(t.Border.Alpha(0.55)).Margin(2, 2, 8, 2).Shrink(0)
 		ui.Themed(c, listTheme(c)).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
@@ -404,9 +408,10 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			padL := float32(10) + float32(level)*c.Theme().Space(4)
 			if record.worktree != nil {
 				parentRepo := record.parentRepo
-				a.sidebarWorktreeRow(c, p, *record.worktree, padL, contextMenu(p, parentRepo, record.worktree, false))
+				a.sidebarWorktreeRow(c, p, *record.worktree, padL, p == active, contextMenu(p, parentRepo, record.worktree, false))
 				return
 			}
+			isActive := p == active
 			label := repoListLabel(a.foundFrom, visibleItems, p)
 			branch, dirty, ahead, behind := a.repoStatus(p)
 			if tabIdx < 0 || !a.tabs[tabIdx].loaded {
@@ -423,6 +428,10 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 			row := ui.Row(c).FillWidth().MinHeight(36).Padding(8, 10, 8, padL).Gap(6).AlignItems(ui.Center)
 			row.ContextMenu(contextMenu(p, p, nil, level == 0))
 			row.Children(func() {
+				th := c.Theme()
+				if isActive {
+					ui.Box(c).Absolute().Left(2).Top(6).Bottom(6).Width(3).Radius(1.5).Background(rowAccent(th)).IgnoreInput(true)
+				}
 				if level == 0 {
 					if tag, ok := a.repoColor(p); ok {
 						ui.Box(c).Size(8, 8).Radius(4).Background(tag.color).Shrink(0)
@@ -430,22 +439,45 @@ func (a *app) sidebarRepoSection(c *ui.Context) {
 				}
 				if isDockerRepoPath(p) {
 					// 类型标记只出现一次：名字已经说明是哪个容器。
-					ui.Icon(c, iconContainer).Size(12, 12).TextColor(c.Theme().TextMuted).Shrink(0).Tooltip(tr("容器仓库"))
+					ui.Icon(c, iconContainer).Size(12, 12).TextColor(th.TextMuted).Shrink(0).Tooltip(tr("容器仓库"))
 				}
-				ui.Text(c, label).FontSize(13).SingleLine().MinWidth(0).Grow(1).Tooltip(repoLocationTooltip(p))
+				nameLbl := ui.Text(c, label).FontSize(13).SingleLine().MinWidth(0).Grow(1).Tooltip(repoLocationTooltip(p))
+				if isActive {
+					nameLbl.FontWeight(600)
+				}
 				if branchName != "" || branchStatus != "" {
 					// 分支名可以被截断，状态标记不参与收缩：侧栏再窄也留得下状态。
 					ui.Row(c).Gap(3).AlignItems(ui.Center).Shrink(0).MaxWidth(130).Tooltip(tip).Children(func() {
-						ui.Icon(c, iconGitBranch).Size(12, 12).TextColor(c.Theme().TextMuted)
+						ui.Icon(c, iconGitBranch).Size(12, 12).TextColor(th.TextMuted)
 						if branchName != "" {
-							ui.Text(c, branchName).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine().MinWidth(0)
+							ui.Text(c, branchName).FontSize(11).TextColor(th.TextMuted).SingleLine().MinWidth(0)
 						}
 						if branchStatus != "" {
-							ui.Text(c, branchStatus).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine().Shrink(0)
+							statusCol := th.TextMuted
+							switch {
+							case dirty:
+								if th.Dark {
+									statusCol = th.Warning
+								} else {
+									statusCol = ui.Hex("#B45309")
+								}
+							case ahead > 0 || behind > 0:
+								statusCol = rowAccent(th)
+							}
+							statusLbl := ui.Text(c, branchStatus).FontSize(11).FontFeatures("tnum").TextColor(statusCol).SingleLine().Shrink(0)
+							if dirty || ahead > 0 || behind > 0 {
+								statusLbl.FontWeight(500)
+							}
 						}
 					})
 				}
-				if closeIconButton(c, "close-repo:"+p, tr("关闭 ")+label).Clicked() {
+				closeBtn := closeIconButton(c, "close-repo:"+p, tr("关闭 ")+label)
+				if row.Hovered() || isActive || closeBtn.Hovered() || closeBtn.Focused() {
+					closeBtn.Opacity(1)
+				} else {
+					closeBtn.Opacity(0.18)
+				}
+				if closeBtn.Clicked() {
 					requestClose(p)
 				}
 			})
@@ -474,7 +506,8 @@ func (a *app) sidebarColorFilterBar(c *ui.Context, usedColors []repoColorTag) {
 			Label(tr("全部")).
 			Padding(2, 7).
 			Radius(10).
-			Cursor(ui.CursorPointer)
+			Cursor(ui.CursorPointer).
+			Transition(colorMotion())
 		if allActive {
 			allBtn.Background(t.SurfaceHover)
 		} else if allBtn.Hovered() {
@@ -498,9 +531,10 @@ func (a *app) sidebarColorFilterBar(c *ui.Context, usedColors []repoColorTag) {
 				Size(16, 16).
 				Radius(8).
 				Center().
-				Cursor(ui.CursorPointer)
+				Cursor(ui.CursorPointer).
+				Transition(colorMotion())
 			if active {
-				dotBtn.Border(1.5, t.Text)
+				dotBtn.Border(1.5, t.Text).Shadow(0, 0, 0, 1.5, tag.color.Alpha(0.35))
 			} else if dotBtn.Hovered() {
 				dotBtn.Background(t.SurfaceHover)
 			}
@@ -672,7 +706,7 @@ func repoIndexAt(rows []sidebarRow, at, count int) int {
 
 // sidebarWorktreeRow 画一个工作树子行：比它所属的仓库低一层，主文案是分支，
 // 后面是锁定 / 可清理两个图标，点开这个目录。
-func (a *app) sidebarWorktreeRow(c *ui.Context, p string, wt repoWorktree, padL float32, menu func(m *ui.Menu)) {
+func (a *app) sidebarWorktreeRow(c *ui.Context, p string, wt repoWorktree, padL float32, isActive bool, menu func(m *ui.Menu)) {
 	var dirty bool
 	if wt.prunable == "" {
 		_, dirty, _, _ = a.repoStatus(p)
@@ -689,18 +723,28 @@ func (a *app) sidebarWorktreeRow(c *ui.Context, p string, wt repoWorktree, padL 
 	row := ui.Row(c).FillWidth().MinHeight(28).Padding(6, 10, 6, padL).Gap(6).AlignItems(ui.Center)
 	row.ContextMenu(menu)
 	row.Children(func() {
+		th := c.Theme()
+		if isActive {
+			ui.Box(c).Absolute().Left(2).Top(5).Bottom(5).Width(2.5).Radius(1.25).Background(rowAccent(th)).IgnoreInput(true)
+		}
 		label := ui.Text(c, worktreeRowLabel(wt)).FontSize(12).SingleLine().MinWidth(0).Grow(1).Tooltip(tip)
 		if wt.prunable != "" {
-			label.TextColor(c.Theme().TextMuted)
+			label.TextColor(th.TextMuted)
+		} else if isActive {
+			label.FontWeight(600)
 		}
 		if status := sidebarBranchStatus(dirty, 0, 0); status != "" {
-			ui.Text(c, status).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Shrink(0)
+			statusCol := th.Warning
+			if !th.Dark {
+				statusCol = ui.Hex("#B45309")
+			}
+			ui.Text(c, status).FontSize(12).FontWeight(600).FontFeatures("tnum").TextColor(statusCol).SingleLine().Shrink(0)
 		}
 		if wt.locked != "" {
-			ui.Icon(c, iconLock).Size(12, 12).TextColor(c.Theme().TextMuted).Shrink(0).Tooltip(tr("已锁定"))
+			ui.Icon(c, iconLock).Size(12, 12).TextColor(th.TextMuted).Shrink(0).Tooltip(tr("已锁定"))
 		}
 		if wt.prunable != "" {
-			ui.Icon(c, iconAlertCircle).Size(12, 12).TextColor(c.Theme().Warning).Shrink(0).Tooltip(tr("目录已不存在，可清理"))
+			ui.Icon(c, iconAlertCircle).Size(12, 12).TextColor(th.Warning).Shrink(0).Tooltip(tr("目录已不存在，可清理"))
 		}
 	})
 }

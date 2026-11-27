@@ -697,7 +697,13 @@ func (a *app) sidebarBoardRow(c *ui.Context) {
 	case row.Hovered():
 		row.Background(t.SurfaceHover).Border(1, t.Border.Alpha(0.7))
 	default:
-		row.Background(t.Surface.Alpha(0.7)).Border(1, t.Border.Alpha(0.55))
+		if t.Dark {
+			row.Background(ui.RGBA(255, 255, 255, 0.04)).Border(1, t.Border.Alpha(0.5)).
+				InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.06))
+		} else {
+			row.Background(ui.RGBA(255, 255, 255, 0.78)).Border(1, t.Border.Alpha(0.55)).
+				Shadow(0, 1, 2, 0, ui.RGBA(15, 23, 42, 0.05))
+		}
 	}
 	row.Children(func() {
 		fg := t.TextMuted
@@ -719,7 +725,7 @@ func (a *app) sidebarBoardRow(c *ui.Context) {
 				badgeFg = t.Accent
 			}
 			ui.Row(c).Padding(1, 7).Radius(10).Background(badgeBg).AlignItems(ui.Center).Shrink(0).Children(func() {
-				ui.Text(c, fmt.Sprintf("%d", count)).FontSize(11.5).FontWeight(600).TextColor(badgeFg).SingleLine()
+				ui.Text(c, fmt.Sprintf("%d", count)).FontSize(11.5).FontWeight(600).FontFeatures("tnum").TextColor(badgeFg).SingleLine()
 			})
 		}
 	})

@@ -162,32 +162,54 @@ func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
 	wood := woodColor(th)
 	short, full := ringStatusShort(t.ring.status)
 	dot := ringStatusColor(t.ring.status, th)
-	if !strings.HasPrefix(t.ring.status, "已开启") && t.ring.status != "版本过旧" && !strings.HasPrefix(t.ring.status, "需手动集成") {
+	enabled := strings.HasPrefix(t.ring.status, "已开启")
+	hasStamp := t.ring.stamp.p.Agent != "" && t.ring.stamp.expires > time.Now().Unix()
+	if !enabled && t.ring.status != "版本过旧" && !strings.HasPrefix(t.ring.status, "需手动集成") {
 		dot = th.TextMuted.Alpha(0.5)
 	}
 	tip := tr("管理本仓库终端提交的年轮记录")
 	if full != "" {
 		tip += "\n" + trMessage(full)
 	}
-	if s := t.ring.stamp; s.p.Agent != "" && s.expires > time.Now().Unix() {
+	if hasStamp {
+		s := t.ring.stamp
 		mins := max(1, int(time.Until(time.Unix(s.expires, 0)).Minutes()))
 		tip += "\n" + fmt.Sprintf(tr("生效印章：%s · 剩余 %d 分钟"), s.p.Description(), mins)
 	}
 	row := ui.ButtonBase(c.Key(key)).
 		Tooltip(tip).
-		FillWidth().MinWidth(0).Shrink(0).Padding(6, 10).Gap(8).
-		Radius(10).Border(1, th.Border).Background(th.Surface).
-		AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
+		FillWidth().MinWidth(0).Shrink(0).Padding(7, 10).Gap(8).
+		Radius(10).AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
+	warmGlow := enabled || hasStamp
+	borderCol := th.Border
+	if warmGlow {
+		borderCol = wood.Alpha(0.35)
+		row.LinearGradient(ui.LinearGradient{From: wood.Alpha(0.10), To: ui.Transparent, Angle: 110, Oklab: true})
+	}
 	switch {
 	case row.Pressed():
-		row.Background(th.SurfacePressed)
+		row.Background(th.SurfacePressed).Border(1, borderCol)
 	case row.Hovered():
-		row.Background(th.SurfaceHover)
+		if warmGlow {
+			borderCol = wood.Alpha(0.55)
+		}
+		row.Background(th.SurfaceHover).Border(1, borderCol)
+	default:
+		if th.Dark {
+			row.Background(ui.RGBA(255, 255, 255, 0.045)).Border(1, borderCol).
+				InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.06))
+		} else {
+			row.Background(ui.RGBA(255, 255, 255, 0.86)).Border(1, borderCol).
+				Shadow(0, 1, 2, 0, ui.RGBA(15, 23, 42, 0.05))
+		}
 	}
 	row.Children(func() {
 		ui.Icon(c, iconTreeRings).Size(16, 16).TextColor(wood).Shrink(0)
 		ui.Text(c, tr("年轮")).FontSize(12.5).FontWeight(600).TextColor(th.Text).SingleLine().Shrink(0)
-		ui.Box(c).Size(6, 6).Radius(3).Background(dot).Shrink(0)
+		dotBox := ui.Box(c).Size(6, 6).Radius(3).Background(dot).Shrink(0)
+		if warmGlow {
+			dotBox.Shadow(0, 0, 4, 1, dot.Alpha(0.35))
+		}
 		ui.Text(c, trMessage(short)).FontSize(11.5).TextColor(th.TextMuted).SingleLine().Grow(1).MinWidth(0)
 		ui.Icon(c, iconRingSettings).Size(13, 13).TextColor(th.TextMuted).Shrink(0)
 	})
