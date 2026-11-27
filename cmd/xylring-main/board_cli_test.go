@@ -8,7 +8,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/2fa0/xylring/internal/board"
 )
+
+func withTempBoardConfig(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	cfgDir := filepath.Join(root, "config")
+	homeDir := filepath.Join(root, "home")
+	oldCfg := userConfigDir
+	oldBoardCfg := board.UserConfigDir
+	oldHome := board.BoardHomeDir
+	userConfigDir = func() (string, error) { return cfgDir, nil }
+	board.UserConfigDir = userConfigDir
+	board.BoardHomeDir = func() (string, error) { return homeDir, nil }
+	t.Setenv(board.BoardEnvDirKey, "")
+	t.Cleanup(func() {
+		userConfigDir = oldCfg
+		board.UserConfigDir = oldBoardCfg
+		board.BoardHomeDir = oldHome
+	})
+	return cfgDir
+}
 
 func TestBoardCLIEndToEndWithGitRepo(t *testing.T) {
 	withTempBoardConfig(t)

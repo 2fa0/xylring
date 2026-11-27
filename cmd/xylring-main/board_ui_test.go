@@ -958,7 +958,7 @@ func TestBoardNoteEditDeleteAndReorder(t *testing.T) {
 	if bf.Tasks[0].Notes[0].Text != "第一条备注（已编辑）" {
 		t.Fatalf("expected edited note persisted, got %+v", bf.Tasks[0].Notes)
 	}
-	editedTimeLabel := bf.Tasks[0].Notes[0].displayTime().Local().Format("01-02 15:04")
+	editedTimeLabel := bf.Tasks[0].Notes[0].DisplayTime().Local().Format("01-02 15:04")
 	if editedTimeLabel == oldTimeLabel {
 		t.Fatalf("expected edited note time %q to differ from old time %q", editedTimeLabel, oldTimeLabel)
 	}
@@ -2002,5 +2002,46 @@ func TestBoardWallSortModesAndSessionPersistence(t *testing.T) {
 	restarted.applySharedSessionState(loadSession())
 	if restarted.board.sortMode != boardSortDue {
 		t.Fatalf("restored sort after reopening the session = %q, want %q", restarted.board.sortMode, boardSortDue)
+	}
+}
+
+func TestBoardWallSortAndSessionDefault(t *testing.T) {
+	withTempBoardConfig(t)
+	_, first, err := boardAddTask("First todo", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, second, err := boardAddTask("Second todo", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, third, err := boardAddTask("Third todo", "", boardTodo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardMoveTask(first.ID, "", third.ID, false); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	loaded, err := loadBoardFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, task := range loaded.Tasks {
+		order = append(order, task.ID)
+	}
+	wall := append([]boardTask(nil), loaded.Tasks...)
+	sortBoardWallTasks(wall)
+	var wallOrder []string
+	for _, task := range wall {
+		wallOrder = append(wallOrder, task.ID)
+	}
+	if len(wallOrder) != len(order) || wallOrder[0] != first.ID || wallOrder[1] != third.ID || wallOrder[2] != second.ID {
+		t.Fatalf("wall order = %v, want %v", wallOrder, order)
+	}
+	var restored app
+	restored.applySharedSessionState(savedSession{})
+	if restored.board.sortMode != boardSortDefault {
+		t.Fatalf("missing session sort should fall back to default, got %q", restored.board.sortMode)
 	}
 }

@@ -42,8 +42,8 @@ func readBoardCommitSnapshot(ctx context.Context, repoDir, ref, addedBy string) 
 		Hash:    hexHash,
 		Subject: strings.TrimSpace(subject),
 		Branch:  branch,
-		Agent:   prov.agent,
-		Model:   prov.model,
+		Agent:   prov.Agent,
+		Model:   prov.Model,
 		AddedBy: strings.TrimSpace(addedBy),
 		AddedAt: time.Now().UTC(),
 	}, nil
@@ -330,7 +330,7 @@ func runBoardShowCLI(args []string, out io.Writer) error {
 			if n.Model != "" {
 				who += " (" + n.Model + ")"
 			}
-			fmt.Fprintf(out, "  - [%s %s] %s\n", n.displayTime().Local().Format("01-02 15:04"), who, n.Text)
+			fmt.Fprintf(out, "  - [%s %s] %s\n", n.DisplayTime().Local().Format("01-02 15:04"), who, n.Text)
 		}
 	}
 	return nil

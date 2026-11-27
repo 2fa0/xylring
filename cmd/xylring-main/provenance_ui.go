@@ -169,9 +169,9 @@ func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
 	if full != "" {
 		tip += "\n" + trMessage(full)
 	}
-	if s := t.ring.stamp; s.p.agent != "" && s.expires > time.Now().Unix() {
+	if s := t.ring.stamp; s.p.Agent != "" && s.expires > time.Now().Unix() {
 		mins := max(1, int(time.Until(time.Unix(s.expires, 0)).Minutes()))
-		tip += "\n" + fmt.Sprintf(tr("生效印章：%s · 剩余 %d 分钟"), s.p.description(), mins)
+		tip += "\n" + fmt.Sprintf(tr("生效印章：%s · 剩余 %d 分钟"), s.p.Description(), mins)
 	}
 	row := ui.ButtonBase(c.Key(key)).
 		Tooltip(tip).
@@ -201,10 +201,10 @@ func (a *app) ringStatusControl(c *ui.Context, t *repoTab, key string) {
 func provenanceInputs(c *ui.Context, key string, p *provenance, disabled bool) bool {
 	changed := false
 	ui.Row(c).Gap(6).FillWidth().Children(func() {
-		if ui.TextInput(c.Key(key+"-agent"), &p.agent).Placeholder(tr("Agent（严格模式人工填 human）")).Label("AI Agent").Grow(1).MinWidth(0).Disabled(disabled).Changed() {
+		if ui.TextInput(c.Key(key+"-agent"), &p.Agent).Placeholder(tr("Agent（严格模式人工填 human）")).Label("AI Agent").Grow(1).MinWidth(0).Disabled(disabled).Changed() {
 			changed = true
 		}
-		if ui.TextInput(c.Key(key+"-model"), &p.model).Placeholder(tr("AI 提交必填，人工留空")).Label(tr("AI 模型（AI 提交必填）")).Grow(1).MinWidth(0).Disabled(disabled).Changed() {
+		if ui.TextInput(c.Key(key+"-model"), &p.Model).Placeholder(tr("AI 提交必填，人工留空")).Label(tr("AI 模型（AI 提交必填）")).Grow(1).MinWidth(0).Disabled(disabled).Changed() {
 			changed = true
 		}
 	})
@@ -212,8 +212,8 @@ func provenanceInputs(c *ui.Context, key string, p *provenance, disabled bool) b
 }
 func (a *app) commitRingControl(c *ui.Context, t *repoTab) {
 	label := tr("◎ 记录 AI 协同…")
-	if t.commitProv.agent != "" {
-		label = t.commitProv.description()
+	if t.commitProv.Agent != "" {
+		label = t.commitProv.Description()
 	}
 	if ui.Button(c.Key("commit-ring-toggle"), label).Disabled(t.commitBusy).Clicked() {
 		t.commitRingOpen = !t.commitRingOpen
@@ -222,20 +222,20 @@ func (a *app) commitRingControl(c *ui.Context, t *repoTab) {
 		if provenanceInputs(c, "commit-ring", &t.commitProv, t.commitBusy) {
 			t.commitProvEdited = true
 		}
-		hasStamp := t.ring.stamp.p.agent != "" && t.ring.stamp.expires > time.Now().Unix()
+		hasStamp := t.ring.stamp.p.Agent != "" && t.ring.stamp.expires > time.Now().Unix()
 		ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 			for i, p := range a.recentProvenance {
 				p := p
-				if ui.Button(c.Key(fmt.Sprintf("recent-prov-%d", i)), p.description()).Disabled(t.commitBusy).Clicked() {
+				if ui.Button(c.Key(fmt.Sprintf("recent-prov-%d", i)), p.Description()).Disabled(t.commitBusy).Clicked() {
 					t.commitProv = p
 					t.commitProvEdited = true
 				}
 			}
 			if hasStamp {
 				s := t.ring.stamp
-				if ui.Button(c.Key("apply-stamp"), tr("应用建议印章：")+s.p.description()).Disabled(t.commitBusy).Clicked() {
+				if ui.Button(c.Key("apply-stamp"), tr("应用建议印章：")+s.p.Description()).Disabled(t.commitBusy).Clicked() {
 					t.commitProv = s.p
-					t.commitProv.attribution = ""
+					t.commitProv.Attribution = ""
 					t.commitProvEdited = true
 				}
 			}
@@ -248,14 +248,14 @@ func (a *app) commitRingControl(c *ui.Context, t *repoTab) {
 	}
 }
 func (a *app) rememberProvenance(p provenance) {
-	if p.agent == "" {
+	if p.Agent == "" {
 		return
 	}
-	p.attribution = ""
-	p.badge = ""
+	p.Attribution = ""
+	p.Badge = ""
 	next := []provenance{p}
 	for _, old := range a.recentProvenance {
-		if old.agent != p.agent || old.model != p.model {
+		if old.Agent != p.Agent || old.Model != p.Model {
 			next = append(next, old)
 		}
 		if len(next) == 8 {
@@ -308,11 +308,11 @@ func renderRuleDiff(c *ui.Context, diff string, th *ui.Theme) {
 
 func findRuleStatus(statuses []ruleFileStatus, target string) ruleFileStatus {
 	for _, s := range statuses {
-		if s.target == target {
+		if s.Target == target {
 			return s
 		}
 	}
-	return ruleFileStatus{target: target}
+	return ruleFileStatus{Target: target}
 }
 
 func (a *app) ringModal(c *ui.Context) {
@@ -326,7 +326,7 @@ func (a *app) ringModal(c *ui.Context) {
 	isEnabled := strings.HasPrefix(t.ring.status, "已开启")
 	isOutdated := t.ring.status == "版本过旧"
 	isManual := strings.HasPrefix(t.ring.status, "需手动集成")
-	hasStamp := t.ring.stamp.p.agent != "" && t.ring.stamp.expires > time.Now().Unix()
+	hasStamp := t.ring.stamp.p.Agent != "" && t.ring.stamp.expires > time.Now().Unix()
 	container := isDockerRepoPath(t.path)
 
 	appModal(c.Key("ring-settings-modal"), &t.ring.open, tr("本仓库年轮记录"), 560, t.ring.busy, func() {
@@ -394,7 +394,7 @@ func (a *app) ringModal(c *ui.Context) {
 					ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
 						ui.Row(c).Gap(8).AlignItems(ui.Center).Wrap().Children(func() {
 							ui.Text(c, tr("生效印章")).FontSize(12.5).FontWeight(500).TextColor(th.Text)
-							chipSoft(c, "ring-stamp-desc", t.ring.stamp.p.description(), woodColor(th), false)
+							chipSoft(c, "ring-stamp-desc", t.ring.stamp.p.Description(), woodColor(th), false)
 						})
 						ui.Text(c, ttlText).FontSize(11.5).TextColor(th.TextMuted)
 					})
@@ -420,28 +420,28 @@ func (a *app) ringModal(c *ui.Context) {
 				st := findRuleStatus(t.ring.ruleStatuses, target)
 				settingsCardDivider(c)
 				row := ui.Row(c.Key("rule-row-"+target)).FillWidth().Padding(9, 14).Gap(8).AlignItems(ui.Center)
-				if t.ring.preview != nil && t.ring.preview.target == target {
+				if t.ring.preview != nil && t.ring.preview.Target == target {
 					row.Background(th.Accent.Alpha(0.06))
 				}
 				row.Children(func() {
 					ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, target).Font("monospace").FontSize(12).FontWeight(500).TextColor(th.Text).SingleLine().MinWidth(0).Tooltip(target)
 						switch {
-						case st.hasRule && !st.outdated:
+						case st.HasRule && !st.Outdated:
 							chipSoft(c, "rule-status-"+target, tr("已写入"), th.Success, false)
-						case st.hasRule && st.outdated:
+						case st.HasRule && st.Outdated:
 							chipSoft(c, "rule-status-"+target, tr("可更新"), th.Warning, false)
-						case st.exists:
+						case st.Exists:
 							chipSoft(c, "rule-status-"+target, tr("已有文件"), th.TextMuted, false)
 						}
 					})
 					ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
 						switch {
-						case !st.hasRule:
+						case !st.HasRule:
 							if ui.Button(c.Key("rule-add-"+target), tr("写入…")).Disabled(t.ring.busy).Clicked() {
 								a.previewRingRulesFor(t, target, false)
 							}
-						case st.outdated:
+						case st.Outdated:
 							if ui.Button(c.Key("rule-update-"+target), tr("更新…")).Disabled(t.ring.busy).Clicked() {
 								a.previewRingRulesFor(t, target, false)
 							}
@@ -458,10 +458,10 @@ func (a *app) ringModal(c *ui.Context) {
 			}
 			if preview := t.ring.preview; preview != nil {
 				settingsCardDivider(c)
-				previewTitle := fmt.Sprintf(tr("预览写入：%s"), preview.target)
+				previewTitle := fmt.Sprintf(tr("预览写入：%s"), preview.Target)
 				confirmLabel := tr("确认写入")
-				if preview.remove {
-					previewTitle = fmt.Sprintf(tr("预览移除：%s"), preview.target)
+				if preview.Remove {
+					previewTitle = fmt.Sprintf(tr("预览移除：%s"), preview.Target)
 					confirmLabel = tr("确认移除")
 				}
 				ui.Column(c.Key("ring-rule-preview")).FillWidth().Padding(12, 14).Gap(8).Background(th.Background).Children(func() {
@@ -476,7 +476,7 @@ func (a *app) ringModal(c *ui.Context) {
 					})
 					ui.Scroll(c.Key("rule-diff-scroll")).Height(160).FillWidth().Radius(8).Border(1, th.Border).Background(th.Surface).Children(func() {
 						ui.Column(c).Padding(8, 10).Children(func() {
-							renderRuleDiff(c, preview.diff, th)
+							renderRuleDiff(c, preview.Diff, th)
 						})
 					})
 				})
@@ -512,7 +512,7 @@ func (a *app) previewRingRulesFor(t *repoTab, target string, remove bool) {
 			t.ring.err = ""
 			if err != nil {
 				t.ring.err = "预览规则修改失败：" + err.Error()
-			} else if p.diff == "" {
+			} else if p.Diff == "" {
 				a.refreshRingRules(t)
 			} else {
 				t.ring.preview = &p

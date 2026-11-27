@@ -66,7 +66,7 @@ func TestSplitShortstatKeepsProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := pool.get(c.prov); p.agent != "Cindy" || p.model != "exact-model" {
+	if p := pool.Get(c.prov); p.Agent != "Cindy" || p.Model != "exact-model" {
 		t.Fatalf("provenance lost: %+v", p)
 	}
 	if c.subject != "subject" {

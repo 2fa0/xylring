@@ -570,7 +570,7 @@ func (a *app) runCommitWorktree(t *repoTab) {
 		ctx, cancel := writeContext(repoPath, 30*time.Second)
 		defer cancel()
 		var err error
-		if !provEdited && prov.agent == "" && prov.model == "" {
+		if !provEdited && prov.Agent == "" && prov.Model == "" {
 			prov, err = messageProvenance(ctx, repoPath, msg)
 		}
 		var finalMsg string

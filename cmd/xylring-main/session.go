@@ -114,7 +114,7 @@ func (a *app) queueSessionWithPending(allowPendingRestore bool) {
 		BoardSort:       string(a.board.sortMode),
 	}
 	for _, p := range a.recentProvenance {
-		s.RecentProvenance = append(s.RecentProvenance, savedProvenance{Agent: p.agent, Model: p.model})
+		s.RecentProvenance = append(s.RecentProvenance, savedProvenance{Agent: p.Agent, Model: p.Model})
 	}
 	livePaths := make(map[string]bool, len(a.tabs))
 	for _, t := range a.tabs {
@@ -143,7 +143,7 @@ func (a *app) queueSessionWithPending(allowPendingRestore bool) {
 		}
 		s.Repos = append(s.Repos, savedRepo{
 			Path: t.path, Draft: t.commitMsg, Amend: t.commitAmend, Commit: commit, File: f, DockerName: name,
-			Provenance:       savedProvenance{Agent: t.commitProv.agent, Model: t.commitProv.model, Attribution: t.commitProv.attribution},
+			Provenance:       savedProvenance{Agent: t.commitProv.Agent, Model: t.commitProv.Model, Attribution: t.commitProv.Attribution},
 			ProvenanceEdited: t.commitProvEdited,
 		})
 	}
@@ -251,7 +251,7 @@ func (a *app) applySharedSessionState(s savedSession) {
 			if len(a.recentProvenance) >= 8 {
 				break
 			}
-			a.recentProvenance = append(a.recentProvenance, provenance{agent: p.Agent, model: p.Model})
+			a.recentProvenance = append(a.recentProvenance, provenance{Agent: p.Agent, Model: p.Model})
 		}
 	}
 	if len(a.repoOrder) == 0 && len(s.RepoOrder) > 0 {
@@ -298,9 +298,9 @@ func mergeSavedRepoIntoTab(tab *repoTab, saved savedRepo) {
 	}
 	if !tab.commitProvEdited && tab.commitProv == (provenance{}) && (saved.Provenance != (savedProvenance{}) || saved.ProvenanceEdited) {
 		tab.commitProv = provenance{
-			agent:       saved.Provenance.Agent,
-			model:       saved.Provenance.Model,
-			attribution: saved.Provenance.Attribution,
+			Agent:       saved.Provenance.Agent,
+			Model:       saved.Provenance.Model,
+			Attribution: saved.Provenance.Attribution,
 		}
 		tab.commitProvEdited = saved.ProvenanceEdited
 	}

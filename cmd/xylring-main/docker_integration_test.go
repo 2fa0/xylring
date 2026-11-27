@@ -275,7 +275,7 @@ printf '\211PNG\r\n\032\n' > pic.png`)
 			if err := stageAll(ctx, root); err != nil {
 				t.Fatal(err)
 			}
-			msg, err := applyProvenanceTrailers(ctx, root, "container commit", provenance{agent: "Pi", model: "test-model"})
+			msg, err := applyProvenanceTrailers(ctx, root, "container commit", provenance{Agent: "Pi", Model: "test-model"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -297,13 +297,13 @@ printf '\211PNG\r\n\032\n' > pic.png`)
 			dockerTestExec(t, name, "cd "+containerPath+` &&
 printf 'agent=Pi\nmodel=probe-model\nexpires=9999999999\nonce=0\n' > .git/xylring-stamp`)
 			stamp, err := readStamp(ctx, root)
-			if err != nil || stamp.p.agent != "Pi" || stamp.p.model != "probe-model" {
+			if err != nil || stamp.p.Agent != "Pi" || stamp.p.Model != "probe-model" {
 				t.Fatalf("stamp = %+v, %v", stamp.p, err)
 			}
 			if status := ringHookStatus(ctx, root); status != "未开启" {
 				t.Fatalf("hook status = %q", status)
 			}
-			if err := writeStamp(ctx, root, ringStamp{p: provenance{agent: "Pi", model: "m"}, expires: time.Now().Add(time.Hour).Unix()}); err == nil || !strings.Contains(err.Error(), "暂不支持") {
+			if err := writeStamp(ctx, root, ringStamp{p: provenance{Agent: "Pi", Model: "m"}, expires: time.Now().Add(time.Hour).Unix()}); err == nil || !strings.Contains(err.Error(), "暂不支持") {
 				t.Fatalf("stamp write was not blocked: %v", err)
 			}
 			if err := installRingHook(ctx, root); err == nil || !strings.Contains(err.Error(), "暂不支持") {

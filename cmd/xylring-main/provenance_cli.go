@@ -94,15 +94,15 @@ func runRingCLI(ctx context.Context, dir string, args []string, out io.Writer) e
 		if err != nil {
 			return err
 		}
-		if s.p.agent == "" {
+		if s.p.Agent == "" {
 			fmt.Fprintln(out, "无生效印章")
 		} else {
-			fmt.Fprintf(out, "%s · 剩余 %s · once=%t\n", s.p.description(), time.Until(time.Unix(s.expires, 0)).Round(time.Second), s.once)
+			fmt.Fprintf(out, "%s · 剩余 %s · once=%t\n", s.p.Description(), time.Until(time.Unix(s.expires, 0)).Round(time.Second), s.once)
 		}
 		return nil
 	}
 	if *ttl <= 0 {
 		return errors.New("TTL 必须大于零")
 	}
-	return writeStamp(ctx, dir, ringStamp{p: provenance{agent: *agent, model: *model}, expires: time.Now().Add(*ttl).Unix(), once: *once})
+	return writeStamp(ctx, dir, ringStamp{p: provenance{Agent: *agent, Model: *model}, expires: time.Now().Add(*ttl).Unix(), once: *once})
 }

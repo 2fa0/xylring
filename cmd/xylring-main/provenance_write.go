@@ -12,19 +12,8 @@ import (
 	"time"
 )
 
-func validateProvenanceModel(p provenance) error {
-	if strings.EqualFold(strings.TrimSpace(p.agent), "human") {
-		if p.model != "" {
-			return errors.New("人工提交不能填写 AI 模型")
-		}
-	} else if strings.TrimSpace(p.agent) != "" && strings.TrimSpace(p.model) == "" {
-		return errors.New("AI 提交必须填写实际模型名，模型未知时请先确认")
-	}
-	return nil
-}
-
 func applyProvenanceTrailers(ctx context.Context, dir, msg string, p provenance) (string, error) {
-	for _, s := range []string{p.agent, p.model, p.attribution} {
+	for _, s := range []string{p.Agent, p.Model, p.Attribution} {
 		if strings.ContainsAny(s, "\r\n\x00") {
 			return "", errors.New("年轮字段不能包含换行")
 		}
@@ -32,10 +21,10 @@ func applyProvenanceTrailers(ctx context.Context, dir, msg string, p provenance)
 	if err := validateProvenanceModel(p); err != nil {
 		return "", err
 	}
-	if p.attribution == "native" {
-		p.attribution = ""
+	if p.Attribution == "native" {
+		p.Attribution = ""
 	}
-	if p.agent == "" {
+	if p.Agent == "" {
 		p = provenance{}
 	}
 	// Git determines trailer boundaries; strip duplicate AI keys in separate
@@ -59,7 +48,7 @@ func applyProvenanceTrailers(ctx context.Context, dir, msg string, p provenance)
 	}
 
 	args := []string{"interpret-trailers", "--if-exists", "replace", "--if-missing", "add", "--trim-empty"}
-	for _, pair := range [][2]string{{agentTrailer, p.agent}, {modelTrailer, p.model}, {attributionTrailer, p.attribution}} {
+	for _, pair := range [][2]string{{agentTrailer, p.Agent}, {modelTrailer, p.Model}, {attributionTrailer, p.Attribution}} {
 		args = append(args, "--trailer", pair[0]+": "+pair[1])
 	}
 	out, err := runGitInput(ctx, dir, msg, args...)
@@ -95,9 +84,9 @@ func readStamp(ctx context.Context, dir string) (ringStamp, error) {
 		k, v, _ := strings.Cut(line, "=")
 		switch k {
 		case "agent":
-			s.p.agent = v
+			s.p.Agent = v
 		case "model":
-			s.p.model = v
+			s.p.Model = v
 		case "expires":
 			s.expires, _ = strconv.ParseInt(v, 10, 64)
 		case "once":
@@ -107,7 +96,7 @@ func readStamp(ctx context.Context, dir string) (ringStamp, error) {
 	if s.expires <= time.Now().Unix() {
 		return ringStamp{}, nil
 	}
-	s.p.attribution = "stamp"
+	s.p.Attribution = "stamp"
 	return s, nil
 }
 
@@ -149,10 +138,10 @@ func writeStamp(ctx context.Context, dir string, s ringStamp) error {
 	if err := validateProvenanceModel(s.p); err != nil {
 		return err
 	}
-	if strings.TrimSpace(s.p.agent) == "" || strings.ContainsAny(s.p.agent+s.p.model, "\r\n\x00") {
+	if strings.TrimSpace(s.p.Agent) == "" || strings.ContainsAny(s.p.Agent+s.p.Model, "\r\n\x00") {
 		return errors.New("请填写有效 Agent，字段不能包含换行")
 	}
-	s.p.agent = strings.TrimSpace(s.p.agent)
+	s.p.Agent = strings.TrimSpace(s.p.Agent)
 	path, err := gitFile(ctx, dir, "xylring-stamp")
 	if err != nil {
 		return err
@@ -166,7 +155,7 @@ func writeStamp(ctx context.Context, dir string, s ringStamp) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	_, err = fmt.Fprintf(f, "agent=%s\nmodel=%s\nexpires=%d\nonce=%d\n", s.p.agent, s.p.model, s.expires, once)
+	_, err = fmt.Fprintf(f, "agent=%s\nmodel=%s\nexpires=%d\nonce=%d\n", s.p.Agent, s.p.Model, s.expires, once)
 	closeErr := f.Close()
 	if err != nil {
 		return err
@@ -351,28 +340,6 @@ fi
     [ "$once" != 1 ] || rm -f "$stamp"
 ) 2>/dev/null
 exit 0
-`
-}
-func provenanceRuleSnippet() string {
-	return `<!-- xylring:provenance:start v1 -->
-## Commit provenance
-When you run git commit, append these Git trailers after a blank line:
-
-AI-Agent: <your agent/product name>
-AI-Model: <your exact model name>
-
-AI-assisted commits require exactly one nonempty AI-Agent and one nonempty AI-Model.
-Use your actual model name; if unknown, confirm it before committing. Never guess.
-Assisted-by and Co-authored-by do not replace the AI-Agent trailer.
-After committing, inspect git log -1 --format=%B and fix missing or invalid
-trailers on this task's own commit before reporting completion.
-If a provenance hook rejects the message, follow its template and retry normally.
-Never bypass it with --no-verify, core.hooksPath overrides, or hook changes.
-Never declare AI-Agent: human for AI-assisted work. Strict mode reserves that
-value for explicitly human-only commits, which must omit AI-Model and AI-Attribution.
-Do not add these trailers to commits the user authored without your help.
-If you ran xylring stamp during this task, run xylring stamp --clear when finished.
-<!-- xylring:provenance:end -->
 `
 }
 

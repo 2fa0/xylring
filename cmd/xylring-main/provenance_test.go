@@ -21,16 +21,16 @@ func TestProvenanceVerifiedSignatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := parseProvenance(string(b)); p.agent != "Cindy" || p.model != "" {
+	if p := parseProvenance(string(b)); p.Agent != "Cindy" || p.Model != "" {
 		t.Fatalf("%+v", p)
 	}
 	for _, s := range []string{"Co-authored-by: Claude Opus 4.6 <human@example.com>", "Co-authored-by: Cindy <human@example.com>", "Assisted-by: Cindy"} {
-		if parseProvenance(s).agent != "" {
+		if parseProvenance(s).Agent != "" {
 			t.Fatalf("false match %q", s)
 		}
 	}
 	p := parseProvenance("AI-Agent: Codex\x1dAI-Model: gpt-5-codex\x1dAI-Attribution: stamp\x1dAssisted-by: Cindy (https://cindy.app)")
-	if p.agent != "Codex" || normalizeModel(p.model) != "GPT-5 Codex" || p.attribution != "stamp" {
+	if p.Agent != "Codex" || normalizeModel(p.Model) != "GPT-5 Codex" || p.Attribution != "stamp" {
 		t.Fatalf("%+v", p)
 	}
 	if normalizeModel("unknown-model") != "unknown-model" {
@@ -44,16 +44,16 @@ func TestProvenanceRecordAndPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.subject != "subject\x1fseparator" || pool.get(c.prov).agent != "Cindy" {
+	if c.subject != "subject\x1fseparator" || pool.Get(c.prov).Agent != "Cindy" {
 		t.Fatalf("%+v", c)
 	}
-	if pool.intern(provenance{agent: "Cindy"}) != c.prov {
+	if pool.Intern(provenance{Agent: "Cindy"}) != c.prov {
 		t.Fatal("not interned")
 	}
 	for i := 0; i < 66000; i++ {
-		pool.intern(provenance{agent: fmt.Sprint(i)})
+		pool.Intern(provenance{Agent: fmt.Sprint(i)})
 	}
-	if len(pool.snapshot()) != 65536 || pool.get(pool.intern(provenance{agent: "overflow"})).agent != "其他" {
+	if len(pool.Snapshot()) != 65536 || pool.Get(pool.Intern(provenance{Agent: "overflow"})).Agent != "其他" {
 		t.Fatal("unbounded pool")
 	}
 	// Mirrors the original layout solely to guard the per-commit memory budget.
@@ -74,7 +74,7 @@ func TestProvenanceRecordAndPool(t *testing.T) {
 func TestApplyProvenanceTrailers(t *testing.T) {
 	dir, _ := initTestRepo(t)
 	ctx := context.Background()
-	p := provenance{agent: "Cindy", model: "exact-model"}
+	p := provenance{Agent: "Cindy", Model: "exact-model"}
 	for _, msg := range []string{"subject\n\nbody\n\nSigned-off-by: Human <h@example.com>\n", "subject\n\n# comment\n", "subject\n\n# ------------------------ >8 ------------------------\n# ignored\n"} {
 		out, err := applyProvenanceTrailers(ctx, dir, msg, p)
 		if err != nil {
@@ -93,7 +93,7 @@ func TestApplyProvenanceTrailers(t *testing.T) {
 	if err != nil || strings.Count(out, "AI-Agent:") != 1 {
 		t.Fatalf("duplicate replacement: %q %v", out, err)
 	}
-	if _, err := applyProvenanceTrailers(ctx, dir, "s", provenance{agent: "bad\nInjected: x"}); err == nil {
+	if _, err := applyProvenanceTrailers(ctx, dir, "s", provenance{Agent: "bad\nInjected: x"}); err == nil {
 		t.Fatal("newline allowed")
 	}
 }
@@ -134,14 +134,14 @@ func TestRingHookStampLifecycle(t *testing.T) {
 	if err := installRingHook(ctx, dir); err != nil {
 		t.Fatal(err)
 	}
-	stamp := ringStamp{p: provenance{agent: "Cindy", model: "model"}, expires: time.Now().Add(time.Minute).Unix()}
+	stamp := ringStamp{p: provenance{Agent: "Cindy", Model: "model"}, expires: time.Now().Add(time.Minute).Unix()}
 	if err := writeStamp(ctx, dir, stamp); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
 		git("commit", "--allow-empty", "-m", "stamped")
 		p := parseProvenance(string(git("log", "-1", "--format=%B")))
-		if p.agent != "Cindy" || p.attribution != "stamp" {
+		if p.Agent != "Cindy" || p.Attribution != "stamp" {
 			t.Fatalf("%+v", p)
 		}
 	}
@@ -226,7 +226,7 @@ func TestRingLinkedWorktree(t *testing.T) {
 	if err := installRingHook(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeStamp(ctx, other, ringStamp{p: provenance{agent: "Cindy", model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
+	if err := writeStamp(ctx, other, ringStamp{p: provenance{Agent: "Cindy", Model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runGit(ctx, other, "commit", "--allow-empty", "-m", "linked"); err != nil {
@@ -237,7 +237,7 @@ func TestRingLinkedWorktree(t *testing.T) {
 		t.Fatalf("%s", out)
 	}
 	s, _ := readStamp(ctx, dir)
-	if s.p.agent != "" {
+	if s.p.Agent != "" {
 		t.Fatal("stamp leaked across worktrees")
 	}
 }
@@ -247,27 +247,27 @@ func TestRulePreviewAndRecentProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(p.path); !os.IsNotExist(err) {
+	if _, err := os.Stat(p.Path); !os.IsNotExist(err) {
 		t.Fatal("preview wrote file")
 	}
 	if err := saveRulePreview(p); err != nil {
 		t.Fatal(err)
 	}
 	again, err := previewRuleSnippet(dir, "AGENTS.md", false)
-	if err != nil || again.diff != "" {
-		t.Fatalf("not idempotent %v %q", err, again.diff)
+	if err != nil || again.Diff != "" {
+		t.Fatalf("not idempotent %v %q", err, again.Diff)
 	}
 	removed, _ := previewRuleSnippet(dir, "AGENTS.md", true)
-	if strings.Contains(string(removed.after), "xylring:provenance:") {
+	if strings.Contains(string(removed.After), "xylring:provenance:") {
 		t.Fatal("not removed")
 	}
-	os.WriteFile(p.path, []byte("concurrent edit"), 0644)
+	os.WriteFile(p.Path, []byte("concurrent edit"), 0644)
 	if saveRulePreview(removed) == nil {
 		t.Fatal("clobbered edit")
 	}
 	a := &app{}
 	for i := 0; i < 12; i++ {
-		a.rememberProvenance(provenance{agent: fmt.Sprint(i)})
+		a.rememberProvenance(provenance{Agent: fmt.Sprint(i)})
 	}
 	if len(a.recentProvenance) != 8 {
 		t.Fatal("recent cap")
@@ -290,7 +290,7 @@ func TestRingUIControls(t *testing.T) {
 	}
 	tt.Type("Cindy")
 	tt.Frame()
-	if tab.commitProv.agent != "Cindy" || !tab.commitProvEdited {
+	if tab.commitProv.Agent != "Cindy" || !tab.commitProvEdited {
 		t.Fatal("input not committed")
 	}
 	if path := os.Getenv("XYLRING_TEST_SCREENSHOT"); path != "" {
@@ -309,7 +309,7 @@ func TestRingUIControls(t *testing.T) {
 	}
 	tt.Frame()
 	tt.Frame()
-	if tab.commitProv.agent != "" || !tab.commitProvEdited {
+	if tab.commitProv.Agent != "" || !tab.commitProvEdited {
 		t.Fatal("clear not applied")
 	}
 
@@ -322,7 +322,7 @@ func TestRingHookSourceSkipsAndFailure(t *testing.T) {
 	if err := installRingHook(ctx, dir); err != nil {
 		t.Fatal(err)
 	}
-	writeStamp(ctx, dir, ringStamp{p: provenance{agent: "Cindy", model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()})
+	writeStamp(ctx, dir, ringStamp{p: provenance{Agent: "Cindy", Model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()})
 	msg := filepath.Join(dir, "message")
 	for _, source := range []string{"commit", "merge", "squash"} {
 		os.WriteFile(msg, []byte("human\n"), 0600)
@@ -454,10 +454,10 @@ func TestInspectRuleFilesAndRingModalFlow(t *testing.T) {
 	if len(statuses) != 3 {
 		t.Fatalf("unexpected statuses: %+v", statuses)
 	}
-	if statuses[0].exists || statuses[0].hasRule {
+	if statuses[0].Exists || statuses[0].HasRule {
 		t.Fatalf("AGENTS.md should not exist: %+v", statuses[0])
 	}
-	if !statuses[1].exists || statuses[1].hasRule {
+	if !statuses[1].Exists || statuses[1].HasRule {
 		t.Fatalf("CLAUDE.md should exist without rule: %+v", statuses[1])
 	}
 
@@ -470,7 +470,7 @@ func TestInspectRuleFilesAndRingModalFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	statuses = inspectRuleFiles(dir)
-	if !statuses[2].exists || !statuses[2].hasRule || !statuses[2].outdated {
+	if !statuses[2].Exists || !statuses[2].HasRule || !statuses[2].Outdated {
 		t.Fatalf("expected outdated cursor rule: %+v", statuses[2])
 	}
 
@@ -508,7 +508,7 @@ func TestInspectRuleFilesAndRingModalFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUpdates(t, updates, func() bool {
-		return !tab.ring.busy && !tab.ring.rulesBusy && tab.ring.preview == nil && findRuleStatus(tab.ring.ruleStatuses, "AGENTS.md").hasRule
+		return !tab.ring.busy && !tab.ring.rulesBusy && tab.ring.preview == nil && findRuleStatus(tab.ring.ruleStatuses, "AGENTS.md").HasRule
 	})
 	tt.Frame()
 	if !tt.HasText("已写入") {

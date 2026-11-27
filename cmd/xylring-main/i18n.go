@@ -1,35 +1,17 @@
 package main
 
 import (
-	_ "embed"
-	"encoding/json"
 	"strings"
-	"sync/atomic"
 
+	"github.com/2fa0/xylring/internal/i18n"
 	"github.com/egoist/mygo"
 )
 
-//go:embed locales/en.json
-var englishJSON []byte
-
-var englishText = func() map[string]string {
-	var messages map[string]string
-	if err := json.Unmarshal(englishJSON, &messages); err != nil {
-		panic(err)
-	}
-	return messages
-}()
-
-// Workers can format status messages while the UI changes language.
-var englishUI atomic.Bool
+var englishText = i18n.EnglishText
+var englishUI = &i18n.EnglishUI
 
 func tr(text string) string {
-	if englishUI.Load() {
-		if translated, ok := englishText[text]; ok {
-			return translated
-		}
-	}
-	return text
+	return i18n.Tr(text)
 }
 
 func validLanguage(language string) bool {

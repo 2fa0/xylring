@@ -48,8 +48,8 @@ func (d *commitDetails) text() string {
 		parents = tr("无（初始提交）")
 	}
 	ring := ""
-	if p := d.prov; p.agent != "" {
-		ring = tr("年轮印记：") + p.description() + "\n"
+	if p := d.prov; p.Agent != "" {
+		ring = tr("年轮印记：") + p.Description() + "\n"
 	}
 	return ring + fmt.Sprintf(tr("提交：%s\n父提交：%s\n作者：%s <%s>\n创作时间：%s\n提交者：%s <%s>\n提交时间：%s\n\n%s"), d.hash, parents, d.author, d.authorEmail, d.authored, d.committer, d.commitEmail, d.at, d.message)
 }

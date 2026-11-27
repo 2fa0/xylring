@@ -504,7 +504,7 @@ func TestDockerStageAndCommitInContainer(t *testing.T) {
 	if err := stageFile(context.Background(), root, "new.txt"); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := applyProvenanceTrailers(context.Background(), root, "add file", provenance{agent: "Pi", model: "test-model"})
+	msg, err := applyProvenanceTrailers(context.Background(), root, "add file", provenance{Agent: "Pi", Model: "test-model"})
 	if err != nil {
 		t.Fatal(err)
 	}

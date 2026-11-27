@@ -13,7 +13,7 @@ func TestCommitDetailsLanguageSwitchPreservesUserText(t *testing.T) {
 	old := englishUI.Load()
 	t.Cleanup(func() { englishUI.Store(old) })
 	englishUI.Store(false)
-	d := &commitDetails{hash: "abc123", author: "中文作者", authorEmail: "author@example.com", committer: "Test", commitEmail: "test@example.com", message: "用户提交说明\n中文正文", prov: provenance{agent: "human"}}
+	d := &commitDetails{hash: "abc123", author: "中文作者", authorEmail: "author@example.com", committer: "Test", commitEmail: "test@example.com", message: "用户提交说明\n中文正文", prov: provenance{Agent: "human"}}
 	d.updateViewLanguage()
 	chineseView := d.view.Buffer
 	if !strings.HasPrefix(d.text(), "年轮印记：") || !strings.Contains(chineseView.String(), "父提交：无（初始提交）") {
@@ -57,26 +57,26 @@ func TestCachedProvenanceBadgesFollowLanguage(t *testing.T) {
 	t.Cleanup(func() { englishUI.Store(old) })
 	englishUI.Store(false)
 	pool := &provenanceTable{}
-	human := pool.intern(provenance{agent: "human"})
-	custom := pool.intern(provenance{agent: "人工", model: "中文模型"})
-	if pool.get(human).badge != "人工" {
+	human := pool.Intern(provenance{Agent: "human"})
+	custom := pool.Intern(provenance{Agent: "人工", Model: "中文模型"})
+	if pool.Get(human).Badge != "人工" {
 		t.Fatal("missing original human badge")
 	}
 	englishUI.Store(true)
-	if pool.get(human).badge != "Human" {
-		t.Fatalf("cached badge retained Chinese: %q", pool.get(human).badge)
+	if pool.Get(human).Badge != "Human" {
+		t.Fatalf("cached badge retained Chinese: %q", pool.Get(human).Badge)
 	}
-	if pool.values[human].badge != "人工" {
+	if pool.Snapshot()[human].Badge != "人工" {
 		t.Fatal("display translation mutated stored provenance")
 	}
-	if pool.get(custom).badge != "◎ 人工 · 中文模型" {
+	if pool.Get(custom).Badge != "◎ 人工 · 中文模型" {
 		t.Fatal("custom agent or model was translated")
 	}
-	if pool.get(1).badge != "◎ Other" {
+	if pool.Get(1).Badge != "◎ Other" {
 		t.Fatal("overflow badge retained Chinese")
 	}
 	englishUI.Store(false)
-	if pool.get(human).badge != "人工" {
+	if pool.Get(human).Badge != "人工" {
 		t.Fatal("cached badge cannot switch back to Chinese")
 	}
 }

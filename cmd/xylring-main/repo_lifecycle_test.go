@@ -256,7 +256,7 @@ func TestRingCLIFromSubdirectory(t *testing.T) {
 		}
 	}
 	stamp, err := readStamp(ctx, dir)
-	if err != nil || stamp.p.agent != "Cindy" || ringHookStatus(ctx, dir) != "已开启（v1）" {
+	if err != nil || stamp.p.Agent != "Cindy" || ringHookStatus(ctx, dir) != "已开启（v1）" {
 		t.Fatalf("CLI did not target the repository: stamp=%+v err=%v", stamp, err)
 	}
 }

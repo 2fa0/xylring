@@ -473,16 +473,16 @@ func (a *app) omniSuggestions(t *repoTab, term string) []omniSuggestItem {
 
 	var agents, models []string
 	seenProv := map[string]bool{}
-	for idx, p := range t.provenance.snapshot() {
+	for idx, p := range t.provenance.Snapshot() {
 		// Index 0 is empty and index 1 is the overflow sentinel ("其他"), not a real commit agent.
 		if idx < 2 {
 			continue
 		}
-		if p.agent != "" && !seenProv["Agent:"+p.agent] && (clean == "" || strings.Contains(strings.ToLower(p.agent), lower)) {
-			seenProv["Agent:"+p.agent] = true
-			agents = append(agents, p.agent)
+		if p.Agent != "" && !seenProv["Agent:"+p.Agent] && (clean == "" || strings.Contains(strings.ToLower(p.Agent), lower)) {
+			seenProv["Agent:"+p.Agent] = true
+			agents = append(agents, p.Agent)
 		}
-		model := normalizeModel(p.model)
+		model := normalizeModel(p.Model)
 		if model != "" && !seenProv["模型:"+model] && (clean == "" || strings.Contains(strings.ToLower(model), lower)) {
 			seenProv["模型:"+model] = true
 			models = append(models, model)

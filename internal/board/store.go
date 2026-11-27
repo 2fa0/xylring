@@ -1,4 +1,4 @@
-package main
+package board
 
 import (
 	"bufio"
@@ -19,113 +19,115 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/2fa0/xylring/internal/i18n"
 )
 
-type boardStatus string
+type BoardStatus string
 
 const (
-	boardTodo   boardStatus = "todo"
-	boardDoing  boardStatus = "doing"
-	boardReview boardStatus = "review"
-	boardDone   boardStatus = "done"
+	BoardTodo   BoardStatus = "todo"
+	BoardDoing  BoardStatus = "doing"
+	BoardReview BoardStatus = "review"
+	BoardDone   BoardStatus = "done"
 )
 
-var boardStatuses = []boardStatus{
-	boardTodo,
-	boardDoing,
-	boardReview,
-	boardDone,
+var BoardStatuses = []BoardStatus{
+	BoardTodo,
+	BoardDoing,
+	BoardReview,
+	BoardDone,
 }
 
-func parseBoardStatus(raw string) (boardStatus, bool) {
+func ParseBoardStatus(raw string) (BoardStatus, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "todo", "待办":
-		return boardTodo, true
+		return BoardTodo, true
 	case "doing", "in_progress", "in-progress", "进行中":
-		return boardDoing, true
+		return BoardDoing, true
 	case "review", "待审阅":
-		return boardReview, true
+		return BoardReview, true
 	case "done", "completed", "已完成":
-		return boardDone, true
+		return BoardDone, true
 	default:
 		return "", false
 	}
 }
 
-func boardStatusLabel(s boardStatus) string {
+func BoardStatusLabel(s BoardStatus) string {
 	switch s {
-	case boardTodo:
+	case BoardTodo:
 		return "待办"
-	case boardDoing:
+	case BoardDoing:
 		return "进行中"
-	case boardReview:
+	case BoardReview:
 		return "待审阅"
-	case boardDone:
+	case BoardDone:
 		return "已完成"
 	default:
 		return "待办"
 	}
 }
 
-type boardPriority string
+type BoardPriority string
 
 const (
-	boardPriorityNone            boardPriority = ""
-	boardPriorityUrgentImportant boardPriority = "urgent_important"
-	boardPriorityImportant       boardPriority = "important"
-	boardPriorityUrgent          boardPriority = "urgent"
-	boardPriorityLow             boardPriority = "low"
+	BoardPriorityNone            BoardPriority = ""
+	BoardPriorityUrgentImportant BoardPriority = "urgent_important"
+	BoardPriorityImportant       BoardPriority = "important"
+	BoardPriorityUrgent          BoardPriority = "urgent"
+	BoardPriorityLow             BoardPriority = "low"
 )
 
-var boardPriorities = []boardPriority{
-	boardPriorityUrgentImportant,
-	boardPriorityImportant,
-	boardPriorityUrgent,
-	boardPriorityLow,
+var BoardPriorities = []BoardPriority{
+	BoardPriorityUrgentImportant,
+	BoardPriorityImportant,
+	BoardPriorityUrgent,
+	BoardPriorityLow,
 }
 
-func parseBoardPriority(raw string) (boardPriority, bool) {
+func ParseBoardPriority(raw string) (BoardPriority, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "none", "clear", "unset", "无", "未设置":
-		return boardPriorityNone, true
+		return BoardPriorityNone, true
 	case "urgent_important", "urgent-important", "important_urgent", "important-urgent", "q1", "p1", "重要且紧急", "重要紧急":
-		return boardPriorityUrgentImportant, true
+		return BoardPriorityUrgentImportant, true
 	case "important", "important_not_urgent", "important-not-urgent", "q2", "p2", "重要不紧急":
-		return boardPriorityImportant, true
+		return BoardPriorityImportant, true
 	case "urgent", "urgent_not_important", "urgent-not-important", "q3", "p3", "紧急不重要":
-		return boardPriorityUrgent, true
+		return BoardPriorityUrgent, true
 	case "low", "not_important_not_urgent", "not-important-not-urgent", "neither", "q4", "p4", "不重要不紧急":
-		return boardPriorityLow, true
+		return BoardPriorityLow, true
 	default:
 		return "", false
 	}
 }
 
-func boardPriorityLabel(p boardPriority) string {
+func BoardPriorityLabel(p BoardPriority) string {
 	switch p {
-	case boardPriorityUrgentImportant:
+	case BoardPriorityUrgentImportant:
 		return "重要且紧急"
-	case boardPriorityImportant:
+	case BoardPriorityImportant:
 		return "重要不紧急"
-	case boardPriorityUrgent:
+	case BoardPriorityUrgent:
 		return "紧急不重要"
-	case boardPriorityLow:
+	case BoardPriorityLow:
 		return "不重要不紧急"
 	default:
 		return "未设置"
 	}
 }
 
-type boardDueState int
+type BoardDueState int
 
 const (
-	boardDueNone boardDueState = iota
+	boardDueNone BoardDueState = iota
 	boardDueUpcoming
-	boardDueToday
-	boardDueOverdue
+	BoardDueToday
+	BoardDueOverdue
 )
 
-func parseBoardDueDate(raw string) (string, bool) {
+func ParseBoardDueDate(raw string) (string, bool) {
 	s := strings.TrimSpace(raw)
 	switch strings.ToLower(s) {
 	case "", "none", "clear", "unset", "无", "未设置":
@@ -140,8 +142,8 @@ func parseBoardDueDate(raw string) (string, bool) {
 	return "", false
 }
 
-func boardTaskDueInfo(raw string, doneOrArchived bool, now time.Time) (parsed time.Time, state boardDueState, ok bool) {
-	norm, valid := parseBoardDueDate(raw)
+func BoardTaskDueInfo(raw string, doneOrArchived bool, now time.Time) (parsed time.Time, state BoardDueState, ok bool) {
+	norm, valid := ParseBoardDueDate(raw)
 	if !valid || norm == "" {
 		return time.Time{}, boardDueNone, false
 	}
@@ -157,15 +159,15 @@ func boardTaskDueInfo(raw string, doneOrArchived bool, now time.Time) (parsed ti
 	}
 	switch {
 	case dueDay.Before(today):
-		return dueDay, boardDueOverdue, true
+		return dueDay, BoardDueOverdue, true
 	case dueDay.Equal(today):
-		return dueDay, boardDueToday, true
+		return dueDay, BoardDueToday, true
 	default:
 		return dueDay, boardDueUpcoming, true
 	}
 }
 
-type boardCommitLink struct {
+type BoardCommitLink struct {
 	Repo    string    `json:"repo"`
 	Hash    string    `json:"hash"`
 	Subject string    `json:"subject,omitempty"`
@@ -176,7 +178,7 @@ type boardCommitLink struct {
 	AddedAt time.Time `json:"added_at"`
 }
 
-type boardNote struct {
+type BoardNote struct {
 	ID        string    `json:"id"`
 	Text      string    `json:"text"`
 	Author    string    `json:"author"`
@@ -185,39 +187,39 @@ type boardNote struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
-func (n boardNote) displayTime() time.Time {
+func (n BoardNote) DisplayTime() time.Time {
 	if !n.UpdatedAt.IsZero() && n.UpdatedAt.After(n.CreatedAt) {
 		return n.UpdatedAt
 	}
 	return n.CreatedAt
 }
 
-type boardTask struct {
+type BoardTask struct {
 	ID          string            `json:"id"`
 	Title       string            `json:"title"`
 	Description string            `json:"description,omitempty"`
-	Status      boardStatus       `json:"status"`
-	Priority    boardPriority     `json:"priority,omitempty"`
+	Status      BoardStatus       `json:"status"`
+	Priority    BoardPriority     `json:"priority,omitempty"`
 	DueDate     string            `json:"due_date,omitempty"`
 	Archived    bool              `json:"archived,omitempty"`
 	Pinned      bool              `json:"pinned,omitempty"`
 	Repos       []string          `json:"repos,omitempty"`
-	Commits     []boardCommitLink `json:"commits,omitempty"`
-	Notes       []boardNote       `json:"notes,omitempty"`
+	Commits     []BoardCommitLink `json:"commits,omitempty"`
+	Notes       []BoardNote       `json:"notes,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
-type boardFile struct {
+type BoardFile struct {
 	Version int         `json:"version"`
 	NextSeq int         `json:"next_seq"`
-	Tasks   []boardTask `json:"tasks"`
+	Tasks   []BoardTask `json:"tasks"`
 }
 
-var boardHomeDir = os.UserHomeDir
+var BoardHomeDir = os.UserHomeDir
 
 const (
-	boardEnvDirKey  = "XYLRING_BOARD_DIR"
+	BoardEnvDirKey  = "XYLRING_BOARD_DIR"
 	maxBoardBackups = 15
 )
 
@@ -225,7 +227,7 @@ type boardLocationConfig struct {
 	Dir string `json:"dir,omitempty"`
 }
 
-type boardStorageInfo struct {
+type BoardStorageInfo struct {
 	ActiveDir  string `json:"active_dir"`
 	DefaultDir string `json:"default_dir"`
 	BoardPath  string `json:"board_path"`
@@ -235,7 +237,7 @@ type boardStorageInfo struct {
 }
 
 func boardDefaultDir() (string, error) {
-	home, err := boardHomeDir()
+	home, err := BoardHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -276,7 +278,7 @@ func readBoardLocationConfig() (boardLocationConfig, error) {
 	return cfg, nil
 }
 
-func writeBoardLocationConfig(dir string) error {
+func WriteBoardLocationConfig(dir string) error {
 	p, err := boardLocationFilePath()
 	if err != nil {
 		return err
@@ -304,7 +306,7 @@ func writeBoardLocationConfig(dir string) error {
 }
 
 func resolveBoardDir() (dir string, isDefault bool, isCustom bool, fromEnv bool, err error) {
-	if envDir := strings.TrimSpace(os.Getenv(boardEnvDirKey)); envDir != "" {
+	if envDir := strings.TrimSpace(os.Getenv(BoardEnvDirKey)); envDir != "" {
 		return filepath.Clean(envDir), false, false, true, nil
 	}
 	defDir, err := boardDefaultDir()
@@ -319,17 +321,17 @@ func resolveBoardDir() (dir string, isDefault bool, isCustom bool, fromEnv bool,
 	return defClean, true, false, false, nil
 }
 
-func boardLocationInfo() (boardStorageInfo, error) {
+func BoardLocationInfo() (BoardStorageInfo, error) {
 	defDir, err := boardDefaultDir()
 	if err != nil {
-		return boardStorageInfo{}, err
+		return BoardStorageInfo{}, err
 	}
 	activeDir, _, isCustom, fromEnv, err := resolveBoardDir()
 	if err != nil {
-		return boardStorageInfo{}, err
+		return BoardStorageInfo{}, err
 	}
 	boardPath := filepath.Join(activeDir, "board.json")
-	return boardStorageInfo{
+	return BoardStorageInfo{
 		ActiveDir:  activeDir,
 		DefaultDir: filepath.Clean(defDir),
 		BoardPath:  boardPath,
@@ -353,11 +355,11 @@ func migrateLegacyBoardIfNeeded(targetPath string) error {
 	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
 		return nil
 	}
-	bf, err := readBoardFileAt(legacyPath)
+	bf, err := ReadBoardFileAt(legacyPath)
 	if err != nil {
 		return nil
 	}
-	if err := writeBoardFileAtomic(targetPath, bf); err != nil {
+	if err := WriteBoardFileAtomic(targetPath, bf); err != nil {
 		return err
 	}
 	migrated := legacyPath + ".migrated.bak"
@@ -366,7 +368,7 @@ func migrateLegacyBoardIfNeeded(targetPath string) error {
 	return nil
 }
 
-func boardConfigPath() (string, error) {
+func BoardConfigPath() (string, error) {
 	dir, isDefault, _, _, err := resolveBoardDir()
 	if err != nil {
 		return "", err
@@ -378,19 +380,19 @@ func boardConfigPath() (string, error) {
 	return target, nil
 }
 
-func normalizeBoardRepo(repo string) string {
+func NormalizeBoardRepo(repo string) string {
 	repo = strings.TrimSpace(repo)
 	if repo == "" {
 		return ""
 	}
-	return canonicalRepoDir(repo)
+	return CanonicalRepoDir(repo)
 }
 
 func normalizeBoardRepos(repos []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, r := range repos {
-		norm := normalizeBoardRepo(r)
+		norm := NormalizeBoardRepo(r)
 		if norm == "" || seen[norm] {
 			continue
 		}
@@ -401,7 +403,7 @@ func normalizeBoardRepos(repos []string) []string {
 }
 
 func appendBoardRepo(repos []string, repo string) []string {
-	norm := normalizeBoardRepo(repo)
+	norm := NormalizeBoardRepo(repo)
 	if norm == "" {
 		return repos
 	}
@@ -417,7 +419,7 @@ func newBoardNoteID() string {
 	return "N-" + hex.EncodeToString(b[:])
 }
 
-func findBoardTaskIndex(tasks []boardTask, rawID string) int {
+func FindBoardTaskIndex(tasks []BoardTask, rawID string) int {
 	id := strings.TrimSpace(rawID)
 	if id == "" {
 		return -1
@@ -433,20 +435,20 @@ func findBoardTaskIndex(tasks []boardTask, rawID string) int {
 	return -1
 }
 
-func readBoardFileAt(path string) (boardFile, error) {
+func ReadBoardFileAt(path string) (BoardFile, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return boardFile{Version: 1, NextSeq: 1}, nil
+			return BoardFile{Version: 1, NextSeq: 1}, nil
 		}
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
 	if len(bytes.TrimSpace(b)) == 0 {
-		return boardFile{Version: 1, NextSeq: 1}, nil
+		return BoardFile{Version: 1, NextSeq: 1}, nil
 	}
-	var bf boardFile
+	var bf BoardFile
 	if err := json.Unmarshal(b, &bf); err != nil {
-		return boardFile{}, fmt.Errorf("解析看板数据失败: %w", err)
+		return BoardFile{}, fmt.Errorf("解析看板数据失败: %w", err)
 	}
 	if bf.Version == 0 {
 		bf.Version = 1
@@ -455,15 +457,15 @@ func readBoardFileAt(path string) (boardFile, error) {
 		bf.NextSeq = maxBoardSeq(bf.Tasks) + 1
 	}
 	for i := range bf.Tasks {
-		if _, ok := parseBoardStatus(string(bf.Tasks[i].Status)); !ok {
-			bf.Tasks[i].Status = boardTodo
+		if _, ok := ParseBoardStatus(string(bf.Tasks[i].Status)); !ok {
+			bf.Tasks[i].Status = BoardTodo
 		}
-		if p, ok := parseBoardPriority(string(bf.Tasks[i].Priority)); ok {
+		if p, ok := ParseBoardPriority(string(bf.Tasks[i].Priority)); ok {
 			bf.Tasks[i].Priority = p
 		} else {
-			bf.Tasks[i].Priority = boardPriorityNone
+			bf.Tasks[i].Priority = BoardPriorityNone
 		}
-		if d, ok := parseBoardDueDate(bf.Tasks[i].DueDate); ok {
+		if d, ok := ParseBoardDueDate(bf.Tasks[i].DueDate); ok {
 			bf.Tasks[i].DueDate = d
 		} else {
 			bf.Tasks[i].DueDate = ""
@@ -472,7 +474,7 @@ func readBoardFileAt(path string) (boardFile, error) {
 	return bf, nil
 }
 
-func maxBoardSeq(tasks []boardTask) int {
+func maxBoardSeq(tasks []BoardTask) int {
 	maxSeq := 0
 	for _, t := range tasks {
 		upper := strings.ToUpper(strings.TrimSpace(t.ID))
@@ -506,15 +508,15 @@ func ensureCustomBoardDirExists() error {
 	return nil
 }
 
-func loadBoardFile() (boardFile, error) {
+func LoadBoardFile() (BoardFile, error) {
 	if err := ensureCustomBoardDirExists(); err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	path, err := boardConfigPath()
+	path, err := BoardConfigPath()
 	if err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	return readBoardFileAt(path)
+	return ReadBoardFileAt(path)
 }
 
 func withBoardLock(path string, fn func() error) error {
@@ -596,7 +598,7 @@ func writeAtomic(path, tmpPattern string, perm os.FileMode, write func(io.Writer
 	return nil
 }
 
-func writeBoardFileAtomic(path string, bf boardFile) error {
+func WriteBoardFileAtomic(path string, bf BoardFile) error {
 	if bf.Version == 0 {
 		bf.Version = 1
 	}
@@ -605,7 +607,7 @@ func writeBoardFileAtomic(path string, bf boardFile) error {
 	}
 	return writeAtomic(path, ".board-*.tmp", 0o644, func(w io.Writer) error {
 		buf := bufio.NewWriterSize(w, 32<<10)
-		if err := renderBoardFile(buf, bf); err != nil {
+		if err := RenderBoardFile(buf, bf); err != nil {
 			return err
 		}
 		return buf.Flush()
@@ -618,7 +620,7 @@ func writeBoardFileAtomic(path string, bf boardFile) error {
 // keeps the indented form everyone reads and holds only a single task.
 var boardTaskEncodeBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
-func renderBoardFile(w io.Writer, bf boardFile) error {
+func RenderBoardFile(w io.Writer, bf BoardFile) error {
 	if _, err := fmt.Fprintf(w, "{\n  \"version\": %d,\n  \"next_seq\": %d,\n  \"tasks\": ", int64(bf.Version), int64(bf.NextSeq)); err != nil {
 		return err
 	}
@@ -664,28 +666,28 @@ func renderBoardFile(w io.Writer, bf boardFile) error {
 	return err
 }
 
-func mutateBoardFile(fn func(*boardFile) error) (boardFile, error) {
+func MutateBoardFile(fn func(*BoardFile) error) (BoardFile, error) {
 	if err := ensureCustomBoardDirExists(); err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	path, err := boardConfigPath()
+	path, err := BoardConfigPath()
 	if err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
 	return mutateBoardFileAt(path, fn)
 }
 
-func mutateBoardFileAt(path string, fn func(*boardFile) error) (boardFile, error) {
-	var updated boardFile
+func mutateBoardFileAt(path string, fn func(*BoardFile) error) (BoardFile, error) {
+	var updated BoardFile
 	err := withBoardLock(path, func() error {
-		bf, err := readBoardFileAt(path)
+		bf, err := ReadBoardFileAt(path)
 		if err != nil {
 			return err
 		}
 		if err := fn(&bf); err != nil {
 			return err
 		}
-		if err := writeBoardFileAtomic(path, bf); err != nil {
+		if err := WriteBoardFileAtomic(path, bf); err != nil {
 			return err
 		}
 		updated = bf
@@ -694,11 +696,11 @@ func mutateBoardFileAt(path string, fn func(*boardFile) error) (boardFile, error
 	return updated, err
 }
 
-type boardTaskPatch struct {
+type BoardTaskPatch struct {
 	Title       *string
 	Description *string
-	Status      *boardStatus
-	Priority    *boardPriority
+	Status      *BoardStatus
+	Priority    *BoardPriority
 	DueDate     *string
 	Archived    *bool
 	Pinned      *bool
@@ -706,18 +708,18 @@ type boardTaskPatch struct {
 	AddRepos    []string
 }
 
-type boardAddTaskOptions struct {
-	commit      *boardCommitLink
+type BoardAddTaskOptions struct {
+	Commit *BoardCommitLink
 	Title       string
 	Description string
-	Status      boardStatus
-	Priority    boardPriority
+	Status      BoardStatus
+	Priority    BoardPriority
 	DueDate     string
 	Repos       []string
 }
 
-func boardAddTask(title, desc string, status boardStatus, repos []string) (boardFile, boardTask, error) {
-	return boardAddTaskWithOptions(boardAddTaskOptions{
+func BoardAddTask(title, desc string, status BoardStatus, repos []string) (BoardFile, BoardTask, error) {
+	return BoardAddTaskWithOptions(BoardAddTaskOptions{
 		Title:       title,
 		Description: desc,
 		Status:      status,
@@ -725,35 +727,35 @@ func boardAddTask(title, desc string, status boardStatus, repos []string) (board
 	})
 }
 
-func boardAddTaskWithOptions(opts boardAddTaskOptions) (boardFile, boardTask, error) {
+func BoardAddTaskWithOptions(opts BoardAddTaskOptions) (BoardFile, BoardTask, error) {
 	title := strings.TrimSpace(opts.Title)
 	if title == "" {
-		return boardFile{}, boardTask{}, errors.New("任务标题不能为空")
+		return BoardFile{}, BoardTask{}, errors.New("任务标题不能为空")
 	}
 	status := opts.Status
 	if status == "" {
-		status = boardTodo
+		status = BoardTodo
 	}
-	if _, ok := parseBoardStatus(string(status)); !ok {
-		return boardFile{}, boardTask{}, fmt.Errorf("未知任务状态: %s", status)
+	if _, ok := ParseBoardStatus(string(status)); !ok {
+		return BoardFile{}, BoardTask{}, fmt.Errorf("未知任务状态: %s", status)
 	}
-	priority, ok := parseBoardPriority(string(opts.Priority))
+	priority, ok := ParseBoardPriority(string(opts.Priority))
 	if !ok {
-		return boardFile{}, boardTask{}, fmt.Errorf("未知任务优先级: %s", opts.Priority)
+		return BoardFile{}, BoardTask{}, fmt.Errorf("未知任务优先级: %s", opts.Priority)
 	}
-	dueDate, ok := parseBoardDueDate(opts.DueDate)
+	dueDate, ok := ParseBoardDueDate(opts.DueDate)
 	if !ok {
-		return boardFile{}, boardTask{}, fmt.Errorf("无效截止日期: %s", opts.DueDate)
+		return BoardFile{}, BoardTask{}, fmt.Errorf("无效截止日期: %s", opts.DueDate)
 	}
-	var created boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
+	var created BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
 		seq := f.NextSeq
 		if seq <= maxBoardSeq(f.Tasks) {
 			seq = maxBoardSeq(f.Tasks) + 1
 		}
 		f.NextSeq = seq + 1
 		now := time.Now().UTC()
-		created = boardTask{
+		created = BoardTask{
 			ID:          fmt.Sprintf("T-%d", seq),
 			Title:       title,
 			Description: strings.TrimSpace(opts.Description),
@@ -764,19 +766,19 @@ func boardAddTaskWithOptions(opts boardAddTaskOptions) (boardFile, boardTask, er
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		}
-		if opts.commit != nil {
-			created.Commits = []boardCommitLink{*opts.commit}
+		if opts.Commit != nil {
+			created.Commits = []BoardCommitLink{*opts.Commit}
 		}
-		f.Tasks = append([]boardTask{created}, f.Tasks...)
+		f.Tasks = append([]BoardTask{created}, f.Tasks...)
 		return nil
 	})
 	return bf, created, err
 }
 
-func boardUpdateTask(id string, patch boardTaskPatch) (boardFile, boardTask, error) {
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+func BoardUpdateTask(id string, patch BoardTaskPatch) (BoardFile, BoardTask, error) {
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
@@ -792,20 +794,20 @@ func boardUpdateTask(id string, patch boardTaskPatch) (boardFile, boardTask, err
 			t.Description = *patch.Description
 		}
 		if patch.Status != nil {
-			if _, ok := parseBoardStatus(string(*patch.Status)); !ok {
+			if _, ok := ParseBoardStatus(string(*patch.Status)); !ok {
 				return fmt.Errorf("未知任务状态: %s", *patch.Status)
 			}
 			t.Status = *patch.Status
 		}
 		if patch.Priority != nil {
-			p, ok := parseBoardPriority(string(*patch.Priority))
+			p, ok := ParseBoardPriority(string(*patch.Priority))
 			if !ok {
 				return fmt.Errorf("未知任务优先级: %s", *patch.Priority)
 			}
 			t.Priority = p
 		}
 		if patch.DueDate != nil {
-			d, ok := parseBoardDueDate(*patch.DueDate)
+			d, ok := ParseBoardDueDate(*patch.DueDate)
 			if !ok {
 				return fmt.Errorf("无效截止日期: %s", *patch.DueDate)
 			}
@@ -831,17 +833,17 @@ func boardUpdateTask(id string, patch boardTaskPatch) (boardFile, boardTask, err
 	return bf, out, err
 }
 
-// boardMoveTask updates a task's status (when non-empty) and/or repositions it
-// before or after anchorID inside boardFile.Tasks.
-func boardMoveTask(id string, status boardStatus, anchorID string, insertAfter bool) (boardFile, boardTask, error) {
+// BoardMoveTask updates a task's status (when non-empty) and/or repositions it
+// before or after anchorID inside BoardFile.Tasks.
+func BoardMoveTask(id string, status BoardStatus, anchorID string, insertAfter bool) (BoardFile, BoardTask, error) {
 	if status != "" {
-		if _, ok := parseBoardStatus(string(status)); !ok {
-			return boardFile{}, boardTask{}, fmt.Errorf("未知任务状态: %s", status)
+		if _, ok := ParseBoardStatus(string(status)); !ok {
+			return BoardFile{}, BoardTask{}, fmt.Errorf("未知任务状态: %s", status)
 		}
 	}
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		fromIdx := findBoardTaskIndex(f.Tasks, id)
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		fromIdx := FindBoardTaskIndex(f.Tasks, id)
 		if fromIdx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
@@ -862,7 +864,7 @@ func boardMoveTask(id string, status boardStatus, anchorID string, insertAfter b
 			out = t
 			return nil
 		}
-		anchorOrigIdx := findBoardTaskIndex(f.Tasks, anchor)
+		anchorOrigIdx := FindBoardTaskIndex(f.Tasks, anchor)
 		if anchorOrigIdx < 0 {
 			return fmt.Errorf("未找到目标看板任务: %s", anchorID)
 		}
@@ -878,7 +880,7 @@ func boardMoveTask(id string, status boardStatus, anchorID string, insertAfter b
 			return nil
 		}
 		tasks := slices.Delete(slices.Clone(f.Tasks), fromIdx, fromIdx+1)
-		toIdx := findBoardTaskIndex(tasks, anchor)
+		toIdx := FindBoardTaskIndex(tasks, anchor)
 		if insertAfter {
 			toIdx++
 		}
@@ -896,16 +898,16 @@ func boardMoveTask(id string, status boardStatus, anchorID string, insertAfter b
 	return bf, out, err
 }
 
-func boardDeleteTask(id string) (boardFile, error) {
+func BoardDeleteTask(id string) (BoardFile, error) {
 	if err := ensureCustomBoardDirExists(); err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	path, err := boardConfigPath()
+	path, err := BoardConfigPath()
 	if err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	return mutateBoardFileAt(path, func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+	return mutateBoardFileAt(path, func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
@@ -915,29 +917,29 @@ func boardDeleteTask(id string) (boardFile, error) {
 	})
 }
 
-// boardArchiveDoneTasks archives exactly the listed tasks that are still
+// BoardArchiveDoneTasks archives exactly the listed tasks that are still
 // completed and not archived, checking again under the file lock: a task
 // another client moved or archived meanwhile is left alone.
-func boardArchiveDoneTasks(ids []string) (boardFile, int, error) {
+func BoardArchiveDoneTasks(ids []string) (BoardFile, int, error) {
 	if len(ids) == 0 {
-		bf, err := loadBoardFile()
+		bf, err := LoadBoardFile()
 		return bf, 0, err
 	}
 	if err := ensureCustomBoardDirExists(); err != nil {
-		return boardFile{}, 0, err
+		return BoardFile{}, 0, err
 	}
-	path, err := boardConfigPath()
+	path, err := BoardConfigPath()
 	if err != nil {
-		return boardFile{}, 0, err
+		return BoardFile{}, 0, err
 	}
 	targets := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		targets[id] = true
 	}
 	count := 0
-	bf, err := mutateBoardFileAt(path, func(f *boardFile) error {
-		eligible := func(t boardTask) bool {
-			return targets[t.ID] && t.Status == boardDone && !t.Archived
+	bf, err := mutateBoardFileAt(path, func(f *BoardFile) error {
+		eligible := func(t BoardTask) bool {
+			return targets[t.ID] && t.Status == BoardDone && !t.Archived
 		}
 		hasAny := slices.ContainsFunc(f.Tasks, eligible)
 		if hasAny {
@@ -957,21 +959,21 @@ func boardArchiveDoneTasks(ids []string) (boardFile, int, error) {
 	return bf, count, err
 }
 
-func boardLinkCommit(id string, link boardCommitLink) (boardFile, boardTask, error) {
-	link.Repo = normalizeBoardRepo(link.Repo)
+func BoardLinkCommit(id string, link BoardCommitLink) (BoardFile, BoardTask, error) {
+	link.Repo = NormalizeBoardRepo(link.Repo)
 	link.Hash = strings.ToLower(strings.TrimSpace(link.Hash))
 	if link.Repo == "" {
-		return boardFile{}, boardTask{}, errors.New("关联提交必须指定仓库路径")
+		return BoardFile{}, BoardTask{}, errors.New("关联提交必须指定仓库路径")
 	}
 	if link.Hash == "" {
-		return boardFile{}, boardTask{}, errors.New("关联提交必须指定哈希")
+		return BoardFile{}, BoardTask{}, errors.New("关联提交必须指定哈希")
 	}
 	if link.AddedAt.IsZero() {
 		link.AddedAt = time.Now().UTC()
 	}
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
@@ -979,7 +981,7 @@ func boardLinkCommit(id string, link boardCommitLink) (boardFile, boardTask, err
 		t.Repos = appendBoardRepo(t.Repos, link.Repo)
 		merged := false
 		for i := range t.Commits {
-			if normalizeBoardRepo(t.Commits[i].Repo) == link.Repo && strings.EqualFold(t.Commits[i].Hash, link.Hash) {
+			if NormalizeBoardRepo(t.Commits[i].Repo) == link.Repo && strings.EqualFold(t.Commits[i].Hash, link.Hash) {
 				if t.Commits[i].Subject == "" {
 					t.Commits[i].Subject = link.Subject
 				}
@@ -1007,23 +1009,23 @@ func boardLinkCommit(id string, link boardCommitLink) (boardFile, boardTask, err
 	return bf, out, err
 }
 
-func boardUnlinkCommit(id, repo, hashPrefix string) (boardFile, boardTask, error) {
-	normRepo := normalizeBoardRepo(repo)
+func BoardUnlinkCommit(id, repo, hashPrefix string) (BoardFile, BoardTask, error) {
+	normRepo := NormalizeBoardRepo(repo)
 	hashPrefix = strings.ToLower(strings.TrimSpace(hashPrefix))
 	if hashPrefix == "" {
-		return boardFile{}, boardTask{}, errors.New("请指定要移除的提交哈希")
+		return BoardFile{}, BoardTask{}, errors.New("请指定要移除的提交哈希")
 	}
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
 		t := f.Tasks[idx]
-		kept := make([]boardCommitLink, 0, len(t.Commits))
+		kept := make([]BoardCommitLink, 0, len(t.Commits))
 		removed := 0
 		for _, c := range t.Commits {
-			repoMatch := normRepo == "" || normalizeBoardRepo(c.Repo) == normRepo
+			repoMatch := normRepo == "" || NormalizeBoardRepo(c.Repo) == normRepo
 			hashMatch := strings.HasPrefix(strings.ToLower(c.Hash), hashPrefix)
 			if repoMatch && hashMatch {
 				removed++
@@ -1043,24 +1045,24 @@ func boardUnlinkCommit(id, repo, hashPrefix string) (boardFile, boardTask, error
 	return bf, out, err
 }
 
-func boardAddNote(id, text, author, model string) (boardFile, boardTask, error) {
+func BoardAddNote(id, text, author, model string) (BoardFile, BoardTask, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return boardFile{}, boardTask{}, errors.New("备注内容不能为空")
+		return BoardFile{}, BoardTask{}, errors.New("备注内容不能为空")
 	}
 	author = strings.TrimSpace(author)
 	if author == "" {
 		author = "human"
 	}
 	model = strings.TrimSpace(model)
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
 		t := f.Tasks[idx]
-		t.Notes = append(t.Notes, boardNote{
+		t.Notes = append(t.Notes, BoardNote{
 			ID:        newBoardNoteID(),
 			Text:      text,
 			Author:    author,
@@ -1075,19 +1077,19 @@ func boardAddNote(id, text, author, model string) (boardFile, boardTask, error) 
 	return bf, out, err
 }
 
-func boardUpdateNote(id, noteID, text string) (boardFile, boardTask, error) {
+func BoardUpdateNote(id, noteID, text string) (BoardFile, BoardTask, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return boardFile{}, boardTask{}, errors.New("备注内容不能为空")
+		return BoardFile{}, BoardTask{}, errors.New("备注内容不能为空")
 	}
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
 		t := f.Tasks[idx]
-		noteIdx := slices.IndexFunc(t.Notes, func(n boardNote) bool { return n.ID == noteID })
+		noteIdx := slices.IndexFunc(t.Notes, func(n BoardNote) bool { return n.ID == noteID })
 		if noteIdx < 0 {
 			return fmt.Errorf("未找到备注: %s", noteID)
 		}
@@ -1106,15 +1108,15 @@ func boardUpdateNote(id, noteID, text string) (boardFile, boardTask, error) {
 	return bf, out, err
 }
 
-func boardDeleteNote(id, noteID string) (boardFile, boardTask, error) {
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+func BoardDeleteNote(id, noteID string) (BoardFile, BoardTask, error) {
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
 		t := f.Tasks[idx]
-		noteIdx := slices.IndexFunc(t.Notes, func(n boardNote) bool { return n.ID == noteID })
+		noteIdx := slices.IndexFunc(t.Notes, func(n BoardNote) bool { return n.ID == noteID })
 		if noteIdx < 0 {
 			return fmt.Errorf("未找到备注: %s", noteID)
 		}
@@ -1127,15 +1129,15 @@ func boardDeleteNote(id, noteID string) (boardFile, boardTask, error) {
 	return bf, out, err
 }
 
-func boardMoveNote(id, noteID string, toIdx int) (boardFile, boardTask, error) {
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+func BoardMoveNote(id, noteID string, toIdx int) (BoardFile, BoardTask, error) {
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
 		t := f.Tasks[idx]
-		fromIdx := slices.IndexFunc(t.Notes, func(n boardNote) bool { return n.ID == noteID })
+		fromIdx := slices.IndexFunc(t.Notes, func(n BoardNote) bool { return n.ID == noteID })
 		if fromIdx < 0 {
 			return fmt.Errorf("未找到备注: %s", noteID)
 		}
@@ -1158,7 +1160,7 @@ func boardMoveNote(id, noteID string, toIdx int) (boardFile, boardTask, error) {
 	return bf, out, err
 }
 
-func boardTaskAllRepos(t boardTask) []string {
+func BoardTaskAllRepos(t BoardTask) []string {
 	repos := normalizeBoardRepos(t.Repos)
 	for _, c := range t.Commits {
 		repos = appendBoardRepo(repos, c.Repo)
@@ -1166,13 +1168,13 @@ func boardTaskAllRepos(t boardTask) []string {
 	return repos
 }
 
-func boardMatchesFilter(t boardTask, repoFilter, search string, showArchived bool) bool {
+func BoardMatchesFilter(t BoardTask, repoFilter, search string, showArchived bool) bool {
 	if t.Archived && !showArchived {
 		return false
 	}
 	if repoFilter != "" {
-		norm := normalizeBoardRepo(repoFilter)
-		if !slices.Contains(boardTaskAllRepos(t), norm) {
+		norm := NormalizeBoardRepo(repoFilter)
+		if !slices.Contains(BoardTaskAllRepos(t), norm) {
 			return false
 		}
 	}
@@ -1188,24 +1190,24 @@ func boardMatchesFilter(t boardTask, repoFilter, search string, showArchived boo
 	return true
 }
 
-func boardTaskContainsWord(t boardTask, word string) bool {
+func boardTaskContainsWord(t BoardTask, word string) bool {
 	if strings.Contains(strings.ToLower(t.ID), word) ||
 		strings.Contains(strings.ToLower(t.Title), word) ||
 		strings.Contains(strings.ToLower(t.Description), word) {
 		return true
 	}
-	if t.Priority != boardPriorityNone {
+	if t.Priority != BoardPriorityNone {
 		if strings.Contains(strings.ToLower(string(t.Priority)), word) ||
-			strings.Contains(strings.ToLower(boardPriorityLabel(t.Priority)), word) ||
-			strings.Contains(strings.ToLower(tr(boardPriorityLabel(t.Priority))), word) {
+			strings.Contains(strings.ToLower(BoardPriorityLabel(t.Priority)), word) ||
+			strings.Contains(strings.ToLower(i18n.Tr(BoardPriorityLabel(t.Priority))), word) {
 			return true
 		}
 	}
 	if t.DueDate != "" && strings.Contains(strings.ToLower(t.DueDate), word) {
 		return true
 	}
-	for _, r := range boardTaskAllRepos(t) {
-		if strings.Contains(strings.ToLower(repoTitle(r)), word) || strings.Contains(strings.ToLower(r), word) {
+	for _, r := range BoardTaskAllRepos(t) {
+		if strings.Contains(strings.ToLower(RepoTitle(r)), word) || strings.Contains(strings.ToLower(r), word) {
 			return true
 		}
 	}
@@ -1226,7 +1228,7 @@ func boardTaskContainsWord(t boardTask, word string) bool {
 	return false
 }
 
-type boardBackupInfo struct {
+type BoardBackupInfo struct {
 	Path      string    `json:"path"`
 	Name      string    `json:"name"`
 	Reason    string    `json:"reason,omitempty"`
@@ -1239,7 +1241,7 @@ func boardBackupsDir(boardPath string) string {
 	return filepath.Join(filepath.Dir(boardPath), "backups")
 }
 
-func snapshotBoardFileLocked(boardPath string, bf boardFile, reason string) error {
+func snapshotBoardFileLocked(boardPath string, bf BoardFile, reason string) error {
 	if len(bf.Tasks) == 0 {
 		return nil
 	}
@@ -1257,7 +1259,7 @@ func snapshotBoardFileLocked(boardPath string, bf boardFile, reason string) erro
 		}
 		target = filepath.Join(dir, fmt.Sprintf("board-%s-%s-%d.json", stamp, reason, seq))
 	}
-	if err := writeBoardFileAtomic(target, bf); err != nil {
+	if err := WriteBoardFileAtomic(target, bf); err != nil {
 		return err
 	}
 	pruneBoardBackups(dir, maxBoardBackups)
@@ -1334,8 +1336,8 @@ func parseBackupFilenameMeta(name string) (time.Time, string) {
 	return ts, reason
 }
 
-func listBoardBackups() ([]boardBackupInfo, error) {
-	info, err := boardLocationInfo()
+func ListBoardBackups() ([]BoardBackupInfo, error) {
+	info, err := BoardLocationInfo()
 	if err != nil {
 		return nil, err
 	}
@@ -1346,7 +1348,7 @@ func listBoardBackups() ([]boardBackupInfo, error) {
 		}
 		return nil, err
 	}
-	var out []boardBackupInfo
+	var out []BoardBackupInfo
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "board-") || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -1364,7 +1366,7 @@ func listBoardBackups() ([]boardBackupInfo, error) {
 		if ts.IsZero() {
 			ts = fi.ModTime()
 		}
-		out = append(out, boardBackupInfo{
+		out = append(out, BoardBackupInfo{
 			Path:      fullPath,
 			Name:      e.Name(),
 			Reason:    reason,
@@ -1382,31 +1384,31 @@ func listBoardBackups() ([]boardBackupInfo, error) {
 	return out, nil
 }
 
-func boardRestoreBackup(backupPath string) (boardFile, error) {
+func BoardRestoreBackup(backupPath string) (BoardFile, error) {
 	bundle, err := parseBoardImportFile(backupPath)
 	if err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	path, err := boardConfigPath()
+	path, err := BoardConfigPath()
 	if err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
 	if err := ensureCustomBoardDirExists(); err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	var restored boardFile
+	var restored BoardFile
 	err = withBoardLock(path, func() error {
-		if cur, curErr := readBoardFileAt(path); curErr == nil && len(cur.Tasks) > 0 {
+		if cur, curErr := ReadBoardFileAt(path); curErr == nil && len(cur.Tasks) > 0 {
 			if snapErr := snapshotBoardFileLocked(path, cur, "restore"); snapErr != nil {
 				return snapErr
 			}
 		}
-		restored = boardFile{
+		restored = BoardFile{
 			Version: 1,
 			NextSeq: max(bundle.NextSeq, maxBoardSeq(bundle.Tasks)+1),
 			Tasks:   cloneBoardTasks(bundle.Tasks),
 		}
-		return writeBoardFileAtomic(path, restored)
+		return WriteBoardFileAtomic(path, restored)
 	})
 	return restored, err
 }
@@ -1421,12 +1423,12 @@ type boardBackupBundle struct {
 	ExportedAt      time.Time                `json:"exported_at,omitempty"`
 	AppVersion      string                   `json:"app_version,omitempty"`
 	NextSeq         int                      `json:"next_seq"`
-	Tasks           []boardTask              `json:"tasks"`
+	Tasks           []BoardTask              `json:"tasks"`
 	RepoHints       map[string]boardRepoHint `json:"repo_hints,omitempty"`
 	IncludeArchived *bool                    `json:"include_archived,omitempty"`
 }
 
-type boardExportOptions struct {
+type BoardExportOptions struct {
 	RepoFilter      string
 	IncludeArchived bool
 }
@@ -1441,7 +1443,7 @@ func readBoardRepoRemoteURL(ctx context.Context, repo string) string {
 	}
 	subCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	cmd, _, err := prepareGitCommand(subCtx, repo, nil, "remote", "get-url", "origin")
+	cmd, _, err := PrepareGitCommand(subCtx, repo, nil, "remote", "get-url", "origin")
 	if err != nil {
 		return ""
 	}
@@ -1452,25 +1454,25 @@ func readBoardRepoRemoteURL(ctx context.Context, repo string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func boardExport(ctx context.Context, opts boardExportOptions) (boardBackupBundle, error) {
-	bf, err := loadBoardFile()
+func BoardExport(ctx context.Context, opts BoardExportOptions) (boardBackupBundle, error) {
+	bf, err := LoadBoardFile()
 	if err != nil {
 		return boardBackupBundle{}, err
 	}
-	var tasks []boardTask
+	var tasks []BoardTask
 	hints := map[string]boardRepoHint{}
 	for _, t := range bf.Tasks {
-		if !boardMatchesFilter(t, opts.RepoFilter, "", opts.IncludeArchived) {
+		if !BoardMatchesFilter(t, opts.RepoFilter, "", opts.IncludeArchived) {
 			continue
 		}
 		cloned := cloneBoardTask(t)
 		tasks = append(tasks, cloned)
-		for _, r := range boardTaskAllRepos(cloned) {
+		for _, r := range BoardTaskAllRepos(cloned) {
 			if _, ok := hints[r]; ok {
 				continue
 			}
 			hints[r] = boardRepoHint{
-				Name:      repoTitle(r),
+				Name:      RepoTitle(r),
 				RemoteURL: readBoardRepoRemoteURL(ctx, r),
 			}
 		}
@@ -1483,7 +1485,7 @@ func boardExport(ctx context.Context, opts boardExportOptions) (boardBackupBundl
 	bundle := boardBackupBundle{
 		Version:         1,
 		ExportedAt:      time.Now().UTC(),
-		AppVersion:      getAppVersion(),
+		AppVersion:      AppVersion(),
 		NextSeq:         nextSeq,
 		Tasks:           tasks,
 		IncludeArchived: &incArch,
@@ -1494,12 +1496,12 @@ func boardExport(ctx context.Context, opts boardExportOptions) (boardBackupBundl
 	return bundle, nil
 }
 
-func writeBoardExportFile(path string, bundle boardBackupBundle) error {
+func WriteBoardExportFile(path string, bundle boardBackupBundle) error {
 	if bundle.Version == 0 {
 		bundle.Version = 1
 	}
 	if bundle.Tasks == nil {
-		bundle.Tasks = []boardTask{}
+		bundle.Tasks = []BoardTask{}
 	}
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
@@ -1512,11 +1514,11 @@ func writeBoardExportFile(path string, bundle boardBackupBundle) error {
 type boardImportMode string
 
 const (
-	boardImportMerge   boardImportMode = "merge"
-	boardImportReplace boardImportMode = "replace"
+	BoardImportMerge   boardImportMode = "merge"
+	BoardImportReplace boardImportMode = "replace"
 )
 
-type boardRepoMapping struct {
+type BoardRepoMapping struct {
 	OldPath       string
 	SuggestedPath string
 	ChosenPath    string
@@ -1524,20 +1526,20 @@ type boardRepoMapping struct {
 	Status        string // "matched", "suggested", "missing"
 }
 
-type boardImportPlan struct {
+type BoardImportPlan struct {
 	SourcePath   string
 	Bundle       boardBackupBundle
 	TotalTasks   int
 	ConflictIDs  map[string]string
-	RepoMappings []boardRepoMapping
+	RepoMappings []BoardRepoMapping
 }
 
-type boardImportOptions struct {
+type BoardImportOptions struct {
 	Mode    boardImportMode
 	RepoMap map[string]string
 }
 
-type boardImportResult struct {
+type BoardImportResult struct {
 	ImportedTasks int               `json:"imported_tasks"`
 	TotalTasks    int               `json:"total_tasks"`
 	RenamedIDs    map[string]string `json:"renamed_ids,omitempty"`
@@ -1573,22 +1575,22 @@ func parseBoardImportFile(path string) (boardBackupBundle, error) {
 		if t.Title == "" {
 			return boardBackupBundle{}, fmt.Errorf("备份中的任务缺少标题: %s", t.ID)
 		}
-		if _, ok := parseBoardStatus(string(t.Status)); !ok {
-			t.Status = boardTodo
+		if _, ok := ParseBoardStatus(string(t.Status)); !ok {
+			t.Status = BoardTodo
 		}
-		if p, ok := parseBoardPriority(string(t.Priority)); ok {
+		if p, ok := ParseBoardPriority(string(t.Priority)); ok {
 			t.Priority = p
 		} else {
-			t.Priority = boardPriorityNone
+			t.Priority = BoardPriorityNone
 		}
-		if d, ok := parseBoardDueDate(t.DueDate); ok {
+		if d, ok := ParseBoardDueDate(t.DueDate); ok {
 			t.DueDate = d
 		} else {
 			t.DueDate = ""
 		}
 		t.Repos = normalizeBoardRepos(t.Repos)
 		for j := range t.Commits {
-			t.Commits[j].Repo = normalizeBoardRepo(t.Commits[j].Repo)
+			t.Commits[j].Repo = NormalizeBoardRepo(t.Commits[j].Repo)
 			t.Commits[j].Hash = strings.ToLower(strings.TrimSpace(t.Commits[j].Hash))
 		}
 		for j := range t.Notes {
@@ -1603,7 +1605,7 @@ func parseBoardImportFile(path string) (boardBackupBundle, error) {
 	return bundle, nil
 }
 
-func cloneBoardTask(t boardTask) boardTask {
+func cloneBoardTask(t BoardTask) BoardTask {
 	out := t
 	out.Repos = slices.Clone(t.Repos)
 	out.Commits = slices.Clone(t.Commits)
@@ -1611,11 +1613,11 @@ func cloneBoardTask(t boardTask) boardTask {
 	return out
 }
 
-func cloneBoardTasks(tasks []boardTask) []boardTask {
+func cloneBoardTasks(tasks []BoardTask) []BoardTask {
 	if tasks == nil {
 		return nil
 	}
-	out := make([]boardTask, len(tasks))
+	out := make([]BoardTask, len(tasks))
 	for i, t := range tasks {
 		out[i] = cloneBoardTask(t)
 	}
@@ -1635,7 +1637,7 @@ func normalizeGitRemoteURL(raw string) string {
 	return s
 }
 
-func isBoardRepoAvailable(dir string) bool {
+func IsBoardRepoAvailable(dir string) bool {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return false
@@ -1648,14 +1650,14 @@ func isBoardRepoAvailable(dir string) bool {
 	return gitErr == nil
 }
 
-func buildBoardImportPlan(ctx context.Context, sourcePath string, knownRepos []string) (boardImportPlan, error) {
+func BuildBoardImportPlan(ctx context.Context, sourcePath string, knownRepos []string) (BoardImportPlan, error) {
 	bundle, err := parseBoardImportFile(sourcePath)
 	if err != nil {
-		return boardImportPlan{}, err
+		return BoardImportPlan{}, err
 	}
-	cur, curErr := loadBoardFile()
+	cur, curErr := LoadBoardFile()
 	if curErr != nil {
-		cur = boardFile{Version: 1, NextSeq: 1}
+		cur = BoardFile{Version: 1, NextSeq: 1}
 	}
 	_, conflicts := computeBoardMergePreview(cur, bundle.Tasks)
 
@@ -1669,25 +1671,25 @@ func buildBoardImportPlan(ctx context.Context, sourcePath string, knownRepos []s
 
 	var seenRepos []string
 	for _, t := range bundle.Tasks {
-		for _, r := range boardTaskAllRepos(t) {
+		for _, r := range BoardTaskAllRepos(t) {
 			if r != "" && !slices.Contains(seenRepos, r) {
 				seenRepos = append(seenRepos, r)
 			}
 		}
 	}
 
-	mappings := make([]boardRepoMapping, 0, len(seenRepos))
+	mappings := make([]BoardRepoMapping, 0, len(seenRepos))
 	for _, oldRepo := range seenRepos {
 		hint := bundle.RepoHints[oldRepo]
 		if hint.Name == "" {
-			hint.Name = repoTitle(oldRepo)
+			hint.Name = RepoTitle(oldRepo)
 		}
-		m := boardRepoMapping{
+		m := BoardRepoMapping{
 			OldPath: oldRepo,
 			Hint:    hint,
 		}
-		if isBoardRepoAvailable(oldRepo) {
-			norm := normalizeBoardRepo(oldRepo)
+		if IsBoardRepoAvailable(oldRepo) {
+			norm := NormalizeBoardRepo(oldRepo)
 			m.Status = "matched"
 			m.SuggestedPath = norm
 			m.ChosenPath = norm
@@ -1704,7 +1706,7 @@ func buildBoardImportPlan(ctx context.Context, sourcePath string, knownRepos []s
 		mappings = append(mappings, m)
 	}
 
-	return boardImportPlan{
+	return BoardImportPlan{
 		SourcePath:   sourcePath,
 		Bundle:       bundle,
 		TotalTasks:   len(bundle.Tasks),
@@ -1724,14 +1726,14 @@ func matchKnownBoardRepo(oldPath string, hint boardRepoHint, knownRepos []string
 	}
 	wantName := strings.TrimSpace(hint.Name)
 	if wantName == "" {
-		wantName = repoTitle(oldPath)
+		wantName = RepoTitle(oldPath)
 	}
 	if wantName == "" {
 		return ""
 	}
 	var nameMatches []string
 	for _, kr := range knownRepos {
-		if strings.EqualFold(repoTitle(kr), wantName) {
+		if strings.EqualFold(RepoTitle(kr), wantName) {
 			nameMatches = append(nameMatches, kr)
 		}
 	}
@@ -1741,18 +1743,18 @@ func matchKnownBoardRepo(oldPath string, hint boardRepoHint, knownRepos []string
 	return ""
 }
 
-func applyRepoMapToTask(t boardTask, repoMap map[string]string) boardTask {
+func applyRepoMapToTask(t BoardTask, repoMap map[string]string) BoardTask {
 	out := cloneBoardTask(t)
 	if len(repoMap) == 0 {
 		return out
 	}
 	mapRepo := func(orig string) string {
-		norm := normalizeBoardRepo(orig)
+		norm := NormalizeBoardRepo(orig)
 		if replacement, ok := repoMap[orig]; ok && strings.TrimSpace(replacement) != "" {
-			return normalizeBoardRepo(replacement)
+			return NormalizeBoardRepo(replacement)
 		}
 		if replacement, ok := repoMap[norm]; ok && strings.TrimSpace(replacement) != "" {
-			return normalizeBoardRepo(replacement)
+			return NormalizeBoardRepo(replacement)
 		}
 		return norm
 	}
@@ -1767,8 +1769,8 @@ func applyRepoMapToTask(t boardTask, repoMap map[string]string) boardTask {
 	return out
 }
 
-func computeBoardMergePreview(existing boardFile, incoming []boardTask) (boardFile, map[string]string) {
-	merged := boardFile{
+func computeBoardMergePreview(existing BoardFile, incoming []BoardTask) (BoardFile, map[string]string) {
+	merged := BoardFile{
 		Version: 1,
 		Tasks:   cloneBoardTasks(existing.Tasks),
 	}
@@ -1819,37 +1821,37 @@ func computeBoardMergePreview(existing boardFile, incoming []boardTask) (boardFi
 	return merged, renamed
 }
 
-func boardImport(sourcePath string, opts boardImportOptions) (boardFile, boardImportResult, error) {
+func BoardImport(sourcePath string, opts BoardImportOptions) (BoardFile, BoardImportResult, error) {
 	if opts.Mode == "" {
-		opts.Mode = boardImportMerge
+		opts.Mode = BoardImportMerge
 	}
-	if opts.Mode != boardImportMerge && opts.Mode != boardImportReplace {
-		return boardFile{}, boardImportResult{}, fmt.Errorf("未知导入模式: %s", opts.Mode)
+	if opts.Mode != BoardImportMerge && opts.Mode != BoardImportReplace {
+		return BoardFile{}, BoardImportResult{}, fmt.Errorf("未知导入模式: %s", opts.Mode)
 	}
 	bundle, err := parseBoardImportFile(sourcePath)
 	if err != nil {
-		return boardFile{}, boardImportResult{}, err
+		return BoardFile{}, BoardImportResult{}, err
 	}
 	if err := ensureCustomBoardDirExists(); err != nil {
-		return boardFile{}, boardImportResult{}, err
+		return BoardFile{}, BoardImportResult{}, err
 	}
-	path, err := boardConfigPath()
+	path, err := BoardConfigPath()
 	if err != nil {
-		return boardFile{}, boardImportResult{}, err
+		return BoardFile{}, BoardImportResult{}, err
 	}
-	incoming := make([]boardTask, len(bundle.Tasks))
+	incoming := make([]BoardTask, len(bundle.Tasks))
 	for i, t := range bundle.Tasks {
 		incoming[i] = applyRepoMapToTask(t, opts.RepoMap)
 	}
 
-	var result boardImportResult
+	var result BoardImportResult
 	result.Mode = opts.Mode
 	result.ImportedTasks = len(incoming)
 
-	var updated boardFile
+	var updated BoardFile
 	err = withBoardLock(path, func() error {
-		cur, readErr := readBoardFileAt(path)
-		if readErr != nil && opts.Mode == boardImportMerge {
+		cur, readErr := ReadBoardFileAt(path)
+		if readErr != nil && opts.Mode == BoardImportMerge {
 			return readErr
 		}
 		if readErr == nil && len(cur.Tasks) > 0 {
@@ -1858,33 +1860,33 @@ func boardImport(sourcePath string, opts boardImportOptions) (boardFile, boardIm
 			}
 		}
 		switch opts.Mode {
-		case boardImportReplace:
-			updated = boardFile{
+		case BoardImportReplace:
+			updated = BoardFile{
 				Version: 1,
 				NextSeq: max(bundle.NextSeq, maxBoardSeq(incoming)+1),
 				Tasks:   incoming,
 			}
-		case boardImportMerge:
+		case BoardImportMerge:
 			merged, renamed := computeBoardMergePreview(cur, incoming)
 			updated = merged
 			result.RenamedIDs = renamed
 		}
 		result.TotalTasks = len(updated.Tasks)
-		return writeBoardFileAtomic(path, updated)
+		return WriteBoardFileAtomic(path, updated)
 	})
 	return updated, result, err
 }
 
-type boardDirSwitchStrategy string
+type BoardDirSwitchStrategy string
 
 const (
-	boardSwitchAuto            boardDirSwitchStrategy = ""
-	boardSwitchUseTarget       boardDirSwitchStrategy = "use_target"
-	boardSwitchMergeTarget     boardDirSwitchStrategy = "merge_target"
-	boardSwitchOverwriteTarget boardDirSwitchStrategy = "overwrite_target"
+	BoardSwitchAuto            BoardDirSwitchStrategy = ""
+	BoardSwitchUseTarget       BoardDirSwitchStrategy = "use_target"
+	BoardSwitchMergeTarget     BoardDirSwitchStrategy = "merge_target"
+	BoardSwitchOverwriteTarget BoardDirSwitchStrategy = "overwrite_target"
 )
 
-func boardProbeDir(dir string) (hasBoard bool, taskCount int, err error) {
+func BoardProbeDir(dir string) (hasBoard bool, taskCount int, err error) {
 	clean := filepath.Clean(strings.TrimSpace(dir))
 	if clean == "" {
 		return false, 0, errors.New("目录路径不能为空")
@@ -1903,71 +1905,71 @@ func boardProbeDir(dir string) (hasBoard bool, taskCount int, err error) {
 	if len(strings.TrimSpace(string(b))) == 0 {
 		return false, 0, nil
 	}
-	bf, err := readBoardFileAt(boardPath)
+	bf, err := ReadBoardFileAt(boardPath)
 	if err != nil {
 		return true, 0, err
 	}
 	return true, len(bf.Tasks), nil
 }
 
-func boardSwitchStorageDir(newDir string, strategy boardDirSwitchStrategy) (boardFile, error) {
-	if strings.TrimSpace(os.Getenv(boardEnvDirKey)) != "" {
-		return boardFile{}, errors.New("当前通过环境变量 XYLRING_BOARD_DIR 指定了看板目录，无法在应用内修改")
+func BoardSwitchStorageDir(newDir string, strategy BoardDirSwitchStrategy) (BoardFile, error) {
+	if strings.TrimSpace(os.Getenv(BoardEnvDirKey)) != "" {
+		return BoardFile{}, errors.New("当前通过环境变量 XYLRING_BOARD_DIR 指定了看板目录，无法在应用内修改")
 	}
 	clean := filepath.Clean(strings.TrimSpace(newDir))
 	if clean == "" {
-		return boardFile{}, errors.New("目录路径不能为空")
+		return BoardFile{}, errors.New("目录路径不能为空")
 	}
 	absDir, err := filepath.Abs(clean)
 	if err == nil {
 		clean = absDir
 	}
 	if err := os.MkdirAll(clean, 0o755); err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
-	info, err := boardLocationInfo()
+	info, err := BoardLocationInfo()
 	if err != nil {
-		return boardFile{}, err
+		return BoardFile{}, err
 	}
 	if filepath.Clean(info.ActiveDir) == clean {
-		return loadBoardFile()
+		return LoadBoardFile()
 	}
 
-	cur, curErr := loadBoardFile()
+	cur, curErr := LoadBoardFile()
 	if curErr != nil {
-		cur = boardFile{Version: 1, NextSeq: 1}
+		cur = BoardFile{Version: 1, NextSeq: 1}
 	}
 
 	targetPath := filepath.Join(clean, "board.json")
-	hasTarget, _, probeErr := boardProbeDir(clean)
-	if probeErr != nil && strategy != boardSwitchOverwriteTarget {
-		return boardFile{}, probeErr
+	hasTarget, _, probeErr := BoardProbeDir(clean)
+	if probeErr != nil && strategy != BoardSwitchOverwriteTarget {
+		return BoardFile{}, probeErr
 	}
 
-	var result boardFile
+	var result BoardFile
 	if !hasTarget {
 		err = withBoardLock(targetPath, func() error {
-			if err := writeBoardFileAtomic(targetPath, cur); err != nil {
+			if err := WriteBoardFileAtomic(targetPath, cur); err != nil {
 				return err
 			}
 			result = cur
 			return nil
 		})
 		if err != nil {
-			return boardFile{}, err
+			return BoardFile{}, err
 		}
 		copyBoardBackups(info.BackupsDir, boardBackupsDir(targetPath))
 	} else {
 		switch strategy {
-		case boardSwitchUseTarget:
-			bf, err := readBoardFileAt(targetPath)
+		case BoardSwitchUseTarget:
+			bf, err := ReadBoardFileAt(targetPath)
 			if err != nil {
-				return boardFile{}, err
+				return BoardFile{}, err
 			}
 			result = bf
-		case boardSwitchMergeTarget:
+		case BoardSwitchMergeTarget:
 			err = withBoardLock(targetPath, func() error {
-				targetBF, err := readBoardFileAt(targetPath)
+				targetBF, err := ReadBoardFileAt(targetPath)
 				if err != nil {
 					return err
 				}
@@ -1977,38 +1979,38 @@ func boardSwitchStorageDir(newDir string, strategy boardDirSwitchStrategy) (boar
 					}
 				}
 				merged, _ := computeBoardMergePreview(targetBF, cur.Tasks)
-				if err := writeBoardFileAtomic(targetPath, merged); err != nil {
+				if err := WriteBoardFileAtomic(targetPath, merged); err != nil {
 					return err
 				}
 				result = merged
 				return nil
 			})
 			if err != nil {
-				return boardFile{}, err
+				return BoardFile{}, err
 			}
-		case boardSwitchOverwriteTarget:
+		case BoardSwitchOverwriteTarget:
 			err = withBoardLock(targetPath, func() error {
-				if targetBF, err := readBoardFileAt(targetPath); err == nil && len(targetBF.Tasks) > 0 {
+				if targetBF, err := ReadBoardFileAt(targetPath); err == nil && len(targetBF.Tasks) > 0 {
 					if snapErr := snapshotBoardFileLocked(targetPath, targetBF, "switch-overwrite"); snapErr != nil {
 						return snapErr
 					}
 				}
-				if err := writeBoardFileAtomic(targetPath, cur); err != nil {
+				if err := WriteBoardFileAtomic(targetPath, cur); err != nil {
 					return err
 				}
 				result = cur
 				return nil
 			})
 			if err != nil {
-				return boardFile{}, err
+				return BoardFile{}, err
 			}
 		default:
-			return boardFile{}, fmt.Errorf("目标目录已存在看板数据: %s", targetPath)
+			return BoardFile{}, fmt.Errorf("目标目录已存在看板数据: %s", targetPath)
 		}
 	}
 
-	if err := writeBoardLocationConfig(clean); err != nil {
-		return boardFile{}, err
+	if err := WriteBoardLocationConfig(clean); err != nil {
+		return BoardFile{}, err
 	}
 	return result, nil
 }
@@ -2038,7 +2040,7 @@ func copyBoardBackups(srcDir, dstDir string) {
 	pruneBoardBackups(dstDir, maxBoardBackups)
 }
 
-type boardChecklistItem struct {
+type BoardChecklistItem struct {
 	LineIndex int
 	Checked   bool
 	Text      string
@@ -2100,12 +2102,12 @@ func boardFenceDelimiter(trimmed string) string {
 	return trimmed[:n]
 }
 
-func parseBoardChecklist(desc string) []boardChecklistItem {
+func ParseBoardChecklist(desc string) []BoardChecklistItem {
 	if desc == "" {
 		return nil
 	}
 	lines := strings.Split(desc, "\n")
-	var items []boardChecklistItem
+	var items []BoardChecklistItem
 	fence := ""
 	for i, line := range lines {
 		body := strings.TrimLeft(line, " \t")
@@ -2128,7 +2130,7 @@ func parseBoardChecklist(desc string) []boardChecklistItem {
 			continue
 		}
 		lead := len(line) - len(strings.TrimLeft(line, " \t"))
-		items = append(items, boardChecklistItem{
+		items = append(items, BoardChecklistItem{
 			LineIndex: i,
 			Checked:   checked,
 			Text:      strings.TrimSpace(body[mark+2:]),
@@ -2138,17 +2140,17 @@ func parseBoardChecklist(desc string) []boardChecklistItem {
 	return items
 }
 
-// findBoardChecklistItem locates the item the user acted on: the line it sat
+// FindBoardChecklistItem locates the item the user acted on: the line it sat
 // on with the same text first, then the only item carrying that text. A
 // description changed by another client fails instead of toggling a different
 // line, and so does one whose checkbox already moved.
-func findBoardChecklistItem(items []boardChecklistItem, lineIndex int, text string) (boardChecklistItem, bool) {
+func FindBoardChecklistItem(items []BoardChecklistItem, lineIndex int, text string) (BoardChecklistItem, bool) {
 	for _, item := range items {
 		if item.LineIndex == lineIndex && item.Text == text {
 			return item, true
 		}
 	}
-	var match boardChecklistItem
+	var match BoardChecklistItem
 	found := 0
 	for _, item := range items {
 		if item.Text == text {
@@ -2159,10 +2161,10 @@ func findBoardChecklistItem(items []boardChecklistItem, lineIndex int, text stri
 	if found == 1 {
 		return match, true
 	}
-	return boardChecklistItem{}, false
+	return BoardChecklistItem{}, false
 }
 
-func toggleBoardChecklistMarker(desc string, item boardChecklistItem) (string, bool) {
+func toggleBoardChecklistMarker(desc string, item BoardChecklistItem) (string, bool) {
 	lines := strings.Split(desc, "\n")
 	if item.LineIndex < 0 || item.LineIndex >= len(lines) || item.MarkIndex < 0 || item.MarkIndex >= len(lines[item.LineIndex]) {
 		return desc, false
@@ -2178,30 +2180,30 @@ func toggleBoardChecklistMarker(desc string, item boardChecklistItem) (string, b
 	return strings.Join(lines, "\n"), true
 }
 
-// toggleBoardChecklistItem flips the expected item in desc, leaving every
+// ToggleBoardChecklistItem flips the expected item in desc, leaving every
 // other byte alone. It fails when the item is gone, ambiguous, or no longer
 // in the state the caller saw.
-func toggleBoardChecklistItem(desc string, lineIndex int, text string, checked bool) (string, bool) {
-	item, ok := findBoardChecklistItem(parseBoardChecklist(desc), lineIndex, text)
+func ToggleBoardChecklistItem(desc string, lineIndex int, text string, checked bool) (string, bool) {
+	item, ok := FindBoardChecklistItem(ParseBoardChecklist(desc), lineIndex, text)
 	if !ok || item.Checked != checked {
 		return desc, false
 	}
 	return toggleBoardChecklistMarker(desc, item)
 }
 
-// boardToggleChecklistTask flips one checklist item in the description stored
+// BoardToggleChecklistTask flips one checklist item in the description stored
 // on disk. The line and text identify the item, and checked is the state the
 // user saw: a description another client changed, or an item that moved,
 // fails instead of overwriting it.
-func boardToggleChecklistTask(id string, lineIndex int, text string, checked bool) (boardFile, boardTask, error) {
-	var out boardTask
-	bf, err := mutateBoardFile(func(f *boardFile) error {
-		idx := findBoardTaskIndex(f.Tasks, id)
+func BoardToggleChecklistTask(id string, lineIndex int, text string, checked bool) (BoardFile, BoardTask, error) {
+	var out BoardTask
+	bf, err := MutateBoardFile(func(f *BoardFile) error {
+		idx := FindBoardTaskIndex(f.Tasks, id)
 		if idx < 0 {
 			return fmt.Errorf("未找到看板任务: %s", id)
 		}
 		t := f.Tasks[idx]
-		next, ok := toggleBoardChecklistItem(t.Description, lineIndex, text, checked)
+		next, ok := ToggleBoardChecklistItem(t.Description, lineIndex, text, checked)
 		if !ok {
 			return errors.New("清单项已被其他程序改动，请重新打开任务再试")
 		}
@@ -2216,13 +2218,13 @@ func boardToggleChecklistTask(id string, lineIndex int, text string, checked boo
 	return bf, out, err
 }
 
-func formatBoardAgentContext(task boardTask) string {
+func FormatBoardAgentContext(task BoardTask) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "[%s] %s\n", task.ID, task.Title)
 	if task.Status != "" {
 		fmt.Fprintf(&sb, "Status: %s\n", task.Status)
 	}
-	repos := boardTaskAllRepos(task)
+	repos := BoardTaskAllRepos(task)
 	if len(repos) > 0 {
 		sb.WriteString("Repos:\n")
 		for _, r := range repos {
@@ -2239,9 +2241,9 @@ func formatBoardAgentContext(task boardTask) string {
 		sb.WriteByte('\n')
 	}
 
-	items := parseBoardChecklist(task.Description)
+	items := ParseBoardChecklist(task.Description)
 	if len(items) > 0 {
-		var unchecked []boardChecklistItem
+		var unchecked []BoardChecklistItem
 		for _, item := range items {
 			if !item.Checked {
 				unchecked = append(unchecked, item)
@@ -2257,7 +2259,7 @@ func formatBoardAgentContext(task boardTask) string {
 		}
 	}
 
-	if commits := boardNewestCommits(task.Commits, 2); len(commits) > 0 {
+	if commits := BoardNewestCommits(task.Commits, 2); len(commits) > 0 {
 		sb.WriteString("\nRecent Commits:\n")
 		for _, cm := range commits {
 			short := cm.Hash
@@ -2269,7 +2271,7 @@ func formatBoardAgentContext(task boardTask) string {
 				line += " " + cm.Subject
 			}
 			if cm.Repo != "" {
-				line += fmt.Sprintf(" (%s)", repoTitle(cm.Repo))
+				line += fmt.Sprintf(" (%s)", RepoTitle(cm.Repo))
 			}
 			if cm.Agent != "" {
 				line += fmt.Sprintf(" [%s]", cm.Agent)
@@ -2278,13 +2280,13 @@ func formatBoardAgentContext(task boardTask) string {
 		}
 	}
 
-	if latest, ok := latestBoardNote(task.Notes); ok {
+	if latest, ok := LatestBoardNote(task.Notes); ok {
 		author := latest.Author
 		if author == "" {
 			author = "human"
 		}
 		sb.WriteString("\nLatest Note:\n")
-		if ts := latest.displayTime(); !ts.IsZero() {
+		if ts := latest.DisplayTime(); !ts.IsZero() {
 			fmt.Fprintf(&sb, "%s (%s): %s\n", author, ts.Local().Format("2006-01-02 15:04"), strings.TrimSpace(latest.Text))
 		} else {
 			fmt.Fprintf(&sb, "%s: %s\n", author, strings.TrimSpace(latest.Text))
@@ -2317,17 +2319,17 @@ func isStandardBoardTaskID(id string) bool {
 	return err == nil && n > 0 && strconv.Itoa(n) == digits
 }
 
-// latestBoardNote picks the note with the most recent effective time, and
+// LatestBoardNote picks the note with the most recent effective time, and
 // the later one in the list on a tie. Notes saved without times keep their
 // stored order, as older clients wrote them.
-func latestBoardNote(notes []boardNote) (boardNote, bool) {
+func LatestBoardNote(notes []BoardNote) (BoardNote, bool) {
 	if len(notes) == 0 {
-		return boardNote{}, false
+		return BoardNote{}, false
 	}
 	best := notes[len(notes)-1]
-	bestTime := best.displayTime()
+	bestTime := best.DisplayTime()
 	for i := len(notes) - 2; i >= 0; i-- {
-		t := notes[i].displayTime()
+		t := notes[i].DisplayTime()
 		if t.After(bestTime) {
 			best, bestTime = notes[i], t
 		}
@@ -2335,9 +2337,9 @@ func latestBoardNote(notes []boardNote) (boardNote, bool) {
 	return best, true
 }
 
-// boardNewestCommits returns up to n commit links, most recently linked
+// BoardNewestCommits returns up to n commit links, most recently linked
 // first. Links saved without a time keep their stored order.
-func boardNewestCommits(links []boardCommitLink, n int) []boardCommitLink {
+func BoardNewestCommits(links []BoardCommitLink, n int) []BoardCommitLink {
 	if n <= 0 || len(links) == 0 {
 		return nil
 	}
@@ -2352,7 +2354,7 @@ func boardNewestCommits(links []boardCommitLink, n int) []boardCommitLink {
 		}
 		return a.After(b)
 	})
-	out := make([]boardCommitLink, 0, min(n, len(order)))
+	out := make([]BoardCommitLink, 0, min(n, len(order)))
 	for _, idx := range order[:min(n, len(order))] {
 		out = append(out, links[idx])
 	}

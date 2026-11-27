@@ -4,168 +4,41 @@ import (
 	"context"
 	"strings"
 	"sync"
-	"unsafe"
+
+	prov "github.com/2fa0/xylring/internal/provenance"
 )
 
 const (
-	agentTrailer       = "AI-Agent"
-	modelTrailer       = "AI-Model"
-	attributionTrailer = "AI-Attribution"
+	agentTrailer       = prov.AgentTrailer
+	modelTrailer       = prov.ModelTrailer
+	attributionTrailer = prov.AttributionTrailer
 )
 
-type provenance struct{ agent, model, attribution, badge string }
-type provKey struct{ agent, model, attribution string }
+type provenance = prov.Provenance
+type provenanceTable = prov.Table
 
-// The repository owns this bounded pool. A history worker may intern while the
-// UI reads a previously delivered page; callers receive values, never slices.
-type provenanceTable struct {
-	mu     sync.RWMutex
-	values []provenance
-	index  map[provKey]uint16
-}
+var (
+	parseProvenance         = prov.Parse
+	normalizeModel          = prov.NormalizeModel
+	validateProvenanceModel = prov.ValidateModel
 
-func (t *provenanceTable) intern(p provenance) uint16 {
-	if p.agent == "" {
-		return 0
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	key := provKey{p.agent, p.model, p.attribution}
-	if id := t.index[key]; id != 0 {
-		return id
-	}
-	if len(t.values) == 0 {
-		t.values = append(t.values, provenance{}, provenance{agent: "其他", badge: "◎ 其他"})
-	}
-	if len(t.values) >= 65536 {
-		return 1
-	}
-	if t.index == nil {
-		t.index = make(map[provKey]uint16)
-	}
-	p.agent, p.model, p.attribution = strings.Clone(p.agent), strings.Clone(p.model), strings.Clone(p.attribution)
-	key = provKey{p.agent, p.model, p.attribution}
-	p.badge = "◎ " + p.agent
-	if strings.EqualFold(p.agent, "human") {
-		p.badge = "人工"
-	}
-	if p.model != "" {
-		p.badge += " · " + normalizeModel(p.model)
-	}
-	id := uint16(len(t.values))
-	t.values = append(t.values, p)
-	t.index[key] = id
-	return id
-}
-func (t *provenanceTable) get(id uint16) provenance {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if int(id) < len(t.values) {
-		p := t.values[id]
-		if id == 1 {
-			p.agent = tr("其他")
-			p.badge = "◎ " + tr("其他")
-		} else if strings.EqualFold(p.agent, "human") {
-			p.badge = tr("人工")
-			if p.model != "" {
-				p.badge += " · " + normalizeModel(p.model)
-			}
-		}
-		return p
-	}
-	return provenance{}
-}
-func (t *provenanceTable) snapshot() []provenance {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return append([]provenance(nil), t.values...)
-}
-func (t *provenanceTable) bytes() int64 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	n := int64(cap(t.values))*int64(unsafe.Sizeof(provenance{})) + int64(len(t.index))*(int64(unsafe.Sizeof(provKey{}))+32)
-	for _, p := range t.values {
-		n += int64(len(p.agent) + len(p.model) + len(p.attribution) + len(p.badge))
-	}
-	return n
-}
+	provenanceRuleTargets = prov.RuleTargets
+	provenanceRuleSnippet = prov.RuleSnippet
+	inspectRuleFiles      = prov.InspectRuleFiles
+	previewRuleSnippet    = prov.PreviewRuleSnippet
+	saveRulePreview       = prov.SaveRulePreview
+)
 
-// Only signatures backed by checked-in real commit samples are recognized.
-// In particular a human coauthor's display name is never an identity signal.
-func parseProvenance(trailers string) provenance {
-	var p, native provenance
-	for _, line := range strings.FieldsFunc(trailers, func(r rune) bool { return r == '\n' || r == '\r' || r == '\x1d' }) {
-		key, value, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "ai-agent":
-			p.agent = value
-		case "ai-model":
-			p.model = value
-		case "ai-attribution":
-			p.attribution = value
-		case "assisted-by":
-			if value == "Cindy (https://cindy.app)" {
-				native = provenance{agent: "Cindy", attribution: "native"}
-			}
-		}
-	}
-	if p.agent != "" {
-		return p
-	}
-	return native
-}
-func normalizeModel(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "gpt-5":
-		return "GPT-5"
-	case "gpt-5-codex":
-		return "GPT-5 Codex"
-	case "claude-opus-4-1", "claude-opus-4-1-20250805":
-		return "Claude Opus 4.1"
-	case "claude-opus-4-6":
-		return "Claude Opus 4.6"
-	}
-	return raw
-}
-func (p provenance) description() string {
-	if p.agent == "" {
-		return ""
-	}
-	label := p.agent
-	if strings.EqualFold(p.agent, "human") {
-		label = tr("人工")
-	}
-	if p.model != "" {
-		label += " · " + normalizeModel(p.model)
-	}
-	source := tr("显式")
-	switch p.attribution {
-	case "native":
-		source = tr("原生签名")
-	case "stamp":
-		source = tr("印章")
-	case "inferred":
-		source = tr("推断")
-	case "":
-	default:
-		source = p.attribution
-	}
-	if englishUI.Load() {
-		return label + " (" + source + ")"
-	}
-	return label + "（" + source + "）"
-}
+type ruleFileStatus = prov.RuleFileStatus
+type rulePreview = prov.RulePreview
+
 func (q historyQuery) matchesProvenance(p provenance) bool {
-	if p.agent == "" {
+	if p.Agent == "" {
 		return false
 	}
-	value := p.agent
+	value := p.Agent
 	if q.kind == "模型" {
-		value = normalizeModel(p.model)
+		value = normalizeModel(p.Model)
 	}
 	return strings.Contains(strings.ToLower(value), strings.ToLower(q.term))
 }

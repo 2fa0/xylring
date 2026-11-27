@@ -429,7 +429,7 @@ func streamHistory(ctx context.Context, dir string, query historyQuery, tips []s
 				c.lines = historyStatsPending
 			}
 			if filtering {
-				if !query.matchesProvenance(pool.get(c.prov)) {
+				if !query.matchesProvenance(pool.Get(c.prov)) {
 					continue
 				}
 				matched++
@@ -728,7 +728,7 @@ func parseCommitRecord(rec string, pools ...*provenanceTable) (commit, error) {
 	}
 	var prov uint16
 	if len(pools) > 0 && len(fields) >= 6 {
-		prov = pools[0].intern(parseProvenance(fields[len(fields)-1]))
+		prov = pools[0].Intern(parseProvenance(fields[len(fields)-1]))
 		fields = fields[:len(fields)-1]
 	}
 	subject := strings.Join(fields[4:], "\x1f")

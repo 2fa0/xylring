@@ -71,7 +71,7 @@ func TestStrictProvenanceCommits(t *testing.T) {
 	if err := installRingHook(ctx, dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeStamp(ctx, dir, ringStamp{p: provenance{agent: "Cindy", model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
+	if err := writeStamp(ctx, dir, ringStamp{p: provenance{Agent: "Cindy", Model: "exact-model"}, expires: time.Now().Add(time.Minute).Unix()}); err != nil {
 		t.Fatal(err)
 	}
 	git("commit", "--allow-empty", "-m", "stamped")
@@ -143,9 +143,9 @@ func TestStrictProvenanceRangeAndHooks(t *testing.T) {
 
 func TestHumanProvenanceDisplay(t *testing.T) {
 	pool := &provenanceTable{}
-	p := pool.get(pool.intern(provenance{agent: "human"}))
-	if p.badge != "人工" || p.description() != "人工（显式）" {
-		t.Fatalf("%+v: %s", p, p.description())
+	p := pool.Get(pool.Intern(provenance{Agent: "human"}))
+	if p.Badge != "人工" || p.Description() != "人工（显式）" {
+		t.Fatalf("%+v: %s", p, p.Description())
 	}
 }
 
@@ -157,11 +157,11 @@ func TestProvenanceModelRequiredOnWrite(t *testing.T) {
 		p     provenance
 		valid bool
 	}{
-		{"AI missing model", provenance{agent: "Cindy"}, false},
-		{"AI blank model", provenance{agent: "Cindy", model: "  "}, false},
-		{"AI with model", provenance{agent: "Cindy", model: "exact-model"}, true},
-		{"human", provenance{agent: "human"}, true},
-		{"human with model", provenance{agent: "human", model: "exact-model"}, false},
+		{"AI missing model", provenance{Agent: "Cindy"}, false},
+		{"AI blank model", provenance{Agent: "Cindy", Model: "  "}, false},
+		{"AI with model", provenance{Agent: "Cindy", Model: "exact-model"}, true},
+		{"human", provenance{Agent: "human"}, true},
+		{"human with model", provenance{Agent: "human", Model: "exact-model"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := applyProvenanceTrailers(ctx, dir, "change", tc.p); (err == nil) != tc.valid {
@@ -193,7 +193,7 @@ func TestLegacyStampWithoutModelIsIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	git("commit", "--allow-empty", "-m", "legacy stamp")
-	if p := parseProvenance(string(git("log", "-1", "--format=%B"))); p.agent != "" {
+	if p := parseProvenance(string(git("log", "-1", "--format=%B"))); p.Agent != "" {
 		t.Fatalf("legacy stamp applied: %+v", p)
 	}
 	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, legacy) {

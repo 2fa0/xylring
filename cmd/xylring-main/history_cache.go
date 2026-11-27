@@ -124,7 +124,7 @@ func (t *repoTab) cachedBytes() int64 {
 
 // This is a cache estimate, not a process heap limit. Shared objects are counted once.
 func (t *repoTab) metadataBytes() int64 {
-	n := t.provenance.bytes() + int64(len(t.incoming)+len(t.outgoing))*32
+	n := t.provenance.Bytes() + int64(len(t.incoming)+len(t.outgoing))*32
 	seenFiles := map[*fileChange]bool{}
 	for _, files := range [][]fileChange{t.compareFiles, t.worktreeFiles} {
 		if len(files) == 0 || seenFiles[&files[0]] {

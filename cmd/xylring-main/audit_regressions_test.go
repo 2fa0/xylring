@@ -94,8 +94,8 @@ func TestRemoteHubRequiresTagName(t *testing.T) {
 }
 
 func TestSessionRestoresDraftProvenance(t *testing.T) {
-	for _, p := range []provenance{{agent: "Cindy", model: "exact-model", attribution: "stamp"}, {}} {
-		t.Run(p.agent, func(t *testing.T) {
+	for _, p := range []provenance{{Agent: "Cindy", Model: "exact-model", Attribution: "stamp"}, {}} {
+		t.Run(p.Agent, func(t *testing.T) {
 			config := t.TempDir()
 			old := userConfigDir
 			userConfigDir = func() (string, error) { return config, nil }
@@ -142,7 +142,7 @@ func TestSessionRestoresDraftProvenance(t *testing.T) {
 				t.Fatal(err)
 			}
 			parsed, err := messageProvenance(context.Background(), dir, msg)
-			if err != nil || parsed.agent != p.agent || parsed.model != p.model || parsed.attribution != p.attribution {
+			if err != nil || parsed.Agent != p.Agent || parsed.Model != p.Model || parsed.Attribution != p.Attribution {
 				t.Fatalf("restored draft changed attribution: %+v %v", parsed, err)
 			}
 		})
@@ -163,13 +163,13 @@ func TestAmendLoadRespectsProvenanceEdits(t *testing.T) {
 			updates := make(chan func(), 8)
 			a := &app{dispatch: func(f func()) { updates <- f }}
 			a.loadAmendMessage(repo)
-			want := provenance{agent: "Cindy", model: "exact-model"}
+			want := provenance{Agent: "Cindy", Model: "exact-model"}
 			switch edit {
 			case "clear":
 				repo.commitProvEdited = true
 				want = provenance{}
 			case "replace":
-				repo.commitProv = provenance{agent: "Other", model: "other-model"}
+				repo.commitProv = provenance{Agent: "Other", Model: "other-model"}
 				repo.commitProvEdited = true
 				want = repo.commitProv
 			}
@@ -257,16 +257,16 @@ func TestHumanStampAppliesWithoutAIFields(t *testing.T) {
 			if err := installProvenanceHook(ctx, dir, "commit-msg", strictHookMarker, strictRingScript); err != nil {
 				t.Fatal(err)
 			}
-			if err := writeStamp(ctx, dir, ringStamp{p: provenance{agent: agent}, expires: time.Now().Add(time.Minute).Unix(), once: true}); err != nil {
+			if err := writeStamp(ctx, dir, ringStamp{p: provenance{Agent: agent}, expires: time.Now().Add(time.Minute).Unix(), once: true}); err != nil {
 				t.Fatal(err)
 			}
 			git("commit", "--allow-empty", "-m", "manual sample")
 			p, err := messageProvenance(ctx, dir, string(git("log", "-1", "--format=%B")))
-			if err != nil || p.agent != "human" || p.model != "" || p.attribution != "" {
+			if err != nil || p.Agent != "human" || p.Model != "" || p.Attribution != "" {
 				t.Fatalf("invalid human attribution: %+v %v", p, err)
 			}
 			s, err := readStamp(ctx, dir)
-			if err != nil || s.p.agent != "" {
+			if err != nil || s.p.Agent != "" {
 				t.Fatalf("single-use human stamp retained: %+v %v", s, err)
 			}
 		})
