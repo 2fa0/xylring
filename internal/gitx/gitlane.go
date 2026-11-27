@@ -1,4 +1,4 @@
-package app
+package gitx
 
 import (
 	"context"
@@ -8,20 +8,24 @@ import (
 	"sync"
 )
 
+// CanonicalizeSpecialRepoDir allows host layers (e.g. Docker integration) to
+// canonicalize virtual repository keys without creating a dependency cycle.
+var CanonicalizeSpecialRepoDir func(dir string) (string, bool)
+
 type heldGitLanesKey struct{}
 
-func gitLaneHeld(ctx context.Context, key string) bool {
+func GitLaneHeld(ctx context.Context, key string) bool {
 	held, _ := ctx.Value(heldGitLanesKey{}).(map[string]bool)
 	return held[key]
 }
 
-// Hold the parent and target write lanes through inspection and removal.
+// AcquireWorktreeLanes holds the parent and target write lanes through inspection and removal.
 // A fixed order lets overlapping worktree operations wait without a cycle.
-func acquireWorktreeLanes(ctx context.Context, dirs ...string) (context.Context, func()) {
+func AcquireWorktreeLanes(ctx context.Context, dirs ...string) (context.Context, func()) {
 	keys := make([]string, 0, len(dirs))
 	seen := make(map[string]bool)
 	for _, dir := range dirs {
-		key := canonicalRepoDir(dir)
+		key := CanonicalRepoDir(dir)
 		if !seen[key] {
 			seen[key] = true
 			keys = append(keys, key)
@@ -30,7 +34,7 @@ func acquireWorktreeLanes(ctx context.Context, dirs ...string) (context.Context,
 	slices.Sort(keys)
 	var releases []func()
 	for _, key := range keys {
-		releases = append(releases, acquireGitLane(ctx, key, true))
+		releases = append(releases, AcquireGitLane(ctx, key, true))
 	}
 	return context.WithValue(ctx, heldGitLanesKey{}, seen), func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -50,31 +54,33 @@ type gitWaiter struct {
 	ready chan struct{}
 }
 
-type gitLane struct {
-	readers int
-	writing bool
-	queue   []*gitWaiter
+type GitLane struct {
+	Readers int
+	Writing bool
+	Queue   []*gitWaiter
 }
 
-type gitLaneTable struct {
+type GitLaneTable struct {
 	sync.Mutex
-	byKey map[string]*gitLane
+	ByKey map[string]*GitLane
 }
 
 var (
-	gitLanes    gitLaneTable
-	remoteLanes gitLaneTable
+	GitLanes    GitLaneTable
+	RemoteLanes GitLaneTable
 )
 
-// canonicalRepoDir 是命令日志和车道共用的仓库键：绝对路径，软链接已解开，
+// CanonicalRepoDir 是命令日志和车道共用的仓库键：绝对路径，软链接已解开，
 // 所以同一个仓库的两种写法（真目录、指向它的符号链接、带末尾斜杠）落到同一条车道。
 // 容器键本身就是身份，不能当成本机路径做 Abs/EvalSymlinks。
-func canonicalRepoDir(dir string) string {
-	if target, ok := parseDockerRepoKey(dir); ok {
-		return dockerRepoKey(target)
+func CanonicalRepoDir(dir string) string {
+	if CanonicalizeSpecialRepoDir != nil {
+		if key, ok := CanonicalizeSpecialRepoDir(dir); ok {
+			return key
+		}
 	}
-	if distro, linuxPath, ok := parseWSLUNCPath(dir); ok {
-		return formatWSLUNCPath(distro, linuxPath)
+	if distro, linuxPath, ok := ParseWSLUNCPath(dir); ok {
+		return FormatWSLUNCPath(distro, linuxPath)
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -86,40 +92,40 @@ func canonicalRepoDir(dir string) string {
 	return filepath.Clean(abs)
 }
 
-// acquireGitLane 拿到 key 上的一个读（write=false）或写（write=true）位置。
+// AcquireGitLane 拿到 key 上的一个读（write=false）或写（write=true）位置。
 // 立刻能进就直接进；否则排队等放行，ctx 取消时把自己从队列里摘掉。
 // 返回的释放函数可以被重复调用（延迟释放只该调用一次）。
-func acquireGitLane(ctx context.Context, key string, write bool) func() {
-	return gitLanes.acquire(ctx, key, write)
+func AcquireGitLane(ctx context.Context, key string, write bool) func() {
+	return GitLanes.acquire(ctx, key, write)
 }
 
-// acquireRemoteLane 拿到 key 上远端网络车道（remoteLanes）的独占位置，
-// 与本地读写车道（gitLanes）完全隔离。
-func acquireRemoteLane(ctx context.Context, key string) func() {
-	return remoteLanes.acquire(ctx, key, true)
+// AcquireRemoteLane 拿到 key 上远端网络车道（RemoteLanes）的独占位置，
+// 与本地读写车道（GitLanes）完全隔离。
+func AcquireRemoteLane(ctx context.Context, key string) func() {
+	return RemoteLanes.acquire(ctx, key, true)
 }
 
-func (t *gitLaneTable) acquire(ctx context.Context, key string, write bool) func() {
+func (t *GitLaneTable) acquire(ctx context.Context, key string, write bool) func() {
 	if ctx.Err() != nil {
 		// 让随后的 acquireGit/acquireRemoteGit 报出同一个错误，这里不占位置。
 		return func() {}
 	}
 	t.Lock()
-	if t.byKey == nil {
-		t.byKey = make(map[string]*gitLane)
+	if t.ByKey == nil {
+		t.ByKey = make(map[string]*GitLane)
 	}
-	lane := t.byKey[key]
+	lane := t.ByKey[key]
 	if lane == nil {
-		lane = &gitLane{}
-		t.byKey[key] = lane
+		lane = &GitLane{}
+		t.ByKey[key] = lane
 	}
-	if len(lane.queue) == 0 && lane.free(write) {
+	if len(lane.Queue) == 0 && lane.free(write) {
 		lane.take(write)
 		t.Unlock()
 		return onceRelease(func() { t.release(key, write) })
 	}
 	w := &gitWaiter{write: write, ready: make(chan struct{})}
-	lane.queue = append(lane.queue, w)
+	lane.Queue = append(lane.Queue, w)
 	t.Unlock()
 
 	select {
@@ -141,91 +147,91 @@ func onceRelease(release func()) func() {
 }
 
 // free 说的是「进来的话能不能立刻跑」，不是「现在空闲」。
-func (l *gitLane) free(write bool) bool {
-	if l.writing {
+func (l *GitLane) free(write bool) bool {
+	if l.Writing {
 		return false
 	}
-	return !write || l.readers == 0
+	return !write || l.Readers == 0
 }
 
-func (l *gitLane) take(write bool) {
+func (l *GitLane) take(write bool) {
 	if write {
-		l.writing = true
+		l.Writing = true
 		return
 	}
-	l.readers++
+	l.Readers++
 }
 
-func releaseGitLane(key string, write bool) {
-	gitLanes.release(key, write)
+func ReleaseGitLane(key string, write bool) {
+	GitLanes.release(key, write)
 }
 
-func (t *gitLaneTable) release(key string, write bool) {
+func (t *GitLaneTable) release(key string, write bool) {
 	t.Lock()
 	defer t.Unlock()
-	lane := t.byKey[key]
+	lane := t.ByKey[key]
 	if lane == nil {
 		return
 	}
 	if write {
-		lane.writing = false
-	} else if lane.readers > 0 {
-		lane.readers--
+		lane.Writing = false
+	} else if lane.Readers > 0 {
+		lane.Readers--
 	}
 	lane.grant()
 	if lane.idle() {
-		delete(t.byKey, key)
+		delete(t.ByKey, key)
 	}
 }
 
 // grant 从队首按 FIFO 放行：连续的读一起进（没有写者在等），
 // 队首是写就要等到读者都退出。
-func (l *gitLane) grant() {
-	for len(l.queue) > 0 {
-		w := l.queue[0]
+func (l *GitLane) grant() {
+	for len(l.Queue) > 0 {
+		w := l.Queue[0]
 		if !l.free(w.write) {
 			return
 		}
-		l.queue = l.queue[1:]
+		l.Queue = l.Queue[1:]
 		l.take(w.write)
 		close(w.ready)
 	}
 }
 
-func (l *gitLane) idle() bool {
-	return l.readers == 0 && !l.writing && len(l.queue) == 0
+func (l *GitLane) idle() bool {
+	return l.Readers == 0 && !l.Writing && len(l.Queue) == 0
 }
 
-func (t *gitLaneTable) unqueue(key string, w *gitWaiter) bool {
+func (t *GitLaneTable) unqueue(key string, w *gitWaiter) bool {
 	t.Lock()
 	defer t.Unlock()
-	lane := t.byKey[key]
+	lane := t.ByKey[key]
 	if lane == nil {
 		return false
 	}
-	for i, queued := range lane.queue {
+	for i, queued := range lane.Queue {
 		if queued != w {
 			continue
 		}
-		lane.queue = append(lane.queue[:i], lane.queue[i+1:]...)
+		lane.Queue = append(lane.Queue[:i], lane.Queue[i+1:]...)
 		// 摘掉的可能正是队首，后面的读跟着放行。
 		lane.grant()
 		if lane.idle() {
-			delete(t.byKey, key)
+			delete(t.ByKey, key)
 		}
 		return true
 	}
 	return false
 }
 
-// gitLaneKind 表示一条 git 命令需要占用的仓库车道类型。
-type gitLaneKind uint8
+// GitLaneKind 表示一条 git 命令需要占用的仓库车道类型。
+type GitLaneKind uint8
 
 const (
-	gitLaneLocalRead gitLaneKind = iota
-	gitLaneLocalWrite
-	gitLaneRemote
-	gitLaneBoth
+	GitLaneLocalRead GitLaneKind = iota
+	GitLaneLocalWrite
+	GitLaneRemote
+	GitLaneBoth
 )
 
 // gitGlobalOptionsWithValue 是 git 的全局选项里「后面还跟一个值」的那些。
@@ -269,56 +275,56 @@ func gitSubcommand(args []string) (sub string, rest []string, ok bool) {
 	return args[i], args[i+1:], true
 }
 
-// gitCommandLane 判断一条 git 命令应占用本地读、本地写、远端还是双车道。
+// GitCommandLane 判断一条 git 命令应占用本地读、本地写、远端还是双车道。
 // 这张表由 TestGitCommandLane 与 TestGitCommandWrites 钉住；未知子命令一律按本地写处理。
-func gitCommandLane(args []string) gitLaneKind {
+func GitCommandLane(args []string) GitLaneKind {
 	sub, rest, ok := gitSubcommand(args)
 	if !ok {
-		return gitLaneLocalWrite
+		return GitLaneLocalWrite
 	}
 	switch sub {
 	case "log", "rev-list", "rev-parse", "for-each-ref", "symbolic-ref", "show",
 		"diff", "diff-tree", "ls-tree", "cat-file", "merge-base", "var", "version",
 		"status", "check-ref-format":
-		return gitLaneLocalRead
+		return GitLaneLocalRead
 	case "worktree":
 		if len(rest) > 0 && rest[0] == "list" {
-			return gitLaneLocalRead
+			return GitLaneLocalRead
 		}
-		return gitLaneLocalWrite
+		return GitLaneLocalWrite
 	case "branch", "tag":
 		// 只有列出来是读；`branch --list` 带模式也只读。
 		if hasAnyArg(rest, "--list", "-l") {
-			return gitLaneLocalRead
+			return GitLaneLocalRead
 		}
-		return gitLaneLocalWrite
+		return GitLaneLocalWrite
 	case "remote":
 		if len(rest) == 0 || rest[0] == "-v" || rest[0] == "--verbose" || rest[0] == "get-url" {
-			return gitLaneLocalRead
+			return GitLaneLocalRead
 		}
-		return gitLaneBoth
+		return GitLaneBoth
 	case "config":
-		// status 之所以能算读，靠的是 GIT_OPTIONAL_LOCKS=0（见 mergeGitEnv）。
+		// status 之所以能算读，靠的是 GIT_OPTIONAL_LOCKS=0（见 MergeGitEnv）。
 		if hasAnyArg(rest, "--get", "--get-regexp", "--list") {
-			return gitLaneLocalRead
+			return GitLaneLocalRead
 		}
-		return gitLaneLocalWrite
+		return GitLaneLocalWrite
 	case "fetch", "push":
-		return gitLaneRemote
+		return GitLaneRemote
 	case "pull", "gc", "prune":
-		return gitLaneBoth
+		return GitLaneBoth
 	default:
-		return gitLaneLocalWrite
+		return GitLaneLocalWrite
 	}
 }
 
-// gitCommandWrites 判断一条 git 命令是否非只读。
-func gitCommandWrites(args []string) bool {
-	return gitCommandLane(args) != gitLaneLocalRead
+// GitCommandWrites 判断一条 git 命令是否非只读。
+func GitCommandWrites(args []string) bool {
+	return GitCommandLane(args) != GitLaneLocalRead
 }
 
-// gitCommandUsesRemoteSlot 判断一条 git 命令是否应走独立的远端网络执行槽。
-func gitCommandUsesRemoteSlot(args []string) bool {
+// GitCommandUsesRemoteSlot 判断一条 git 命令是否应走独立的远端网络执行槽。
+func GitCommandUsesRemoteSlot(args []string) bool {
 	sub, _, ok := gitSubcommand(args)
 	if !ok {
 		return false
@@ -331,39 +337,39 @@ func gitCommandUsesRemoteSlot(args []string) bool {
 	}
 }
 
-// acquireRepoLanes 按固定顺序申请仓库车道（先远端、后本地；释放逆序），避免死锁，
-// 且确保 gitLaneBoth 在等待远端车道期间不会提前占住本地车道。
-func acquireRepoLanes(ctx context.Context, key string, kind gitLaneKind) (func(), error) {
+// AcquireRepoLanes 按固定顺序申请仓库车道（先远端、后本地；释放逆序），避免死锁，
+// 且确保 GitLaneBoth 在等待远端车道期间不会提前占住本地车道。
+func AcquireRepoLanes(ctx context.Context, key string, kind GitLaneKind) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return func() {}, err
 	}
 	switch kind {
-	case gitLaneLocalRead, gitLaneLocalWrite:
-		if gitLaneHeld(ctx, key) {
+	case GitLaneLocalRead, GitLaneLocalWrite:
+		if GitLaneHeld(ctx, key) {
 			return func() {}, nil
 		}
-		release := acquireGitLane(ctx, key, kind == gitLaneLocalWrite)
+		release := AcquireGitLane(ctx, key, kind == GitLaneLocalWrite)
 		if err := ctx.Err(); err != nil {
 			release()
 			return func() {}, err
 		}
 		return release, nil
-	case gitLaneRemote:
-		release := acquireRemoteLane(ctx, key)
+	case GitLaneRemote:
+		release := AcquireRemoteLane(ctx, key)
 		if err := ctx.Err(); err != nil {
 			release()
 			return func() {}, err
 		}
 		return release, nil
-	case gitLaneBoth:
-		releaseRemote := acquireRemoteLane(ctx, key)
+	case GitLaneBoth:
+		releaseRemote := AcquireRemoteLane(ctx, key)
 		if err := ctx.Err(); err != nil {
 			releaseRemote()
 			return func() {}, err
 		}
 		releaseLocal := func() {}
-		if !gitLaneHeld(ctx, key) {
-			releaseLocal = acquireGitLane(ctx, key, true)
+		if !GitLaneHeld(ctx, key) {
+			releaseLocal = AcquireGitLane(ctx, key, true)
 			if err := ctx.Err(); err != nil {
 				releaseLocal()
 				releaseRemote()

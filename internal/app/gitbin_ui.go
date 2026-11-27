@@ -42,7 +42,7 @@ func (a *app) checkGit(force bool) {
 		if err != nil {
 			state.err = err.Error()
 		} else {
-			state.path, state.version = probe.path, probe.version
+			state.path, state.version = probe.Path, probe.Version
 		}
 		a.post(func() {
 			if a.closed || a.gitCheckGen != gen {

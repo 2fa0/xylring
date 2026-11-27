@@ -1,4 +1,4 @@
-package app
+package gitx
 
 import (
 	"bytes"
@@ -15,9 +15,13 @@ import (
 	"unicode/utf16"
 )
 
-// parseWSLUNCPath parses a Windows WSL UNC path such as
+// ResolveDockerGitPath allows host layers (e.g. Docker integration) to resolve
+// in-container Git paths without creating a dependency cycle.
+var ResolveDockerGitPath func(repoDir, gitOutPath string) (string, bool)
+
+// ParseWSLUNCPath parses a Windows WSL UNC path such as
 // \\wsl.localhost\Ubuntu\home\user\repo or \\wsl$\Ubuntu\home\user\repo.
-func parseWSLUNCPath(p string) (distro, linuxPath string, ok bool) {
+func ParseWSLUNCPath(p string) (distro, linuxPath string, ok bool) {
 	s := strings.ReplaceAll(strings.TrimSpace(p), "/", `\`)
 	lower := strings.ToLower(s)
 	var rest string
@@ -46,8 +50,8 @@ func parseWSLUNCPath(p string) (distro, linuxPath string, ok bool) {
 	return distro, linuxPath, true
 }
 
-// formatWSLUNCPath formats a WSL distro and Linux path as a Windows UNC path.
-func formatWSLUNCPath(distro, linuxPath string) string {
+// FormatWSLUNCPath formats a WSL distro and Linux path as a Windows UNC path.
+func FormatWSLUNCPath(distro, linuxPath string) string {
 	clean := path.Clean("/" + strings.ReplaceAll(strings.TrimSpace(linuxPath), `\`, "/"))
 	if clean == "/" {
 		return `\\wsl.localhost\` + distro + `\`
@@ -55,15 +59,15 @@ func formatWSLUNCPath(distro, linuxPath string) string {
 	return `\\wsl.localhost\` + distro + strings.ReplaceAll(clean, "/", `\`)
 }
 
-// wslGitEnv builds the Linux environment assignments passed to `env` inside WSL.
-func wslGitEnv(distro, linuxDir string, extra []string) []string {
+// WSLGitEnv builds the Linux environment assignments passed to `env` inside WSL.
+func WSLGitEnv(distro, linuxDir string, extra []string) []string {
 	envMap := map[string]string{
-		"LC_ALL":             "C",
-		"LANG":               "C",
+		"LC_ALL":              "C",
+		"LANG":                "C",
 		"GIT_TERMINAL_PROMPT": "0",
-		"GIT_PAGER":          "cat",
-		"PAGER":              "cat",
-		"GIT_OPTIONAL_LOCKS": "0",
+		"GIT_PAGER":           "cat",
+		"PAGER":               "cat",
+		"GIT_OPTIONAL_LOCKS":  "0",
 	}
 	var keys []string
 	for k := range envMap {
@@ -78,7 +82,7 @@ func wslGitEnv(distro, linuxDir string, extra []string) []string {
 		if !ok || k == "" {
 			continue
 		}
-		if d, lp, isWSL := parseWSLUNCPath(v); isWSL && strings.EqualFold(d, distro) {
+		if d, lp, isWSL := ParseWSLUNCPath(v); isWSL && strings.EqualFold(d, distro) {
 			v = lp
 		}
 		if _, exists := envMap[k]; !exists {
@@ -98,7 +102,7 @@ var (
 	wslPathVal string
 )
 
-func wslPath() (string, error) {
+func WSLPath() (string, error) {
 	wslPathMu.Lock()
 	cached := wslPathVal
 	wslPathMu.Unlock()
@@ -107,9 +111,9 @@ func wslPath() (string, error) {
 	}
 	bin, err := exec.LookPath("wsl.exe")
 	if err != nil {
-		return "", &gitUnavailableError{
-			message: "未找到 wsl.exe，无法访问 WSL 仓库",
-			err:     err,
+		return "", &GitUnavailableError{
+			Message: "未找到 wsl.exe，无法访问 WSL 仓库",
+			Err:     err,
 		}
 	}
 	wslPathMu.Lock()
@@ -118,24 +122,25 @@ func wslPath() (string, error) {
 	return bin, nil
 }
 
-// resolveRepoGitPath maps a path returned by Git (e.g. from
+// ResolveRepoGitPath maps a path returned by Git (e.g. from
 // `rev-parse --absolute-git-dir` or `--git-path`) into a host-accessible path.
 // For WSL repositories, Linux paths are mapped back to `\\wsl.localhost\...`.
-func resolveRepoGitPath(repoDir, gitOutPath string) string {
-	if target, ok := parseDockerRepoKey(repoDir); ok {
-		// 容器内的路径就是容器内的路径，不映射成主机路径。
-		return containerPath(target.path, strings.TrimSuffix(gitOutPath, "\n"))
+func ResolveRepoGitPath(repoDir, gitOutPath string) string {
+	if ResolveDockerGitPath != nil {
+		if resolved, ok := ResolveDockerGitPath(repoDir, gitOutPath); ok {
+			return resolved
+		}
 	}
 	p := strings.TrimSpace(gitOutPath)
 	if p == "" {
 		return ""
 	}
-	if distro, repoLinux, ok := parseWSLUNCPath(repoDir); ok {
+	if distro, repoLinux, ok := ParseWSLUNCPath(repoDir); ok {
 		clean := strings.ReplaceAll(p, `\`, "/")
 		if strings.HasPrefix(clean, "/") {
-			return formatWSLUNCPath(distro, clean)
+			return FormatWSLUNCPath(distro, clean)
 		}
-		return formatWSLUNCPath(distro, path.Join(repoLinux, clean))
+		return FormatWSLUNCPath(distro, path.Join(repoLinux, clean))
 	}
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
@@ -143,33 +148,33 @@ func resolveRepoGitPath(repoDir, gitOutPath string) string {
 	return filepath.Join(repoDir, filepath.FromSlash(p))
 }
 
-func wslCommandArgs(distro, linuxDir string, extraEnv []string, fullArgs ...string) []string {
+func WSLCommandArgs(distro, linuxDir string, extraEnv []string, fullArgs ...string) []string {
 	if linuxDir == "" {
 		linuxDir = "/"
 	}
 	wslArgs := []string{"-d", distro, "--cd", linuxDir, "--exec", "env"}
-	wslArgs = append(wslArgs, wslGitEnv(distro, linuxDir, extraEnv)...)
+	wslArgs = append(wslArgs, WSLGitEnv(distro, linuxDir, extraEnv)...)
 	wslArgs = append(wslArgs, "git")
 	return append(wslArgs, fullArgs...)
 }
 
-func wslCommand(ctx context.Context, distro, linuxDir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
-	wslBin, err := wslPath()
+func WSLCommand(ctx context.Context, distro, linuxDir string, extraEnv []string, fullArgs ...string) (*exec.Cmd, string, error) {
+	wslBin, err := WSLPath()
 	if err != nil {
 		return nil, "", err
 	}
-	cmd := exec.CommandContext(ctx, wslBin, wslCommandArgs(distro, linuxDir, extraEnv, fullArgs...)...)
-	hideConsoleWindow(cmd)
+	cmd := exec.CommandContext(ctx, wslBin, WSLCommandArgs(distro, linuxDir, extraEnv, fullArgs...)...)
+	HideConsoleWindow(cmd)
 	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
 	cmd.WaitDelay = 2 * time.Second
 	return cmd, wslBin, nil
 }
 
-func decodeWSLCommandOutput(dir string, raw []byte) []byte {
+func DecodeWSLCommandOutput(dir string, raw []byte) []byte {
 	if len(raw) == 0 {
 		return raw
 	}
-	if _, _, ok := parseWSLUNCPath(dir); !ok {
+	if _, _, ok := ParseWSLUNCPath(dir); !ok {
 		return raw
 	}
 	hasUTF16BOM := len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE
@@ -194,7 +199,7 @@ func decodeWSLOutput(raw []byte) string {
 	return string(raw)
 }
 
-func parseWSLDistroList(raw []byte) []string {
+func ParseWSLDistroList(raw []byte) []string {
 	cleaned := strings.TrimPrefix(decodeWSLOutput(raw), "\uFEFF")
 	var out []string
 	for _, line := range strings.Split(cleaned, "\n") {
@@ -207,23 +212,23 @@ func parseWSLDistroList(raw []byte) []string {
 }
 
 func listWSLDistros() []string {
-	wslBin, err := wslPath()
+	wslBin, err := WSLPath()
 	if err != nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, wslBin, "-l", "-q")
-	hideConsoleWindow(cmd)
+	HideConsoleWindow(cmd)
 	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
-	return parseWSLDistroList(out)
+	return ParseWSLDistroList(out)
 }
 
-func parseWSLHomeOutput(raw []byte) string {
+func ParseWSLHomeOutput(raw []byte) string {
 	home := strings.TrimSpace(strings.TrimPrefix(decodeWSLOutput(raw), "\uFEFF"))
 	if !strings.HasPrefix(home, "/") {
 		return ""
@@ -232,40 +237,40 @@ func parseWSLHomeOutput(raw []byte) string {
 }
 
 func wslUserHome(distro string) string {
-	wslBin, err := wslPath()
+	wslBin, err := WSLPath()
 	if err != nil {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, wslBin, "-d", distro, "--cd", "~", "--exec", "pwd")
-	hideConsoleWindow(cmd)
+	HideConsoleWindow(cmd)
 	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
-	return parseWSLHomeOutput(out)
+	return ParseWSLHomeOutput(out)
 }
 
-func resolveDefaultWSLRepoRoot(distros []string, homeFn func(string) string) string {
+func ResolveDefaultWSLRepoRoot(distros []string, homeFn func(string) string) string {
 	if len(distros) == 0 {
 		return `\\wsl.localhost\`
 	}
 	distro := distros[0]
 	if homeFn != nil {
 		if home := homeFn(distro); home != "" {
-			return formatWSLUNCPath(distro, home)
+			return FormatWSLUNCPath(distro, home)
 		}
 	}
 	return `\\wsl.localhost\` + distro
 }
 
-func defaultWSLRepoRoot() string {
-	return resolveDefaultWSLRepoRoot(listWSLDistros(), wslUserHome)
+func DefaultWSLRepoRoot() string {
+	return ResolveDefaultWSLRepoRoot(listWSLDistros(), wslUserHome)
 }
 
-func wslFindGitReposArgs(distro, linuxDir string) []string {
+func WSLFindGitReposArgs(distro, linuxDir string) []string {
 	if linuxDir == "" {
 		linuxDir = "/"
 	}
@@ -275,9 +280,9 @@ func wslFindGitReposArgs(distro, linuxDir string) []string {
 		"-name", ".git", "(", "-type", "d", "-o", "-type", "f", ")", "-print", "-prune",
 		"-o", "(",
 	}
-	pruneDirs := skippedRepoDirs
+	pruneDirs := SkippedRepoDirs
 	if linuxDir == "/" {
-		pruneDirs = append(append([]string(nil), skippedRepoDirs...), "proc", "sys", "dev", "run", "mnt")
+		pruneDirs = append(append([]string(nil), SkippedRepoDirs...), "proc", "sys", "dev", "run", "mnt")
 	}
 	for i, name := range pruneDirs {
 		if i > 0 {
@@ -288,7 +293,7 @@ func wslFindGitReposArgs(distro, linuxDir string) []string {
 	return append(args, ")", "-prune")
 }
 
-func parseWSLFindGitOutput(distro, linuxDir string, raw []byte) []string {
+func ParseWSLFindGitOutput(distro, linuxDir string, raw []byte) []string {
 	cleaned := strings.TrimPrefix(decodeWSLOutput(raw), "\uFEFF")
 	seen := make(map[string]struct{})
 	var roots []string
@@ -307,7 +312,7 @@ func parseWSLFindGitOutput(distro, linuxDir string, raw []byte) []string {
 		default:
 			continue
 		}
-		unc := formatWSLUNCPath(distro, path.Join(linuxDir, relRepo))
+		unc := FormatWSLUNCPath(distro, path.Join(linuxDir, relRepo))
 		if _, ok := seen[unc]; ok {
 			continue
 		}
@@ -318,7 +323,7 @@ func parseWSLFindGitOutput(distro, linuxDir string, raw []byte) []string {
 	return roots
 }
 
-func classifyWSLFindError(err error) (bool, error) {
+func ClassifyWSLFindError(err error) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
@@ -336,34 +341,34 @@ func classifyWSLFindError(err error) (bool, error) {
 		return true, nil
 	}
 	if stderr != "" {
-		return true, errors.New(trimMsg(stderr))
+		return true, errors.New(TrimMsg(stderr))
 	}
 	return true, fmt.Errorf("WSL 扫描仓库失败（退出码 %d）", code)
 }
 
-func scanWSLGitRepos(ctx context.Context, distro, linuxDir string) ([]string, bool, error) {
-	wslBin, err := wslPath()
+func ScanWSLGitRepos(ctx context.Context, distro, linuxDir string) ([]string, bool, error) {
+	wslBin, err := WSLPath()
 	if err != nil {
 		return nil, false, err
 	}
-	cmd := exec.CommandContext(ctx, wslBin, wslFindGitReposArgs(distro, linuxDir)...)
-	hideConsoleWindow(cmd)
+	cmd := exec.CommandContext(ctx, wslBin, WSLFindGitReposArgs(distro, linuxDir)...)
+	HideConsoleWindow(cmd)
 	cmd.Env = append(cmd.Environ(), "WSL_UTF8=1")
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		return nil, true, ctx.Err()
 	}
-	roots := parseWSLFindGitOutput(distro, linuxDir, out)
+	roots := ParseWSLFindGitOutput(distro, linuxDir, out)
 	if len(roots) > 0 {
 		return roots, true, nil
 	}
-	handled, outErr := classifyWSLFindError(err)
+	handled, outErr := ClassifyWSLFindError(err)
 	return nil, handled, outErr
 }
 
-func resolveWindowsWSLTerminalCommand(abs string, lookPathFn func(string) (string, error)) (bin string, args []string, ok bool) {
-	distro, linuxPath, isWSL := parseWSLUNCPath(abs)
+func ResolveWindowsWSLTerminalCommand(abs string, lookPathFn func(string) (string, error)) (bin string, args []string, ok bool) {
+	distro, linuxPath, isWSL := ParseWSLUNCPath(abs)
 	if !isWSL {
 		return "", nil, false
 	}
@@ -374,8 +379,8 @@ func resolveWindowsWSLTerminalCommand(abs string, lookPathFn func(string) (strin
 	return "cmd", append([]string{"/c", "start", ""}, wslArgs...), true
 }
 
-func resolveWindowsWSLEditorArgs(presetID, targetPath string) ([]string, bool) {
-	distro, linuxPath, ok := parseWSLUNCPath(targetPath)
+func ResolveWindowsWSLEditorArgs(presetID, targetPath string) ([]string, bool) {
+	distro, linuxPath, ok := ParseWSLUNCPath(targetPath)
 	if !ok {
 		return nil, false
 	}

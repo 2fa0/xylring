@@ -58,7 +58,7 @@ func (a *app) gitLogBannerButton(c *ui.Context) {
 	if a.bannerPath != "" {
 		dir = a.bannerPath
 	}
-	if _, ok := gitLog.lastFailure(dir); !ok {
+	if _, ok := gitLog.LastFailure(dir); !ok {
 		return
 	}
 	if ui.Button(c.Key("banner-git-log"), tr("查看 Git 日志")).Clicked() {

@@ -19,14 +19,14 @@ import (
 // 别的测试也会真的跑 git，日志是进程级的。
 func resetGitLog(t *testing.T) {
 	t.Helper()
-	gitLog.mu.Lock()
-	calls, bytes, next := gitLog.calls, gitLog.bytes, gitLog.next
-	gitLog.calls, gitLog.bytes, gitLog.next = nil, 0, 0
-	gitLog.mu.Unlock()
+	gitLog.Mu.Lock()
+	calls, bytes, next := gitLog.Calls, gitLog.Bytes, gitLog.Next
+	gitLog.Calls, gitLog.Bytes, gitLog.Next = nil, 0, 0
+	gitLog.Mu.Unlock()
 	t.Cleanup(func() {
-		gitLog.mu.Lock()
-		gitLog.calls, gitLog.bytes, gitLog.next = calls, bytes, next
-		gitLog.mu.Unlock()
+		gitLog.Mu.Lock()
+		gitLog.Calls, gitLog.Bytes, gitLog.Next = calls, bytes, next
+		gitLog.Mu.Unlock()
 	})
 }
 
@@ -108,31 +108,31 @@ func TestGitLogRedaction(t *testing.T) {
 
 func TestGitLogSummarizeOutput(t *testing.T) {
 	text := summarizeGitOutput([]byte("hello\n"), gitLogTextLimit)
-	if text.binary || text.truncated || text.text != "hello\n" || text.bytes != 6 {
+	if text.Binary || text.Truncated || text.Text != "hello\n" || text.Bytes != 6 {
 		t.Fatalf("plain text: %+v", text)
 	}
 	// 二进制只留字节数。
 	for _, b := range [][]byte{{0x00, 0x01, 0x02}, {0xff, 0xfe, 0xfd}} {
 		out := summarizeGitOutput(b, gitLogTextLimit)
-		if !out.binary || out.text != "" || out.bytes != len(b) {
+		if !out.Binary || out.Text != "" || out.Bytes != len(b) {
 			t.Fatalf("binary %v: %+v", b, out)
 		}
 	}
 	// 文本截断到 limit，字节数仍是真实的。
 	big := []byte(strings.Repeat("a", 40<<10))
 	cut := summarizeGitOutput(big, gitLogTextLimit)
-	if !cut.truncated || len(cut.text) != gitLogTextLimit || cut.bytes != len(big) {
-		t.Fatalf("truncated: truncated=%v len=%d bytes=%d", cut.truncated, len(cut.text), cut.bytes)
+	if !cut.Truncated || len(cut.Text) != gitLogTextLimit || cut.Bytes != len(big) {
+		t.Fatalf("truncated: truncated=%v len=%d bytes=%d", cut.Truncated, len(cut.Text), cut.Bytes)
 	}
 	// 截断落在多字节字符中间时，去掉那半个字符而不是留乱码。
 	wide := []byte(strings.Repeat("日", 20000))
 	half := summarizeGitOutput(wide, gitLogTextLimit)
-	if !utf8.ValidString(half.text) || !half.truncated {
-		t.Fatalf("truncated multibyte: valid=%v truncated=%v", utf8.ValidString(half.text), half.truncated)
+	if !utf8.ValidString(half.Text) || !half.Truncated {
+		t.Fatalf("truncated multibyte: valid=%v truncated=%v", utf8.ValidString(half.Text), half.Truncated)
 	}
 	// limit 为 0 表示一个字都不留：流式输出只记字节数。
 	stream := summarizeGitOutput(big, 0)
-	if stream.text != "" || stream.bytes != len(big) || stream.binary || stream.truncated {
+	if stream.Text != "" || stream.Bytes != len(big) || stream.Binary || stream.Truncated {
 		t.Fatalf("streamed: %+v", stream)
 	}
 }
@@ -141,24 +141,24 @@ func TestGitLogEntryLimit(t *testing.T) {
 	resetGitLog(t)
 	dir := t.TempDir()
 	for i := 0; i < gitLogMaxCalls; i++ {
-		id := gitLog.begin(dir, []string{"log", fmt.Sprintf("--skip=%d", i)})
-		gitLog.finish(id, gitCallOK, time.Millisecond, 0, []byte("x"), nil)
+		id := gitLog.Begin(dir, []string{"log", fmt.Sprintf("--skip=%d", i)})
+		gitLog.Finish(id, gitCallOK, time.Millisecond, 0, []byte("x"), nil)
 	}
-	if got := len(gitLog.entries(dir)); got != gitLogMaxCalls {
+	if got := len(gitLog.Entries(dir)); got != gitLogMaxCalls {
 		t.Fatalf("entries=%d want %d", got, gitLogMaxCalls)
 	}
-	oldest := gitLog.entries(dir)[len(gitLog.entries(dir))-1].id
-	last := gitLog.begin(dir, []string{"checkout", "main"})
-	gitLog.finish(last, gitCallOK, time.Millisecond, 0, nil, nil)
-	entries := gitLog.entries(dir)
+	oldest := gitLog.Entries(dir)[len(gitLog.Entries(dir))-1].ID
+	last := gitLog.Begin(dir, []string{"checkout", "main"})
+	gitLog.Finish(last, gitCallOK, time.Millisecond, 0, nil, nil)
+	entries := gitLog.Entries(dir)
 	if len(entries) != gitLogMaxCalls {
 		t.Fatalf("entries=%d want %d", len(entries), gitLogMaxCalls)
 	}
-	if entries[0].id != last {
-		t.Fatalf("newest entry is %d, want %d", entries[0].id, last)
+	if entries[0].ID != last {
+		t.Fatalf("newest entry is %d, want %d", entries[0].ID, last)
 	}
 	for _, e := range entries {
-		if e.id == oldest {
+		if e.ID == oldest {
 			t.Fatal("the oldest finished entry survived the limit")
 		}
 	}
@@ -168,25 +168,25 @@ func TestGitLogByteLimitTrimsOnlyFinished(t *testing.T) {
 	resetGitLog(t)
 	dir := t.TempDir()
 	// 运行中的那条最老，却不能被丢：它结束时就再没地方落账了。
-	running := gitLog.begin(dir, []string{"log", "--stdin"})
+	running := gitLog.Begin(dir, []string{"log", "--stdin"})
 	huge := strings.Repeat("a", 60<<10)
 	for i := 0; i < gitLogMaxCalls; i++ {
-		id := gitLog.begin(dir, []string{"rev-parse", huge})
-		gitLog.finish(id, gitCallOK, time.Millisecond, 0, nil, nil)
+		id := gitLog.Begin(dir, []string{"rev-parse", huge})
+		gitLog.Finish(id, gitCallOK, time.Millisecond, 0, nil, nil)
 	}
-	entries := gitLog.entries(dir)
+	entries := gitLog.Entries(dir)
 	if len(entries) == 0 {
 		t.Fatal("no entries kept")
 	}
-	if gitLog.bytes > gitLogMaxBytes {
-		t.Fatalf("bytes=%d over limit %d", gitLog.bytes, gitLogMaxBytes)
+	if gitLog.Bytes > gitLogMaxBytes {
+		t.Fatalf("bytes=%d over limit %d", gitLog.Bytes, gitLogMaxBytes)
 	}
 	kept := false
 	for _, e := range entries {
-		if e.id == running {
+		if e.ID == running {
 			kept = true
-			if e.status != gitCallRunning {
-				t.Fatalf("running entry has status %v", e.status)
+			if e.Status != gitCallRunning {
+				t.Fatalf("running entry has status %v", e.Status)
 			}
 		}
 	}
@@ -240,16 +240,16 @@ func TestGitLogCancelledKeepsEntry(t *testing.T) {
 		t.Fatal("cancelled command did not return")
 	}
 	var found bool
-	for _, call := range gitLog.entries(dir) {
-		if !strings.HasPrefix(call.command, "commit") {
+	for _, call := range gitLog.Entries(dir) {
+		if !strings.HasPrefix(call.Command, "commit") {
 			continue
 		}
 		found = true
-		if call.status != gitCallCancelled {
-			t.Fatalf("cancelled call has status %v", call.status)
+		if call.Status != gitCallCancelled {
+			t.Fatalf("cancelled call has status %v", call.Status)
 		}
-		if call.ms < 0 {
-			t.Fatalf("cancelled call has %d ms", call.ms)
+		if call.MS < 0 {
+			t.Fatalf("cancelled call has %d ms", call.MS)
 		}
 	}
 	if !found {
@@ -260,13 +260,13 @@ func TestGitLogCancelledKeepsEntry(t *testing.T) {
 func TestGitLogPanelShowsAndClears(t *testing.T) {
 	resetGitLog(t)
 	dir := t.TempDir()
-	stream := gitLog.beginStream(dir, []string{"log", "--date-order", "--format=%H"})
-	gitLog.finish(stream, gitCallOK, 240*time.Millisecond, 0, []byte(strings.Repeat("x", 4096)), nil)
-	binary := gitLog.begin(dir, []string{"cat-file", "blob", "HEAD:logo.png"})
-	gitLog.finish(binary, gitCallOK, 8*time.Millisecond, 0, []byte{0x89, 0x50, 0x00, 0x01}, nil)
-	id := gitLog.begin(dir, []string{"fetch", "--all"})
-	gitLog.finish(id, gitCallFailed, 12*time.Millisecond, 128, []byte("Fetching origin\n"), []byte("fatal: could not read from remote"))
-	if _, ok := gitLog.lastFailure(dir); !ok {
+	stream := gitLog.BeginStream(dir, []string{"log", "--date-order", "--format=%H"})
+	gitLog.Finish(stream, gitCallOK, 240*time.Millisecond, 0, []byte(strings.Repeat("x", 4096)), nil)
+	binary := gitLog.Begin(dir, []string{"cat-file", "blob", "HEAD:logo.png"})
+	gitLog.Finish(binary, gitCallOK, 8*time.Millisecond, 0, []byte{0x89, 0x50, 0x00, 0x01}, nil)
+	id := gitLog.Begin(dir, []string{"fetch", "--all"})
+	gitLog.Finish(id, gitCallFailed, 12*time.Millisecond, 128, []byte("Fetching origin\n"), []byte("fatal: could not read from remote"))
+	if _, ok := gitLog.LastFailure(dir); !ok {
 		t.Fatal("no failure to point the banner button at")
 	}
 	a := &app{}
@@ -308,7 +308,7 @@ func TestGitLogPanelShowsAndClears(t *testing.T) {
 	if !tt.HasText("没有记录") {
 		t.Fatalf("panel did not go empty: %q", tt.Texts())
 	}
-	if len(gitLog.entries(dir)) != 0 {
+	if len(gitLog.Entries(dir)) != 0 {
 		t.Fatal("clearing the panel kept the entries")
 	}
 }

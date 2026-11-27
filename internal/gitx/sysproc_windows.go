@@ -1,15 +1,15 @@
 //go:build windows
 
-package app
+package gitx
 
 import (
 	"os/exec"
 	"syscall"
 )
 
-// hideConsoleWindow prevents console windows from popping up when spawning CUI tools
+// HideConsoleWindow prevents console windows from popping up when spawning CUI tools
 // like git.exe or cmd.exe from a GUI process on Windows.
-func hideConsoleWindow(cmd *exec.Cmd) {
+func HideConsoleWindow(cmd *exec.Cmd) {
 	if cmd == nil {
 		return
 	}

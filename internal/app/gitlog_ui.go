@@ -30,8 +30,8 @@ func (a *app) openGitLog(dir string, selectFailure bool) {
 	if !selectFailure {
 		return
 	}
-	for i, call := range gitLog.entries(p.dir) {
-		if call.status == gitCallFailed || call.status == gitCallCancelled {
+	for i, call := range gitLog.Entries(p.dir) {
+		if call.Status == gitCallFailed || call.Status == gitCallCancelled {
 			p.selected = i
 			return
 		}
@@ -43,7 +43,7 @@ func (a *app) gitLogModal(c *ui.Context) {
 	if !p.open {
 		return
 	}
-	entries := gitLog.entries(p.dir)
+	entries := gitLog.Entries(p.dir)
 	if p.selected >= len(entries) {
 		p.selected = len(entries) - 1
 	}
@@ -60,7 +60,7 @@ func (a *app) gitLogModal(c *ui.Context) {
 				BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 				ui.Text(c, tr("Git 日志")).FontSize(14).Bold().Grow(1).MinWidth(0)
 				if ui.Button(c.Key("git-log-clear"), tr("清空")).Disabled(len(entries) == 0).Clicked() {
-					gitLog.clear()
+					gitLog.Clear()
 					p.selected, p.state = -1, ui.ListState{}
 				}
 				if closeIconButton(c, "git-log-close", tr("关闭对话框")).Clicked() {
@@ -88,8 +88,8 @@ func (a *app) gitLogList(c *ui.Context, entries []gitCall) {
 	t := c.Theme()
 	selected := p.selected
 	p.state.Selected = &selected
-	p.state.Key = func(i int) any { return entries[i].id }
-	p.state.Label = func(i int) string { return entries[i].command }
+	p.state.Key = func(i int) any { return entries[i].ID }
+	p.state.Label = func(i int) string { return entries[i].Command }
 	ui.List(c.Key("git-log-list"), &p.state, len(entries), func(i int) {
 		call := entries[i]
 		open := i == p.selected
@@ -97,7 +97,7 @@ func (a *app) gitLogList(c *ui.Context, entries []gitCall) {
 		// own would look the same as the choice.
 		row := ui.Row(c).FillWidth().Padding(8, 10).Gap(8).AlignItems(ui.Start)
 		color := t.Text
-		switch call.status {
+		switch call.Status {
 		case gitCallFailed:
 			color = t.Danger
 		case gitCallCancelled:
@@ -105,8 +105,8 @@ func (a *app) gitLogList(c *ui.Context, entries []gitCall) {
 		}
 		row.Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
-				ui.Text(c, call.command).Font("monospace").FontSize(12).TextColor(color).
-					SingleLine().MinWidth(0).Tooltip(call.command)
+				ui.Text(c, call.Command).Font("monospace").FontSize(12).TextColor(color).
+					SingleLine().MinWidth(0).Tooltip(call.Command)
 				if open {
 					a.gitLogDetails(c, call)
 				}
@@ -124,45 +124,45 @@ func (a *app) gitLogList(c *ui.Context, entries []gitCall) {
 }
 
 func gitLogDuration(call gitCall) string {
-	if call.status == gitCallRunning {
+	if call.Status == gitCallRunning {
 		return tr("进行中")
 	}
-	return fmt.Sprintf("%d ms", call.ms)
+	return fmt.Sprintf("%d ms", call.MS)
 }
 
 func gitLogExit(call gitCall) string {
-	switch call.status {
+	switch call.Status {
 	case gitCallRunning:
 		return ""
 	case gitCallCancelled:
 		return tr("已取消")
 	default:
-		return fmt.Sprintf("%d", call.exit)
+		return fmt.Sprintf("%d", call.Exit)
 	}
 }
 
 func (a *app) gitLogDetails(c *ui.Context, call gitCall) {
-	a.gitLogOutput(c, call, "out", tr("输出"), call.out, call.stream)
-	a.gitLogOutput(c, call, "err", tr("错误"), call.err, false)
+	a.gitLogOutput(c, call, "out", tr("输出"), call.Out, call.Stream)
+	a.gitLogOutput(c, call, "err", tr("错误"), call.Err, false)
 }
 
 // gitLogOutput 是一段可复制的输出。二进制只说字节数，流式输出干脆不记内容。
 func (a *app) gitLogOutput(c *ui.Context, call gitCall, part, title string, out gitCallOutput, stream bool) {
 	t := c.Theme()
-	text := out.text
+	text := out.Text
 	// 只有真有内容可拿的块才配「复制」：字节数和不记录都不值得复制。
 	copyable := text != ""
 	switch {
 	case stream:
 		text, copyable = tr("流式输出不记录"), false
-	case out.binary:
-		text, copyable = fmt.Sprintf(tr("二进制输出（%d 字节）"), out.bytes), false
+	case out.Binary:
+		text, copyable = fmt.Sprintf(tr("二进制输出（%d 字节）"), out.Bytes), false
 	case text == "":
 		return
-	case out.truncated:
-		text += "\n" + fmt.Sprintf(tr("已截断，共 %d 字节"), out.bytes)
+	case out.Truncated:
+		text += "\n" + fmt.Sprintf(tr("已截断，共 %d 字节"), out.Bytes)
 	}
-	key := fmt.Sprintf("git-log-%d-%s", call.id, part)
+	key := fmt.Sprintf("git-log-%d-%s", call.ID, part)
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, title).FontSize(11).TextColor(t.TextMuted).Grow(1).MinWidth(0)
 		if copyable {

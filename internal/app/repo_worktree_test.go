@@ -225,7 +225,7 @@ func TestPruneRestoredWhileWaitingForLane(t *testing.T) {
 	go func() { done <- pruneWorktreeRecord(ctx, dir, wt, false) }()
 	for {
 		gitLanes.Lock()
-		waiting := len(gitLanes.byKey[wt].queue) > 0
+		waiting := len(gitLanes.ByKey[wt].Queue) > 0
 		gitLanes.Unlock()
 		if waiting {
 			break

@@ -11,19 +11,19 @@ import (
 func resetGitLanes(t *testing.T) {
 	t.Helper()
 	gitLanes.Lock()
-	savedLocal := gitLanes.byKey
-	gitLanes.byKey = nil
+	savedLocal := gitLanes.ByKey
+	gitLanes.ByKey = nil
 	gitLanes.Unlock()
 	remoteLanes.Lock()
-	savedRemote := remoteLanes.byKey
-	remoteLanes.byKey = nil
+	savedRemote := remoteLanes.ByKey
+	remoteLanes.ByKey = nil
 	remoteLanes.Unlock()
 	t.Cleanup(func() {
 		gitLanes.Lock()
-		gitLanes.byKey = savedLocal
+		gitLanes.ByKey = savedLocal
 		gitLanes.Unlock()
 		remoteLanes.Lock()
-		remoteLanes.byKey = savedRemote
+		remoteLanes.ByKey = savedRemote
 		remoteLanes.Unlock()
 	})
 }
@@ -31,21 +31,21 @@ func resetGitLanes(t *testing.T) {
 func remoteLaneState(key string) (readers int, writing bool, queued int) {
 	remoteLanes.Lock()
 	defer remoteLanes.Unlock()
-	lane := remoteLanes.byKey[canonicalRepoDir(key)]
+	lane := remoteLanes.ByKey[canonicalRepoDir(key)]
 	if lane == nil {
 		return 0, false, 0
 	}
-	return lane.readers, lane.writing, len(lane.queue)
+	return lane.Readers, lane.Writing, len(lane.Queue)
 }
 
 func gitLaneState(key string) (readers int, writing bool, queued int) {
 	gitLanes.Lock()
 	defer gitLanes.Unlock()
-	lane := gitLanes.byKey[canonicalRepoDir(key)]
+	lane := gitLanes.ByKey[canonicalRepoDir(key)]
 	if lane == nil {
 		return 0, false, 0
 	}
-	return lane.readers, lane.writing, len(lane.queue)
+	return lane.Readers, lane.Writing, len(lane.Queue)
 }
 
 // waitGitLaneQueue 等队列长到 n：放行和排队都在别的 goroutine 里发生。

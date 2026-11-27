@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,10 +59,6 @@ func acquireRemoteGit(ctx context.Context) error {
 	return acquireSlot(ctx, remoteSlots)
 }
 
-func gitEnv() []string {
-	return mergeGitEnv(nil)
-}
-
 // Commands on an opened repository must not fall back to a parent repository.
 func repoGitEnv(dir string, extra []string) []string {
 	key := canonicalRepoDir(dir)
@@ -71,30 +66,6 @@ func repoGitEnv(dir string, extra []string) []string {
 		extra = append([]string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(key)}, extra...)
 	}
 	return mergeGitEnv(extra)
-}
-
-func mergeGitEnv(extra []string) []string {
-	drop := map[string]bool{
-		"LC_ALL": true, "LANG": true, "LC_MESSAGES": true,
-		"GIT_TERMINAL_PROMPT": true, "GIT_PAGER": true, "PAGER": true,
-		// status 和 diff 只碰可选锁；关掉它才敢把 status 算成读操作。
-		// 写操作的强制锁不受影响。
-		"GIT_OPTIONAL_LOCKS": true,
-	}
-	for _, e := range extra {
-		if i := strings.IndexByte(e, '='); i > 0 {
-			drop[e[:i]] = true
-		}
-	}
-	out := make([]string, 0, 32+len(extra))
-	for _, e := range os.Environ() {
-		if i := strings.IndexByte(e, '='); i > 0 && drop[e[:i]] {
-			continue
-		}
-		out = append(out, e)
-	}
-	out = append(out, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat", "GIT_OPTIONAL_LOCKS=0")
-	return append(out, extra...)
 }
 
 func gitArgs(args ...string) []string {
@@ -200,11 +171,11 @@ func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []str
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	callID := gitLog.begin(dir, args)
+	callID := gitLog.Begin(dir, args)
 	started := time.Now()
 	status, exit := gitCallFailed, -1
 	defer func() {
-		gitLog.finish(callID, status, time.Since(started), exit, stdout.Bytes(), decodeWSLCommandOutput(dir, stderr.Bytes()))
+		gitLog.Finish(callID, status, time.Since(started), exit, stdout.Bytes(), decodeWSLCommandOutput(dir, stderr.Bytes()))
 	}()
 	err = cmd.Run()
 	exit = gitExitCode(err)
@@ -268,14 +239,6 @@ func gitWarningsOnly(stderr string) bool {
 	return true
 }
 
-func trimMsg(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) > 2000 {
-		return s[:2000] + "…"
-	}
-	return s
-}
-
 // 仓库定位的两个固定结论。调用方用 errors.Is 判断类型；文案里带上路径，
 // 否则用户看到的只是一句不知道说的是哪个仓库的提示。
 var (
@@ -333,32 +296,6 @@ func repoRoot(ctx context.Context, dir string) (string, error) {
 // work tree. Everything else is a real failure with its own message.
 func notARepository(err error) bool {
 	return strings.Contains(err.Error(), "not a git repository")
-}
-
-var skippedRepoDirs = []string{
-	".git",
-	"node_modules",
-	"vendor",
-	".venv",
-	"venv",
-	"__pycache__",
-	".mypy_cache",
-	".pytest_cache",
-	".ruff_cache",
-	"target",
-	"dist",
-	"build",
-	"out",
-	".next",
-	".nuxt",
-	".turbo",
-	".cache",
-	".gradle",
-	"Pods",
-}
-
-func skipRepoDir(name string) bool {
-	return slices.Contains(skippedRepoDirs, name)
 }
 
 func isGitWorkTree(dir string) bool {
@@ -521,11 +458,11 @@ func streamLog(ctx context.Context, dir string, args []string, input string, spl
 	stderr := limitedBuffer{limit: 64 << 10}
 	cmd.Stderr = &stderr
 	// 流式输出可能是几百 MB，只记命令、耗时和退出码。
-	callID := gitLog.beginStream(dir, args)
+	callID := gitLog.BeginStream(dir, args)
 	started := time.Now()
 	status, exit := gitCallFailed, -1
 	defer func() {
-		gitLog.finish(callID, status, time.Since(started), exit, nil, decodeWSLCommandOutput(dir, stderr.Bytes()))
+		gitLog.Finish(callID, status, time.Since(started), exit, nil, decodeWSLCommandOutput(dir, stderr.Bytes()))
 	}()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

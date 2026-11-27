@@ -1,4 +1,4 @@
-package app
+package gitx
 
 // Git 是外部依赖，不是随应用打包的库：解析它、解释它缺席的原因，
 // 以及把用户选择的路径记下来，都集中在这里。
@@ -16,51 +16,51 @@ import (
 )
 
 const (
-	// gitProbeTimeout 限制单次 `git --version`：卡住的包装脚本不能拖住解析。
-	gitProbeTimeout = 5 * time.Second
-	// gitProbeBudget 限制一次忙碌的候选路径的总时长，避免个别卡死的脚本
+	// GitProbeTimeout 限制单次 `git --version`：卡住的包装脚本不能拖住解析。
+	GitProbeTimeout = 5 * time.Second
+	// GitProbeBudget 限制一次忙碌的候选路径的总时长，避免个别卡死的脚本
 	// 把持着解析锁不放。
-	gitProbeBudget = 10 * time.Second
-	// gitRetryFailedAfter 是失败结论的复用时长。装好 Git 之后不该需要重启应用。
-	gitRetryFailedAfter = 15 * time.Second
+	GitProbeBudget = 10 * time.Second
+	// GitRetryFailedAfter 是失败结论的复用时长。装好 Git 之后不该需要重启应用。
+	GitRetryFailedAfter = 15 * time.Second
 )
 
-// gitUnavailableError 表示系统 Git 找不到或根本跑不起来，
+// GitUnavailableError 表示系统 Git 找不到或根本跑不起来，
 // 因此问题不在仓库本身，不该报成“不是 Git 仓库”。
-type gitUnavailableError struct {
-	message string
-	err     error
+type GitUnavailableError struct {
+	Message string
+	Err     error
 }
 
-func (e *gitUnavailableError) Error() string { return e.message }
-func (e *gitUnavailableError) Unwrap() error { return e.err }
+func (e *GitUnavailableError) Error() string { return e.Message }
+func (e *GitUnavailableError) Unwrap() error { return e.Err }
 
-func isGitUnavailable(err error) bool {
-	var e *gitUnavailableError
+func IsGitUnavailable(err error) bool {
+	var e *GitUnavailableError
 	return errors.As(err, &e)
 }
 
-// gitProbe 是一次成功解析的结果。
-type gitProbe struct {
-	path    string
-	version string // `git --version` 的第一行，去掉 "git version " 前缀
+// GitProbe 是一次成功解析的结果。
+type GitProbe struct {
+	Path    string
+	Version string // `git --version` 的第一行，去掉 "git version " 前缀
 }
 
-type gitResolution struct {
+type GitResolution struct {
 	sync.Mutex
-	checked  bool
-	override string
-	probe    gitProbe
-	failure  *gitUnavailableError
-	failedAt time.Time
+	Checked  bool
+	Override string
+	Probe    GitProbe
+	Failure  *GitUnavailableError
+	FailedAt time.Time
 }
 
-var gitResolve gitResolution
+var GitResolve GitResolution
 
-// gitCommonPaths lists the install locations worth trying when PATH does not
+// GitCommonPaths lists the install locations worth trying when PATH does not
 // lead to Git: macOS applications launched from Finder inherit a minimal PATH,
 // so a Homebrew Git is installed yet invisible.
-var gitCommonPaths = func() []string {
+var GitCommonPaths = func() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = ""
@@ -104,9 +104,9 @@ var gitCommonPaths = func() []string {
 	)
 }
 
-// setGitExecutablePath remembers the binary chosen in settings and forces the
+// SetGitExecutablePath remembers the binary chosen in settings and forces the
 // next Git call to resolve again. An empty path restores automatic discovery.
-func setGitExecutablePath(path string) string {
+func SetGitExecutablePath(path string) string {
 	path = strings.TrimSpace(path)
 	if path != "" {
 		if !strings.ContainsAny(path, `/\`) {
@@ -118,74 +118,74 @@ func setGitExecutablePath(path string) string {
 			path = abs
 		}
 	}
-	gitResolve.Lock()
-	defer gitResolve.Unlock()
-	if path == gitResolve.override {
+	GitResolve.Lock()
+	defer GitResolve.Unlock()
+	if path == GitResolve.Override {
 		return path
 	}
-	gitResolve.override = path
-	gitResolve.checked = false
-	gitResolve.failure = nil
+	GitResolve.Override = path
+	GitResolve.Checked = false
+	GitResolve.Failure = nil
 	return path
 }
 
-// resetGitResolution forgets the cached answer so the next call probes again.
-func resetGitResolution() {
-	gitResolve.Lock()
-	defer gitResolve.Unlock()
-	gitResolve.checked = false
-	gitResolve.failure = nil
+// ResetGitResolution forgets the cached answer so the next call probes again.
+func ResetGitResolution() {
+	GitResolve.Lock()
+	defer GitResolve.Unlock()
+	GitResolve.Checked = false
+	GitResolve.Failure = nil
 }
 
-// gitPath resolves the Git binary to run. A failed answer expires, so
+// GitPath resolves the Git binary to run. A failed answer expires, so
 // installing Git or fixing a broken install is picked up without a restart.
-func gitPath() (string, error) {
-	probe, err := resolveGit()
+func GitPath() (string, error) {
+	probe, err := ResolveGit()
 	if err != nil {
 		return "", err
 	}
-	return probe.path, nil
+	return probe.Path, nil
 }
 
-func resolveGit() (gitProbe, error) {
-	gitResolve.Lock()
-	defer gitResolve.Unlock()
-	if gitResolve.checked {
-		if gitResolve.failure == nil {
-			return gitResolve.probe, nil
+func ResolveGit() (GitProbe, error) {
+	GitResolve.Lock()
+	defer GitResolve.Unlock()
+	if GitResolve.Checked {
+		if GitResolve.Failure == nil {
+			return GitResolve.Probe, nil
 		}
-		if time.Since(gitResolve.failedAt) < gitRetryFailedAfter {
-			return gitResolve.probe, gitResolve.failure
+		if time.Since(GitResolve.FailedAt) < GitRetryFailedAfter {
+			return GitResolve.Probe, GitResolve.Failure
 		}
 	}
-	probe, failure := probeGit(gitResolve.override)
-	gitResolve.checked, gitResolve.probe, gitResolve.failure = true, probe, failure
+	probe, failure := ProbeGit(GitResolve.Override)
+	GitResolve.Checked, GitResolve.Probe, GitResolve.Failure = true, probe, failure
 	if failure != nil {
-		gitResolve.failedAt = time.Now()
+		GitResolve.FailedAt = time.Now()
 		return probe, failure
 	}
 	return probe, nil
 }
 
-// probeGit prefers an explicit path from settings, then PATH, then the usual
+// ProbeGit prefers an explicit path from settings, then PATH, then the usual
 // install locations, and reports why nothing worked when it finds nothing.
-func probeGit(override string) (gitProbe, *gitUnavailableError) {
+func ProbeGit(override string) (GitProbe, *GitUnavailableError) {
 	if override != "" {
-		version, err := gitVersion(context.Background(), override)
+		version, err := GitVersion(context.Background(), override)
 		if err != nil {
-			return gitProbe{}, &gitUnavailableError{
-				message: fmt.Sprintf("设置的 Git 路径不可用：%s", gitFailureText(err)),
-				err:     err,
+			return GitProbe{}, &GitUnavailableError{
+				Message: fmt.Sprintf("设置的 Git 路径不可用：%s", gitFailureText(err)),
+				Err:     err,
 			}
 		}
-		return gitProbe{path: override, version: version}, nil
+		return GitProbe{Path: override, Version: version}, nil
 	}
 	var candidates []string
 	if p, err := exec.LookPath("git"); err == nil {
 		candidates = append(candidates, p)
 	}
-	candidates = append(candidates, gitCommonPaths()...)
-	budget, cancel := context.WithTimeout(context.Background(), gitProbeBudget)
+	candidates = append(candidates, GitCommonPaths()...)
+	budget, cancel := context.WithTimeout(context.Background(), GitProbeBudget)
 	defer cancel()
 	seen := make(map[string]bool, len(candidates))
 	var broken []string
@@ -205,46 +205,46 @@ func probeGit(override string) (gitProbe, *gitUnavailableError) {
 		if err != nil || info.IsDir() {
 			continue
 		}
-		version, err := gitVersion(budget, abs)
+		version, err := GitVersion(budget, abs)
 		if err != nil {
 			if len(broken) < 3 {
 				broken = append(broken, fmt.Sprintf("%s（%s）", abs, gitFailureText(err)))
 			}
 			continue
 		}
-		return gitProbe{path: abs, version: version}, nil
+		return GitProbe{Path: abs, Version: version}, nil
 	}
 	if len(broken) > 0 {
-		return gitProbe{}, &gitUnavailableError{
-			message: "Git 无法运行：" + strings.Join(broken, "；") + "。请重新安装 Git，或在设置中指定可用的 Git 可执行文件路径",
+		return GitProbe{}, &GitUnavailableError{
+			Message: "Git 无法运行：" + strings.Join(broken, "；") + "。请重新安装 Git，或在设置中指定可用的 Git 可执行文件路径",
 		}
 	}
-	return gitProbe{}, &gitUnavailableError{
-		message: "未找到 Git。请先安装 Git，或在设置中指定 Git 可执行文件路径",
+	return GitProbe{}, &GitUnavailableError{
+		Message: "未找到 Git。请先安装 Git，或在设置中指定 Git 可执行文件路径",
 	}
 }
 
-func samePath(a, b string) bool {
+func SamePath(a, b string) bool {
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 	}
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-// gitVersion runs the binary once: a path that exists but cannot run (such as
+// GitVersion runs the binary once: a path that exists but cannot run (such as
 // the macOS /usr/bin/git shim without developer tools) is not a usable Git.
-func gitVersion(parent context.Context, bin string) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, gitProbeTimeout)
+func GitVersion(parent context.Context, bin string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, GitProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "--version")
-	hideConsoleWindow(cmd)
-	cmd.Env = gitBinaryEnv(bin, mergeGitEnv(nil))
+	HideConsoleWindow(cmd)
+	cmd.Env = GitBinaryEnv(bin, MergeGitEnv(nil))
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
-	line := firstLine(string(out))
+	line := FirstLine(string(out))
 	if line == "" {
 		return "", errors.New("没有输出版本信息")
 	}
@@ -255,14 +255,14 @@ func gitVersion(parent context.Context, bin string) (string, error) {
 func gitFailureText(err error) string {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		if msg := firstLine(string(exitErr.Stderr)); msg != "" {
+		if msg := FirstLine(string(exitErr.Stderr)); msg != "" {
 			return msg
 		}
 	}
-	return firstLine(err.Error())
+	return FirstLine(err.Error())
 }
 
-func firstLine(text string) string {
+func FirstLine(text string) string {
 	text = strings.TrimSpace(text)
 	if i := strings.IndexByte(text, '\n'); i >= 0 {
 		text = strings.TrimSpace(text[:i])
@@ -272,7 +272,7 @@ func firstLine(text string) string {
 
 // Only child processes need the selected Git's directory. Changing the app's
 // PATH would make automatic discovery keep finding a previous override.
-func gitBinaryEnv(bin string, env []string) []string {
+func GitBinaryEnv(bin string, env []string) []string {
 	dir := filepath.Dir(bin)
 	for i, entry := range env {
 		key, path, ok := strings.Cut(entry, "=")
@@ -287,20 +287,20 @@ func gitBinaryEnv(bin string, env []string) []string {
 	return append(env, "PATH="+dir)
 }
 
-// gitExecError turns "the binary we resolved is gone" into an unavailable-Git
+// GitExecError turns "the binary we resolved is gone" into an unavailable-Git
 // error, so uninstalling Git while the app runs reads as one cause, not as a
 // broken repository, and the next call resolves again.
-func gitExecError(bin string, err error) error {
+func GitExecError(bin string, err error) error {
 	if err == nil || bin == "" {
 		return err
 	}
 	var pathErr *os.PathError
-	if !errors.As(err, &pathErr) || !samePath(pathErr.Path, bin) {
+	if !errors.As(err, &pathErr) || !SamePath(pathErr.Path, bin) {
 		return err
 	}
-	resetGitResolution()
-	return &gitUnavailableError{
-		message: fmt.Sprintf("Git 无法运行：%s 已不存在，请重新安装 Git，或在设置中指定可用的 Git 可执行文件路径", bin),
-		err:     err,
+	ResetGitResolution()
+	return &GitUnavailableError{
+		Message: fmt.Sprintf("Git 无法运行：%s 已不存在，请重新安装 Git，或在设置中指定可用的 Git 可执行文件路径", bin),
+		Err:     err,
 	}
 }

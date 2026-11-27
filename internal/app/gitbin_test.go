@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/2fa0/xylring/internal/gitx"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -20,19 +21,19 @@ import (
 // never picks up the Git installed on the machine running it.
 func isolateGit(t *testing.T, candidates []string) {
 	t.Helper()
-	old := gitCommonPaths
-	gitCommonPaths = func() []string { return candidates }
+	old := gitx.GitCommonPaths
+	gitx.GitCommonPaths = func() []string { return candidates }
 	gitResolve.Lock()
-	gitResolve.override = ""
-	gitResolve.checked = false
-	gitResolve.failure = nil
+	gitResolve.Override = ""
+	gitResolve.Checked = false
+	gitResolve.Failure = nil
 	gitResolve.Unlock()
 	t.Cleanup(func() {
-		gitCommonPaths = old
+		gitx.GitCommonPaths = old
 		gitResolve.Lock()
-		gitResolve.override = ""
-		gitResolve.checked = false
-		gitResolve.failure = nil
+		gitResolve.Override = ""
+		gitResolve.Checked = false
+		gitResolve.Failure = nil
 		gitResolve.Unlock()
 	})
 }
@@ -90,16 +91,16 @@ func TestProbeSkipsBrokenBinaryAndFindsWorkingOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("working Git ignored after a broken one: %v", err)
 	}
-	if probe.path != good {
-		t.Fatalf("resolved %q, want %q", probe.path, good)
+	if probe.Path != good {
+		t.Fatalf("resolved %q, want %q", probe.Path, good)
 	}
-	if probe.version != "2.44.0" {
-		t.Fatalf("version %q, want 2.44.0", probe.version)
+	if probe.Version != "2.44.0" {
+		t.Fatalf("version %q, want 2.44.0", probe.Version)
 	}
 	if strings.Contains(os.Getenv("PATH"), dir) {
 		t.Fatalf("resolver changed the application's PATH: %q", os.Getenv("PATH"))
 	}
-	env := gitBinaryEnv(probe.path, gitEnv())
+	env := gitBinaryEnv(probe.Path, gitEnv())
 	if !slices.Contains(env, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH")) {
 		t.Fatalf("Git directory not exposed to child processes: %q", env)
 	}
@@ -112,8 +113,8 @@ func TestConfiguredGitPathIsUsedAndValidated(t *testing.T) {
 	isolateGit(t, nil)
 	setGitExecutablePath(good)
 	probe, err := resolveGit()
-	if err != nil || probe.path != good {
-		t.Fatalf("configured Git ignored: %q %v", probe.path, err)
+	if err != nil || probe.Path != good {
+		t.Fatalf("configured Git ignored: %q %v", probe.Path, err)
 	}
 	setGitExecutablePath(filepath.Join(dir, "missing"))
 	_, err = gitPath()
@@ -133,8 +134,8 @@ func TestClearingGitOverrideRestoresAutomaticDiscovery(t *testing.T) {
 	}
 	setGitExecutablePath("")
 	probe, err := resolveGit()
-	if err != nil || probe.path != auto {
-		t.Fatalf("automatic Git = %q, want %q: %v", probe.path, auto, err)
+	if err != nil || probe.Path != auto {
+		t.Fatalf("automatic Git = %q, want %q: %v", probe.Path, auto, err)
 	}
 }
 
@@ -186,7 +187,7 @@ func TestGitProbeDiscardsSupersededResults(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("probe did not complete")
 	}
-	a.noteGitUnavailable(&gitUnavailableError{message: "Git stopped working"})
+	a.noteGitUnavailable(&gitUnavailableError{Message: "Git stopped working"})
 	finish()
 	if a.git.err != "Git stopped working" {
 		t.Fatal("a superseded success overwrote a newer Git failure")
@@ -218,15 +219,15 @@ func TestFailedResolutionIsReusedUntilRetryWindow(t *testing.T) {
 	}
 	dir := t.TempDir()
 	good := fakeGit(t, dir, "git", `echo "git version 2.44.0"`)
-	gitCommonPaths = func() []string { return []string{good} }
+	gitx.GitCommonPaths = func() []string { return []string{good} }
 	if _, err := gitPath(); err == nil {
 		t.Fatal("a cached failure must be reused inside the retry window")
 	}
 	gitResolve.Lock()
-	gitResolve.failedAt = time.Now().Add(-2 * gitRetryFailedAfter)
+	gitResolve.FailedAt = time.Now().Add(-2 * gitRetryFailedAfter)
 	gitResolve.Unlock()
-	if probe, err := resolveGit(); err != nil || probe.path != good {
-		t.Fatalf("resolver did not pick up a newly installed Git: %q %v", probe.path, err)
+	if probe, err := resolveGit(); err != nil || probe.Path != good {
+		t.Fatalf("resolver did not pick up a newly installed Git: %q %v", probe.Path, err)
 	}
 }
 
@@ -266,7 +267,7 @@ func TestScanGitReposReportsGitProblem(t *testing.T) {
 }
 
 func TestRestoredRepoUsableKeepsReposWhenGitIsMissing(t *testing.T) {
-	unavailable := &gitUnavailableError{message: "未找到 Git。请先安装 Git，或在设置中指定 Git 可执行文件路径"}
+	unavailable := &gitUnavailableError{Message: "未找到 Git。请先安装 Git，或在设置中指定 Git 可执行文件路径"}
 	if !restoredRepoUsable("", "/repo", unavailable) {
 		t.Fatal("a repository dropped because Git is missing loses its draft and tab")
 	}
@@ -344,7 +345,7 @@ func TestRepositoryFailureSurfacesUnavailableGit(t *testing.T) {
 	if !a.gitReady() {
 		t.Fatal("an unrelated repository error must not be reported as missing Git")
 	}
-	a.noteGitUnavailable(&gitUnavailableError{message: "未找到 Git。请先安装 Git，或在设置中指定 Git 可执行文件路径"})
+	a.noteGitUnavailable(&gitUnavailableError{Message: "未找到 Git。请先安装 Git，或在设置中指定 Git 可执行文件路径"})
 	if a.gitReady() {
 		t.Fatal("a Git failure found by a repository was not surfaced")
 	}
@@ -372,11 +373,11 @@ func TestResolveGitFindsTheSystemGit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("system Git not resolved: %v", err)
 	}
-	if info, err := os.Stat(probe.path); err != nil || info.IsDir() {
-		t.Fatalf("resolved path is not a binary: %q %v", probe.path, err)
+	if info, err := os.Stat(probe.Path); err != nil || info.IsDir() {
+		t.Fatalf("resolved path is not a binary: %q %v", probe.Path, err)
 	}
-	if major, _, ok := strings.Cut(probe.version, "."); !ok || major == "" || strings.Trim(major, "0123456789") != "" {
-		t.Fatalf("unexpected version string: %q", probe.version)
+	if major, _, ok := strings.Cut(probe.Version, "."); !ok || major == "" || strings.Trim(major, "0123456789") != "" {
+		t.Fatalf("unexpected version string: %q", probe.Version)
 	}
 }
 
