@@ -1,4 +1,4 @@
-package app
+package uikit
 
 import (
 	"testing"
@@ -7,10 +7,16 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func retireTester(tt *ui.Tester) {
+	for i := 0; i < 32; i++ {
+		tt.Frame()
+	}
+}
+
 func TestCopyIconConfirmationAndKeyboard(t *testing.T) {
 	content := "first error"
 	tt := ui.NewTester(func(c *ui.Context) {
-		copyIconButton(c, "copy", "复制错误信息", content)
+		CopyIconButton(c, "copy", "复制错误信息", content)
 	}, 200, 80)
 	defer retireTester(tt)
 	tt.Frame()
@@ -47,7 +53,7 @@ func TestCopyIconConfirmationAndKeyboard(t *testing.T) {
 func TestActionIconDisabledAndKeyboard(t *testing.T) {
 	disabled, clicks := true, 0
 	tt := ui.NewTester(func(c *ui.Context) {
-		if chromeIconButton(c, "action", "测试操作", iconDownload).Disabled(disabled).Clicked() {
+		if ChromeIconButton(c, "action", "测试操作", IconDownload).Disabled(disabled).Clicked() {
 			clicks++
 		}
 	}, 200, 80)

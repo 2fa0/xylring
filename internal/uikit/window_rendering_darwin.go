@@ -1,11 +1,11 @@
-package app
+package uikit
 
 import (
 	"github.com/ebitengine/purego/objc"
 	"github.com/egoist/mygo"
 )
 
-func configureWindowRendering(win *mygo.Window) {
+func ConfigureWindowRendering(win *mygo.Window) {
 	// MyGo creates its Metal layer during the first native frame.
 	win.OnReadyToShow(func() {
 		metalClass := objc.GetClass("CAMetalLayer")

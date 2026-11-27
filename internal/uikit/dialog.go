@@ -1,32 +1,33 @@
-package app
+package uikit
 
 import (
 	"runtime"
 
+	"github.com/2fa0/xylring/internal/i18n"
 	"github.com/egoist/mygo"
 )
 
-func openRepoDialog(win *mygo.Window) ([]string, error) {
+func OpenRepoDialog(win *mygo.Window) ([]string, error) {
 	return mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent:    win,
-		Title:     tr("导入仓库"),
+		Title:     i18n.Tr("导入仓库"),
 		Directory: true,
 	})
 }
 
-func openWSLRepoDialog(win *mygo.Window, defaultPath string) ([]string, error) {
+func OpenWSLRepoDialog(win *mygo.Window, defaultPath string) ([]string, error) {
 	return mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent:      win,
-		Title:       tr("导入 WSL 仓库"),
+		Title:       i18n.Tr("导入 WSL 仓库"),
 		DefaultPath: defaultPath,
 		Directory:   true,
 	})
 }
 
-func openEditorDialog(win *mygo.Window) ([]string, error) {
+func OpenEditorDialog(win *mygo.Window) ([]string, error) {
 	opts := mygo.OpenDialogOptions{
 		Parent: win,
-		Title:  tr("选择默认编辑器"),
+		Title:  i18n.Tr("选择默认编辑器"),
 	}
 	if runtime.GOOS == "darwin" {
 		opts.DefaultPath = "/Applications"
@@ -34,10 +35,10 @@ func openEditorDialog(win *mygo.Window) ([]string, error) {
 	return mygo.Dialog.Open(opts)
 }
 
-func openBoardDirDialog(win *mygo.Window, defaultDir string) ([]string, error) {
+func OpenBoardDirDialog(win *mygo.Window, defaultDir string) ([]string, error) {
 	return mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent:            win,
-		Title:             tr("选择看板数据目录"),
+		Title:             i18n.Tr("选择看板数据目录"),
 		DefaultPath:       defaultDir,
 		Directory:         true,
 		CreateDirectories: true,
@@ -45,10 +46,10 @@ func openBoardDirDialog(win *mygo.Window, defaultDir string) ([]string, error) {
 	})
 }
 
-func saveBoardExportDialog(win *mygo.Window, defaultName string) (string, error) {
+func SaveBoardExportDialog(win *mygo.Window, defaultName string) (string, error) {
 	return mygo.Dialog.Save(mygo.SaveDialogOptions{
 		Parent:            win,
-		Title:             tr("导出看板备份"),
+		Title:             i18n.Tr("导出看板备份"),
 		DefaultPath:       defaultName,
 		CreateDirectories: true,
 		Filters: []mygo.FileFilter{
@@ -57,10 +58,10 @@ func saveBoardExportDialog(win *mygo.Window, defaultName string) (string, error)
 	})
 }
 
-func openBoardImportDialog(win *mygo.Window) ([]string, error) {
+func OpenBoardImportDialog(win *mygo.Window) ([]string, error) {
 	return mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent:          win,
-		Title:           tr("选择看板备份文件"),
+		Title:           i18n.Tr("选择看板备份文件"),
 		ShowHiddenFiles: true,
 		Filters: []mygo.FileFilter{
 			{Name: "JSON", Extensions: []string{"json"}},
