@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -11,7 +12,7 @@ import (
 // 构建配置是版本号与更新源的唯一来源：cli.go 的兜底版本和它差一位，
 // `xylring --version` 就会和清单对不上，更新链从这里开始断。
 func TestBuildConfigMatchesVersionAndUpdates(t *testing.T) {
-	data, err := os.ReadFile("mygo.json")
+	data, err := os.ReadFile(filepath.Join("..", "..", "cmd", "xylring-main", "mygo.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
