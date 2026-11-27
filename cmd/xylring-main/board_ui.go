@@ -603,6 +603,26 @@ func (a *app) boardActiveCount() int {
 	return n
 }
 
+func (a *app) boardRepoActiveCount(repo string) int {
+	if !a.board.loaded {
+		return 0
+	}
+	norm := normalizeBoardRepo(repo)
+	if norm == "" {
+		return 0
+	}
+	n := 0
+	for _, t := range a.board.file.Tasks {
+		if t.Archived || t.Status == boardDone {
+			continue
+		}
+		if slices.Contains(boardTaskAllRepos(t), norm) {
+			n++
+		}
+	}
+	return n
+}
+
 func (a *app) boardKnownRepos() []string {
 	var out []string
 	seen := map[string]bool{}

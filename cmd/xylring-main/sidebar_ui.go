@@ -22,12 +22,48 @@ func sidebarToggleTip(visible bool) string {
 
 func (a *app) emptyState(c *ui.Context) {
 	t := c.Theme()
-	ui.Scroll(c).Grow(1).Children(func() {
+	canvasBg := ui.Hex("#F4F3EF")
+	if t.Dark {
+		canvasBg = ui.Hex("#111215")
+	}
+	wood := woodColor(t)
+	glowAlpha := float32(0.08)
+	if t.Dark {
+		glowAlpha = 0.11
+	}
+	dotCol := ui.RGBA(15, 23, 42, 0.045)
+	if t.Dark {
+		dotCol = ui.RGBA(255, 255, 255, 0.032)
+	}
+	ui.Scroll(c).Grow(1).Background(canvasBg).Draw(func(p *ui.Painter, r ui.Rect) {
+		if r.W <= 0 || r.H <= 0 {
+			return
+		}
+		p.FillRadialGradient(r, ui.RadialGradient{
+			Center: ui.Point{X: 0.5, Y: 0.14},
+			Radius: max(r.W*0.45, 320),
+			Oklab:  true,
+			Stops: []ui.GradientStop{
+				{Color: wood.Alpha(glowAlpha), At: 0},
+				{Color: ui.Transparent, At: 1},
+			},
+		}, 0)
+		const pitch = float32(24)
+		for y := r.Y + 12; y < r.Y+r.H; y += pitch {
+			for x := r.X + 12; x < r.X+r.W; x += pitch {
+				p.Fill(ui.Rect{X: x, Y: y, W: 1.5, H: 1.5}, dotCol, 0.75)
+			}
+		}
+	}).Children(func() {
 		ui.Column(c).FillWidth().Padding(36, 40, 28, 40).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Width(460).MaxWidthPercent(100).Gap(18).Children(func() {
+			ui.Column(c).Width(480).MaxWidthPercent(100).Gap(18).Children(func() {
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, iconTreeRings).Size(28, 28).TextColor(woodColor(t)).Shrink(0)
-					ui.Text(c, "Xylring").FontSize(26).Bold().LetterSpacing(-0.4)
+					ui.Box(c).Size(28, 28).Radius(8).
+						Background(wood.Alpha(0.12)).Border(1, wood.Alpha(0.28)).
+						Center().Shrink(0).Children(func() {
+						ui.Icon(c, iconTreeRings).Size(18, 18).TextColor(wood)
+					})
+					ui.Text(c, "Xylring").FontSize(26).Bold().LetterSpacing(-0.5)
 				})
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					if ui.PrimaryButton(c.Key("import-empty"), "").Label(tr("导入仓库")).Children(func() {
@@ -59,8 +95,8 @@ func (a *app) emptyState(c *ui.Context) {
 				if len(a.recent) == 0 {
 					return
 				}
-				ui.Column(c).Gap(4).FillWidth().Children(func() {
-					ui.Text(c, tr("最近的仓库")).FontSize(12).TextColor(t.TextMuted).Padding(4, 2, 8, 2)
+				ui.Column(c).Gap(6).FillWidth().Children(func() {
+					ui.Text(c, tr("最近的仓库")).FontSize(12).TextColor(t.TextMuted).Padding(4, 2, 4, 2)
 					if len(a.recent) > 8 {
 						search := ui.SearchField(c.Key("search-recent"), &a.recentSearch).
 							Placeholder(tr("查找最近仓库")).
@@ -113,13 +149,53 @@ func (a *app) emptyState(c *ui.Context) {
 func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 	t := c.Theme()
 	title := dockerRepoDisplayLabel(path, a.recent)
-	row := ui.ButtonBase(c.Key(fmt.Sprintf("recent-%d", i))).Label(title).FillWidth().Padding(8, 10).Gap(10).Radius(t.Radius).Justify(ui.Start).AlignItems(ui.Center).Cursor(ui.CursorPointer).Transition(colorMotion())
+	row := ui.ButtonBase(c.Key(fmt.Sprintf("recent-%d", i))).Label(title).FillWidth().
+		Padding(10, 12).Gap(10).Radius(12).Justify(ui.Start).AlignItems(ui.Center).
+		Cursor(ui.CursorPointer).
+		Transition(ui.ElementTransition{Animation: &uiSpring, Colors: true, Shadows: true})
 	hovered := row.Hovered()
+	pressed := row.Pressed()
+	liftTarget := float32(0)
+	if hovered && !pressed {
+		liftTarget = -1.5
+	}
+	if liftY := row.AnimateTo("hover-lift", liftTarget, uiSpring); liftY != 0 {
+		row.Translate(0, liftY)
+	}
+	if t.Dark {
+		row.LinearGradient(ui.LinearGradient{From: ui.Hex("#1D2028"), To: ui.Hex("#171920"), Angle: 180}).
+			InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.06))
+	} else {
+		row.LinearGradient(ui.LinearGradient{From: ui.Hex("#FFFFFF"), To: ui.Hex("#FCFBF9"), Angle: 180}).
+			InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.95))
+	}
 	switch {
-	case row.Pressed():
-		row.Background(t.SurfacePressed)
+	case pressed:
+		if t.Dark {
+			row.Border(1, t.Accent.Alpha(0.55)).Shadow(0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.25))
+		} else {
+			row.Border(1, t.Accent.Alpha(0.45)).Shadow(0, 1, 2, 0, ui.RGBA(15, 23, 42, 0.05))
+		}
 	case hovered:
-		row.Background(t.SurfaceHover)
+		if t.Dark {
+			row.Border(1, t.Accent.Alpha(0.45)).
+				Shadow(0, 3, 8, 0, ui.RGBA(0, 0, 0, 0.28)).
+				Shadow(0, 10, 22, -4, ui.RGBA(0, 0, 0, 0.36))
+		} else {
+			row.Border(1, t.Accent.Alpha(0.45)).
+				Shadow(0, 2, 4, 0, ui.RGBA(15, 23, 42, 0.06)).
+				Shadow(0, 10, 22, -4, ui.RGBA(15, 23, 42, 0.10))
+		}
+	default:
+		if t.Dark {
+			row.Border(1, ui.RGBA(255, 255, 255, 0.08)).
+				Shadow(0, 1, 4, 0, ui.RGBA(0, 0, 0, 0.20)).
+				Shadow(0, 4, 12, -3, ui.RGBA(0, 0, 0, 0.24))
+		} else {
+			row.Border(1, ui.RGBA(15, 23, 42, 0.08)).
+				Shadow(0, 1, 2, 0, ui.RGBA(15, 23, 42, 0.04)).
+				Shadow(0, 4, 12, -3, ui.RGBA(15, 23, 42, 0.06))
+		}
 	}
 	remove := false
 	row.ContextMenu(func(m *ui.Menu) {
@@ -183,7 +259,21 @@ func (a *app) recentRepoRow(c *ui.Context, i int, path string) bool {
 				ui.Text(c, trMessage(bannerWithoutLocation(a.banner, path))).FontSize(12).TextColor(t.Danger)
 			}
 		})
-		if closeIconButton(c, fmt.Sprintf("close-recent-%d", i), tr("关闭 ")+title).Clicked() {
+		if taskCount := a.boardRepoActiveCount(path); taskCount > 0 {
+			ui.Row(c).Padding(2, 7).Gap(4).Radius(10).Background(t.Accent.Alpha(0.10)).
+				AlignItems(ui.Center).Shrink(0).Children(func() {
+				ui.Icon(c, iconKanban).Size(11, 11).TextColor(t.Accent).Shrink(0)
+				ui.Text(c, fmt.Sprintf("%d", taskCount)).FontSize(11).FontWeight(600).
+					FontFeatures("tnum").TextColor(t.Accent).SingleLine()
+			})
+		}
+		closeBtn := closeIconButton(c, fmt.Sprintf("close-recent-%d", i), tr("关闭 ")+title)
+		if hovered || row.Focused() || closeBtn.Hovered() || closeBtn.Focused() {
+			closeBtn.Opacity(1)
+		} else {
+			closeBtn.Opacity(0.22)
+		}
+		if closeBtn.Clicked() {
 			remove = true
 		}
 	})
