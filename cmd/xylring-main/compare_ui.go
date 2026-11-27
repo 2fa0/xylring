@@ -10,23 +10,54 @@ import (
 	"github.com/egoist/mygo/ui/editor"
 )
 
+type fileViewPillMatch struct{ key string }
+
+type diffLayoutPillMatch struct{}
+
 func fileViewToggleWidget(c *ui.Context, key, label string, view *int) {
 	theme := c.Theme()
+	trackBg := ui.RGBA(15, 23, 42, 0.045)
+	pillActiveBg := ui.Hex("#FFFFFF")
+	if theme.Dark {
+		trackBg = ui.RGBA(255, 255, 255, 0.05)
+		pillActiveBg = ui.Hex("#232630")
+	}
 	seg := ui.SegmentedBase(c.Key(key), view, 2)
-	seg.Track.Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label(tr(label))
+	seg.Track.Shrink(0).AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(8).
+		Background(trackBg).Border(1, theme.Border.Alpha(0.55)).Label(tr(label))
 	seg.Track.Children(func() {
 		icons := [2]*ui.SVG{iconList, iconListTree}
 		names := [2]string{"列表", "树"}
 		for i, ic := range icons {
-			s := seg.Segment(i).Label(tr(names[i])).Tooltip(tr(names[i])).Padding(theme.Space(1), theme.Space(1.5)).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
-			if i == *view {
-				bg := theme.Background
-				if theme.Dark {
-					bg = theme.SurfacePressed
-				}
-				s.Background(bg)
+			active := i == *view
+			s := seg.Segment(i).Label(tr(names[i])).Tooltip(tr(names[i])).
+				Padding(theme.Space(1), theme.Space(1.5)).Radius(6).Center().
+				Cursor(ui.CursorPointer).Transition(colorMotion())
+			if !active && s.Hovered() {
+				s.Background(theme.SurfaceHover.Alpha(0.7))
 			}
-			s.Children(func() { ui.Icon(c, ic) })
+			s.Children(func() {
+				if active {
+					pill := ui.Box(c.Key(key+"-active-pill")).Absolute().Fill().
+						Radius(6).Background(pillActiveBg).
+						Border(1, theme.Border.Alpha(0.55)).
+						IgnoreInput(true).ZIndex(0).
+						Transition(ui.ElementTransition{
+							Animation: &uiSpring,
+							Match:     fileViewPillMatch{key: key},
+						})
+					if theme.Dark {
+						pill.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
+					} else {
+						pill.Shadow(0, 1, 2, 0, ui.RGBA(15, 23, 42, 0.08))
+					}
+				}
+				icColor := theme.TextMuted
+				if active {
+					icColor = theme.Text
+				}
+				ui.Icon(c, ic).TextColor(icColor).ZIndex(1)
+			})
 		}
 	})
 }
@@ -35,13 +66,43 @@ func (a *app) fileViewToggle(c *ui.Context) {
 	fileViewToggleWidget(c, "file-view", "文件视图", &a.fileView)
 }
 
+func (a *app) inspectAmbientColor(c *ui.Context, t *repoTab) ui.Color {
+	theme := c.Theme()
+	if t.worktree {
+		for _, f := range t.worktreeFiles {
+			if f.extra == "冲突" {
+				return theme.Danger
+			}
+		}
+		return theme.Warning
+	}
+	if t.comparison != nil {
+		return theme.Accent
+	}
+	if t.inspecting != zeroHash {
+		if idx := t.indexOf(t.inspecting); idx >= 0 {
+			return graphColor(t.commits[idx].nodeColor, nil)
+		}
+	}
+	return theme.Accent
+}
+
 func (a *app) inspectFilesPane(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
+	tint := a.inspectAmbientColor(c, t)
+	alpha := float32(0.065)
+	if theme.Dark {
+		alpha = 0.095
+	}
 	ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).BorderWidth(0, 1, 0, 0).BorderColor(theme.Border).Children(func() {
-		a.fileListHeader(c, t)
-		if !t.worktree {
-			a.commitSummaryCard(c, t)
-		}
+		ui.Column(c.Key("inspect-files-header-band")).FillWidth().Shrink(0).
+			LinearGradient(ui.LinearGradient{From: tint.Alpha(alpha), To: ui.Transparent, Angle: 180, Oklab: true}).
+			Children(func() {
+				a.fileListHeader(c, t)
+				if !t.worktree {
+					a.commitSummaryCard(c, t)
+				}
+			})
 		a.fileFilterBar(c, t)
 		if t.compareLoading && len(t.compareFiles) == 0 {
 			busyBlock(c, "files-loading", tr("正在读取改动…"), "").Grow(1)
@@ -168,23 +229,10 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Wrap().Children(func() {
 			ui.Text(c, item.author).FontSize(12).TextColor(theme.TextMuted).SingleLine()
 			ui.Text(c, "·").FontSize(12).TextColor(theme.TextMuted)
-			ui.Text(c, item.whenText()).FontSize(12).TextColor(theme.TextMuted).SingleLine()
+			ui.Text(c, item.whenText()).FontSize(12).FontFeatures("tnum").TextColor(theme.TextMuted).SingleLine()
 			ui.Text(c, "·").FontSize(12).TextColor(theme.TextMuted)
-			ui.Text(c, shortHash(item.hash)).Font("monospace").FontSize(12).TextColor(theme.TextMuted).SingleLine()
-			copyBtn := ui.ButtonBase(c.Key("copy-commit-hash")).Label(tr("复制哈希")).Tooltip(tr("复制哈希")).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
-			switch {
-			case copyBtn.Pressed():
-				copyBtn.Background(theme.SurfacePressed)
-			case copyBtn.Hovered():
-				copyBtn.Background(theme.SurfaceHover)
-			}
-			copyBtn.Children(func() {
-				ui.Icon(c, iconCopy).Size(12, 12).TextColor(theme.TextMuted)
-			})
-			if copyBtn.Clicked() {
-				c.Services().WriteClipboard(hashHex(item.hash))
-				c.Toast(tr("已复制哈希"))
-			}
+			ui.Text(c, shortHash(item.hash)).Font("monospace").FontSize(12).FontFeatures("tnum").TextColor(theme.TextMuted).SingleLine()
+			copyIconButton(c, "copy-commit-hash", "复制哈希", hashHex(item.hash))
 			label := "完整信息"
 			if t.detailsOpen {
 				label = "收起信息"
@@ -220,6 +268,34 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 					}
 				}
 			}
+			if tasks := a.boardTasksForCommit(t.path, hashHex(item.hash)); len(tasks) > 0 {
+				limit := min(len(tasks), 2)
+				for _, bt := range tasks[:limit] {
+					taskCopy := bt
+					stCol := boardStatusColor(c, taskCopy.Status)
+					tBtn := ui.ButtonBase(c.Key("commit-board-task-"+taskCopy.ID)).
+						Label(taskCopy.ID).Tooltip(taskCopy.ID + " · " + taskCopy.Title).
+						Padding(1, 6).Gap(4).Radius(9).AlignItems(ui.Center).Shrink(0).
+						Cursor(ui.CursorPointer).Transition(colorMotion())
+					bg := stCol.Alpha(0.12)
+					border := stCol.Alpha(0.38)
+					if tBtn.Pressed() {
+						bg = stCol.Alpha(0.22)
+					} else if tBtn.Hovered() {
+						bg = stCol.Alpha(0.18)
+						border = stCol.Alpha(0.6)
+					}
+					tBtn.Background(bg).Border(1, border)
+					tBtn.Children(func() {
+						ui.Icon(c, iconKanban).Size(11, 11).TextColor(stCol).Shrink(0)
+						ui.Text(c, taskCopy.ID).Font("monospace").FontSize(11).FontWeight(600).TextColor(stCol).SingleLine()
+					})
+					if tBtn.Clicked() {
+						a.openBoard()
+						a.selectBoardTask(taskCopy.ID)
+					}
+				}
+			}
 		})
 		a.commitDetailsInline(c, t)
 		if !t.detailsShown && t.details != nil && t.details.hash == hashHex(item.hash) {
@@ -238,7 +314,18 @@ func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
 		a.fileListTitle(c, t)
 		// 已读计数只在真读过东西时出现，且整屏只有这一处。
 		if viewed, total := t.reviewedCount(); viewed > 0 {
-			ui.Text(c, fmt.Sprintf(tr("%d/%d 已读"), viewed, total)).FontSize(11).TextColor(theme.TextMuted).Shrink(0)
+			pct := float32(viewed) * 100 / float32(max(total, 1))
+			barCol := theme.Accent
+			if viewed >= total {
+				barCol = theme.Success
+			}
+			ui.Row(c.Key("file-review-progress")).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+				ui.Box(c).Width(36).Height(3).Radius(1.5).Background(theme.Border.Alpha(0.55)).Clip().Children(func() {
+					ui.Box(c.Key("file-review-progress-fill")).Height(3).WidthPercent(pct).Radius(1.5).
+						Background(barCol).Transition(ui.ElementTransition{Animation: &uiSpring, Width: true, Colors: true})
+				})
+				ui.Text(c, fmt.Sprintf(tr("%d/%d 已读"), viewed, total)).FontSize(11).FontFeatures("tnum").TextColor(theme.TextMuted).Shrink(0)
+			})
 		}
 		if t.comparison != nil {
 			if iconButton(c, "compare-close", tr("返回"), iconBack).Shrink(0).Clicked() {
@@ -268,24 +355,39 @@ func (a *app) fileFilterBar(c *ui.Context, t *repoTab) {
 		return
 	}
 	theme := c.Theme()
-	ui.Row(c.Key(fmt.Sprintf("file-filter-bar-%d", t.id))).FillWidth().Padding(2, 8, 4, 8).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
-		ui.TextInput(c.Key(fmt.Sprintf("filter-files-input-%d", t.id)), &t.fileFilter).
-			Label(tr("过滤文件")).
-			Placeholder(tr("过滤文件")).
-			Bind(&t.fileFilterInput).
-			Grow(1).MinWidth(60)
-		if t.fileFilter != "" {
-			indices := t.filteredFileIndices()
-			ui.Text(c, fmt.Sprintf("%d/%d", len(indices), len(t.compareFiles))).
-				FontSize(11).TextColor(theme.TextMuted).Shrink(0)
-			clearBtn := ui.ButtonBase(c.Key(fmt.Sprintf("clear-file-filter-%d", t.id))).Label(tr("清除过滤")).Tooltip(tr("清除过滤")).Padding(2).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Transition(colorMotion())
-			clearBtn.Children(func() {
-				ui.Icon(c, iconClose).Size(12, 12).TextColor(theme.TextMuted)
-			})
-			if clearBtn.Clicked() {
-				t.fileFilter = ""
+	ui.Row(c.Key(fmt.Sprintf("file-filter-bar-%d", t.id))).FillWidth().Padding(2, 8, 6, 8).Shrink(0).Children(func() {
+		box := ui.Row(c.Key(fmt.Sprintf("filter-files-box-%d", t.id))).
+			Grow(1).MinWidth(60).Height(28).Padding(0, 8).Gap(6).
+			AlignItems(ui.Center).Radius(14).Background(theme.Background).
+			Transition(colorMotion())
+		var input ui.Element
+		box.Children(func() {
+			ui.Icon(c, iconSearch).Size(13, 13).TextColor(theme.TextMuted).Shrink(0)
+			input = ui.TextInputBase(c.Key(fmt.Sprintf("filter-files-input-%d", t.id)), &t.fileFilter).
+				Label(tr("过滤文件")).
+				Placeholder(tr("过滤文件")).
+				Bind(&t.fileFilterInput).
+				FontSize(12.5).
+				Grow(1).MinWidth(0).FocusRing(false)
+			if t.fileFilter != "" {
+				indices := t.filteredFileIndices()
+				ui.Text(c, fmt.Sprintf("%d/%d", len(indices), len(t.compareFiles))).
+					FontSize(11).FontFeatures("tnum").TextColor(theme.TextMuted).Shrink(0)
+				if closeIconButton(c, fmt.Sprintf("clear-file-filter-%d", t.id), tr("清除过滤")).Clicked() {
+					t.fileFilter = ""
+					input.Focus()
+				}
 			}
+		})
+		border := theme.Border.Alpha(0.75)
+		if box.Hovered() {
+			border = theme.TextMuted
 		}
+		if input.Focused() {
+			border = theme.Accent
+			box.Shadow(0, 0, 0, 2, theme.Accent.Alpha(0.14))
+		}
+		box.Border(1, border)
 	})
 }
 
@@ -297,7 +399,9 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 		maxLabel = tr("还原布局")
 		maxIcon = iconMinimize
 	}
-	ui.Row(c).FillWidth().Padding(4, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
+	ui.Row(c).FillWidth().Padding(5, 12).Gap(8).AlignItems(ui.Center).Shrink(0).
+		Background(theme.Surface.Alpha(0.35)).
+		BorderWidth(0, 0, 1, 0).BorderColor(theme.Border.Alpha(0.55)).Children(func() {
 		if t.comparison != nil {
 			if ui.Checkbox(c.Key("compare-three-live"), &t.comparison.threeDot, tr("从分叉点起")).Changed() {
 				a.loadComparisonDiff(t)
@@ -456,27 +560,47 @@ func (a *app) openDiffFind(t *repoTab) {
 
 func (a *app) diffLayoutToggle(c *ui.Context) {
 	theme := c.Theme()
+	trackBg := ui.RGBA(15, 23, 42, 0.045)
+	pillActiveBg := ui.Hex("#FFFFFF")
+	if theme.Dark {
+		trackBg = ui.RGBA(255, 255, 255, 0.05)
+		pillActiveBg = ui.Hex("#232630")
+	}
 	seg := ui.SegmentedBase(c.Key("diff-layout-toggle"), &a.diffLayout, 2)
-	seg.Track.Height(24).Shrink(0).AlignItems(ui.Stretch).Padding(theme.Space(0.5)).Gap(theme.Space(0.5)).Radius(theme.Radius).Background(theme.Surface).Border(1, theme.Border).Label(tr("差异排版"))
+	seg.Track.Height(24).Shrink(0).AlignItems(ui.Stretch).Padding(2).Gap(2).Radius(8).
+		Background(trackBg).Border(1, theme.Border.Alpha(0.55)).Label(tr("差异排版"))
 	seg.Track.Children(func() {
 		icons := [2]*ui.SVG{iconColumns2, iconRows2}
 		names := [2]string{"并排", "内联"}
 		tips := [2]string{"左右分栏 (Split)", "内联展示 (Unified)"}
 		for i := 0; i < 2; i++ {
-			s := seg.Segment(i).Label(tr(names[i])).Tooltip(tr(tips[i])).Padding(0, 6).Radius(max(theme.Radius-theme.Space(0.5), 0)).Center().Transition(colorMotion())
-			if i == a.diffLayout {
-				bg := theme.Background
-				if theme.Dark {
-					bg = theme.SurfacePressed
-				}
-				s.Background(bg)
-			}
-			icColor := theme.TextMuted
-			if i == a.diffLayout {
-				icColor = theme.Text
+			active := i == a.diffLayout
+			s := seg.Segment(i).Label(tr(names[i])).Tooltip(tr(tips[i])).
+				Padding(0, 6).Radius(6).Center().Cursor(ui.CursorPointer).Transition(colorMotion())
+			if !active && s.Hovered() {
+				s.Background(theme.SurfaceHover.Alpha(0.7))
 			}
 			s.Children(func() {
-				ui.Icon(c, icons[i]).Size(14, 14).TextColor(icColor)
+				if active {
+					pill := ui.Box(c.Key("diff-layout-active-pill")).Absolute().Fill().
+						Radius(6).Background(pillActiveBg).
+						Border(1, theme.Border.Alpha(0.55)).
+						IgnoreInput(true).ZIndex(0).
+						Transition(ui.ElementTransition{
+							Animation: &uiSpring,
+							Match:     diffLayoutPillMatch{},
+						})
+					if theme.Dark {
+						pill.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
+					} else {
+						pill.Shadow(0, 1, 2, 0, ui.RGBA(15, 23, 42, 0.08))
+					}
+				}
+				icColor := theme.TextMuted
+				if active {
+					icColor = theme.Text
+				}
+				ui.Icon(c, icons[i]).Size(14, 14).TextColor(icColor).ZIndex(1)
 			})
 		}
 	})
@@ -487,17 +611,22 @@ func (a *app) diffIgnoreWhitespaceToggle(c *ui.Context, t *repoTab) {
 	if t != nil && isDockerRepoPath(t.path) && !a.gitReady() {
 		// 这一项用的是本机 Git；容器仓库可以照常看差异，只是这个算法暂时不可用。
 		ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label(tr("忽略空白")).
-			Tooltip(tr("忽略空白差异需要本机 Git")).Padding(0, 8).Radius(theme.Radius).
+			Tooltip(tr("忽略空白差异需要本机 Git")).Padding(0, 9).Radius(12).
 			Shrink(0).Center().Disabled(true).Children(func() {
 			ui.Text(c, tr("忽略空白")).FontSize(11).SingleLine()
 		})
 		return
 	}
-	btn := ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label(tr("忽略空白")).Tooltip(tr("忽略空白字符改动")).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
-	if a.diffIgnoreWhitespace {
+	btn := ui.ButtonBase(c.Key("diff-ignore-whitespace")).Height(24).Label(tr("忽略空白")).Tooltip(tr("忽略空白字符改动")).Padding(0, 9).Radius(12).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+	switch {
+	case a.diffIgnoreWhitespace:
 		btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
-	} else {
-		btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
+	case btn.Pressed():
+		btn.Background(theme.SurfacePressed).TextColor(theme.Text).Border(1, theme.Border)
+	case btn.Hovered():
+		btn.Background(theme.SurfaceHover).TextColor(theme.Text).Border(1, theme.Border)
+	default:
+		btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border.Alpha(0.8))
 	}
 	btn.Children(func() {
 		ui.Text(c, tr("忽略空白")).FontSize(11).SingleLine()
@@ -512,11 +641,16 @@ func (a *app) diffIgnoreWhitespaceToggle(c *ui.Context, t *repoTab) {
 
 func (a *app) diffWrapToggle(c *ui.Context) {
 	theme := c.Theme()
-	btn := ui.ButtonBase(c.Key("diff-wrap-toggle")).Height(24).Label(tr("折行")).Tooltip(tr("折行显示长行")).Padding(0, 8).Radius(theme.Radius).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
-	if a.diffWrap {
+	btn := ui.ButtonBase(c.Key("diff-wrap-toggle")).Height(24).Label(tr("折行")).Tooltip(tr("折行显示长行")).Padding(0, 9).Radius(12).Cursor(ui.CursorPointer).Shrink(0).Center().Transition(colorMotion())
+	switch {
+	case a.diffWrap:
 		btn.Background(theme.Accent.Alpha(0.16)).TextColor(theme.Accent).Border(1, theme.Accent.Alpha(0.4))
-	} else {
-		btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border)
+	case btn.Pressed():
+		btn.Background(theme.SurfacePressed).TextColor(theme.Text).Border(1, theme.Border)
+	case btn.Hovered():
+		btn.Background(theme.SurfaceHover).TextColor(theme.Text).Border(1, theme.Border)
+	default:
+		btn.Background(theme.Surface).TextColor(theme.TextMuted).Border(1, theme.Border.Alpha(0.8))
 	}
 	btn.Children(func() {
 		ui.Text(c, tr("折行")).FontSize(11).SingleLine()

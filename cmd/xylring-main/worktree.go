@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -632,12 +633,18 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 	}
 	card := ui.Column(c.Key(fmt.Sprintf("worktree-commit-card-%d", t.id))).
 		FillWidth().
-		Padding(6, 10).
+		Margin(6, 8, 8, 8).
+		Padding(8, 10).
 		Gap(6).
-		Background(theme.Surface.Alpha(0.6)).
-		Border(1, theme.Border).
-		Radius(theme.Radius).
-		Transition(paneMotion())
+		Radius(10).
+		Transition(colorMotion())
+	if theme.Dark {
+		card.Background(ui.RGBA(255, 255, 255, 0.045)).Border(1, theme.Border.Alpha(0.7)).
+			InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.06))
+	} else {
+		card.Background(ui.RGBA(255, 255, 255, 0.85)).Border(1, theme.Border.Alpha(0.8)).
+			Shadow(0, 1, 3, 0, ui.RGBA(15, 23, 42, 0.05))
+	}
 
 	isExpanded := card.Hovered() ||
 		card.FocusWithin() ||
@@ -646,6 +653,10 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 		t.commitBusy ||
 		t.commitErr != "" ||
 		t.commitPinned
+
+	acc := ui.AccordionBase(c.Key(fmt.Sprintf("worktree-commit-acc-%d", t.id)))
+	expanded := isExpanded
+	accItem := acc.Item(&expanded)
 
 	card.Children(func() {
 		header := ui.Row(c.Key(fmt.Sprintf("commit-header-%d", t.id))).
@@ -670,39 +681,60 @@ func (a *app) worktreeCommitCard(c *ui.Context, t *repoTab) {
 			t.commitPinned = !t.commitPinned
 		}
 
-		if isExpanded {
-			a.commitRingControl(c, t)
-			ui.TextArea(c.Key(fmt.Sprintf("commit-msg-%d", t.id)), &t.commitMsg).
-				Placeholder(tr("写提交说明（⌘Enter）")).
-				Height(54).
-				Disabled(t.commitBusy)
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
-				// 普通提交卡在容器仓库里不显示 amend 控件：修改提交说明不在第一版范围。
-				if t.head != zeroHash && !isDockerRepoPath(t.path) {
-					if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, tr("修改上次提交")).
-						Disabled(t.commitBusy).Changed() {
-						t.amendGen++
-						if t.commitAmend {
-							a.loadAmendMessage(t)
-						} else {
-							t.commitProv = provenance{}
+		accItem.Panel(func() {
+			ui.Column(c).FillWidth().Gap(6).Children(func() {
+				a.commitRingControl(c, t)
+				msgBox := ui.Column(c.Key(fmt.Sprintf("commit-msg-box-%d", t.id))).
+					FillWidth().Padding(7, 9).Radius(8).Transition(colorMotion())
+				var msgEl ui.Element
+				msgBox.Children(func() {
+					msgEl = ui.TextAreaBase(c.Key(fmt.Sprintf("commit-msg-%d", t.id)), &t.commitMsg).
+						Label(tr("写提交说明…")).
+						Placeholder(tr("写提交说明…")).
+						Height(54).FillWidth().FontSize(12.5).LineHeight(1.38).FocusRing(false).
+						Disabled(t.commitBusy)
+				})
+				switch {
+				case msgEl.Focused():
+					msgBox.Background(theme.Background).Border(1, theme.Accent).Shadow(0, 0, 0, 2, theme.Accent.Alpha(0.14))
+				case msgBox.Hovered():
+					msgBox.Background(theme.Background.Alpha(0.85)).Border(1, theme.Border)
+				default:
+					msgBox.Background(theme.Background.Alpha(0.7)).Border(1, theme.Border.Alpha(0.75))
+				}
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
+					// 普通提交卡在容器仓库里不显示 amend 控件：修改提交说明不在第一版范围。
+					if t.head != zeroHash && !isDockerRepoPath(t.path) {
+						if ui.Checkbox(c.Key(fmt.Sprintf("commit-amend-%d", t.id)), &t.commitAmend, tr("修改上次提交")).
+							Disabled(t.commitBusy).Changed() {
+							t.amendGen++
+							if t.commitAmend {
+								a.loadAmendMessage(t)
+							} else {
+								t.commitProv = provenance{}
+							}
 						}
 					}
-				}
-				ui.Box(c).Grow(1)
-				canCommit := !t.commitBusy && strings.TrimSpace(t.commitMsg) != "" && (stagedCount > 0 || t.commitAmend)
-				commitBtn := ui.PrimaryButton(c.Key(fmt.Sprintf("commit-submit-%d", t.id)), tr("提交")).
-					Padding(2, 10).
-					FontSize(12).
-					Disabled(!canCommit)
-				if commitBtn.Clicked() {
-					a.runCommitWorktree(t)
+					ui.Box(c).Grow(1)
+					shortcut := "Ctrl+↩"
+					if runtime.GOOS == "darwin" {
+						shortcut = "⌘↩"
+					}
+					kbdHint(c, fmt.Sprintf("commit-submit-key-%d", t.id), shortcut)
+					canCommit := !t.commitBusy && strings.TrimSpace(t.commitMsg) != "" && (stagedCount > 0 || t.commitAmend)
+					commitBtn := ui.PrimaryButton(c.Key(fmt.Sprintf("commit-submit-%d", t.id)), tr("提交")).
+						Padding(2, 10).
+						FontSize(12).
+						Disabled(!canCommit)
+					if commitBtn.Clicked() {
+						a.runCommitWorktree(t)
+					}
+				})
+				if t.commitErr != "" {
+					ui.Text(c, trMessage(t.commitErr)).FontSize(11).TextColor(theme.Danger).SingleLine().Grow(1).MinWidth(0)
 				}
 			})
-			if t.commitErr != "" {
-				ui.Text(c, trMessage(t.commitErr)).FontSize(11).TextColor(theme.Danger).SingleLine().Grow(1).MinWidth(0)
-			}
-		}
+		})
 	})
 }
 

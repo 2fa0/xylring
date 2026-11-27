@@ -623,6 +623,25 @@ func (a *app) boardRepoActiveCount(repo string) int {
 	return n
 }
 
+func (a *app) boardTasksForCommit(repo, fullHash string) []boardTask {
+	if !a.board.loaded || fullHash == "" {
+		return nil
+	}
+	normRepo := normalizeBoardRepo(repo)
+	normHash := strings.ToLower(strings.TrimSpace(fullHash))
+	var out []boardTask
+	for _, t := range a.board.file.Tasks {
+		for _, link := range t.Commits {
+			if strings.ToLower(strings.TrimSpace(link.Hash)) == normHash &&
+				(normRepo == "" || normalizeBoardRepo(link.Repo) == normRepo) {
+				out = append(out, t)
+				break
+			}
+		}
+	}
+	return out
+}
+
 func (a *app) boardKnownRepos() []string {
 	var out []string
 	seen := map[string]bool{}
