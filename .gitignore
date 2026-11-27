@@ -11,6 +11,7 @@
 /xylring-main.exe
 /gitclient
 .claude/
+.agents/
 
 # 内部文档与工作记录，不随开源仓库发布
 /产品功能与体验完整度评估.md
@@ -20,3 +21,7 @@
 /docs/改进计划-*.md
 /docs/performance-memory-review-*.md
 /docs/validation/
+/docs/*计划*.md
+/docs/独立桌面Git客户端需求文档-*.md
+/docs/代码组织.md
+/docs/lobe-mygo组件对照.md
