@@ -165,7 +165,8 @@ func TestRecentRepoMissingError(t *testing.T) {
 	if dy < 0 {
 		dy = -dy
 	}
-	if dy > 48 {
+	insideCard := errText.Y >= gone.Y && errText.Y+errText.H <= gone.Y+gone.H+1
+	if !insideCard && dy > 48 {
 		t.Fatalf("错误离失效仓库太远：err=%+v gone=%+v", errText, gone)
 	}
 }

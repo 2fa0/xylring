@@ -21,6 +21,7 @@ func TestSessionPersistsWorkspaceAndDraft(t *testing.T) {
 	a := &app{tabs: []*repoTab{tab}, persist: true, sessionReady: true}
 	a.queueSession()
 	close(a.sessionWrites)
+	a.sessionWrites = nil
 	<-a.sessionDone
 	s := loadSession()
 	if len(s.Repos) != 1 || s.Active != "/tmp/repo" || s.Repos[0].Draft != "unfinished draft" || s.Repos[0].File != "file.go" || s.Repos[0].Commit != hashHex(hashN(1)) || !s.Repos[0].Amend {
@@ -48,6 +49,7 @@ func TestSessionPersistsBottomFullWidth(t *testing.T) {
 	a.bottomFullWidth = false
 	a.queueSession()
 	close(a.sessionWrites)
+	a.sessionWrites = nil
 	<-a.sessionDone
 	s := loadSession()
 	if s.BottomFullWidth == nil || *s.BottomFullWidth != false {
@@ -68,6 +70,7 @@ func TestSessionPersistsRepoOrder(t *testing.T) {
 	a.repoOrder = []string{"/tmp/repo2", "/tmp/repo"}
 	a.queueSession()
 	close(a.sessionWrites)
+	a.sessionWrites = nil
 	<-a.sessionDone
 	s := loadSession()
 	if len(s.RepoOrder) != 2 || s.RepoOrder[0] != "/tmp/repo2" || s.RepoOrder[1] != "/tmp/repo" {
@@ -183,6 +186,7 @@ func TestRestoreDisabledPreservesSavedReposAndDrafts(t *testing.T) {
 	a.themeMode = "dark"
 	a.queueSession()
 	close(a.sessionWrites)
+	a.sessionWrites = nil
 	<-a.sessionDone
 
 	after := loadSession()
@@ -233,6 +237,7 @@ func TestLaunchWithCLIPathLoadsSharedStateAndPreservesOtherDrafts(t *testing.T) 
 	a.tabs = []*repoTab{tabB}
 	a.queueSession()
 	close(a.sessionWrites)
+	a.sessionWrites = nil
 	<-a.sessionDone
 
 	after := loadSession()
@@ -266,6 +271,7 @@ func TestAsyncRestorePreservesUnreachableRepoDrafts(t *testing.T) {
 
 	updates := make(chan func(), 64)
 	a := newApp()
+	defer cleanupSessionApp(a)
 	a.persist = true
 	a.dispatch = func(fn func()) { updates <- fn }
 	a.restoreSessionWithRepos(true)
@@ -276,6 +282,7 @@ func TestAsyncRestorePreservesUnreachableRepoDrafts(t *testing.T) {
 
 	a.queueSession()
 	close(a.sessionWrites)
+	a.sessionWrites = nil
 	<-a.sessionDone
 
 	after := loadSession()
@@ -318,6 +325,7 @@ func TestAsyncRestoreMergesWithoutOverwritingUserDraft(t *testing.T) {
 
 	updates := make(chan func(), 64)
 	a := newApp()
+	defer cleanupSessionApp(a)
 	a.persist = true
 	a.dispatch = func(fn func()) { updates <- fn }
 	a.restoreSessionWithRepos(true)
@@ -341,6 +349,7 @@ func TestAsyncRestoreMergesWithoutOverwritingUserDraft(t *testing.T) {
 
 	a.queueSession()
 	close(a.sessionWrites)
+	a.sessionWrites = nil
 	<-a.sessionDone
 
 	after := loadSession()
@@ -385,6 +394,7 @@ func TestFlushSessionOnCloseBeforeAsyncRestoreCompletes(t *testing.T) {
 
 	updates := make(chan func(), 64)
 	a := newApp()
+	defer cleanupSessionApp(a)
 	a.persist = true
 	a.dispatch = func(fn func()) { updates <- fn }
 	a.restoreSessionWithRepos(true)
@@ -429,5 +439,42 @@ func TestFlushSessionOnCloseBeforeAsyncRestoreCompletes(t *testing.T) {
 	}
 	if byPath[repoC].Draft != "brand new draft C" {
 		t.Fatalf("new repoC draft lost on early close: %+v", byPath[repoC])
+	}
+}
+
+func cleanupSessionApp(a *app) {
+	if a == nil {
+		return
+	}
+	a.closed = true
+	if a.restoreCancel != nil {
+		a.restoreCancel()
+	}
+	if a.restoreDone != nil {
+		<-a.restoreDone
+	}
+	if a.recentWrites != nil {
+		close(a.recentWrites)
+		a.recentWrites = nil
+	}
+	if a.recentDone != nil {
+		<-a.recentDone
+	}
+	if a.sessionWrites != nil {
+		close(a.sessionWrites)
+		a.sessionWrites = nil
+	}
+	if a.sessionDone != nil {
+		<-a.sessionDone
+	}
+	if a.summaryCancel != nil {
+		a.summaryCancel()
+	}
+	if a.watchCancel != nil {
+		a.watchCancel()
+	}
+	for _, tab := range a.tabs {
+		tab.closed = true
+		tab.cancel()
 	}
 }

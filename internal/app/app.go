@@ -83,6 +83,7 @@ type app struct {
 	scanPath          string
 	scanCache         map[string]scannedDir
 	recentWrites      chan []string
+	recentDone        chan struct{}
 	repoListState     ui.ListState
 	repoSel           int
 	repoOrder         []string
@@ -119,6 +120,8 @@ type app struct {
 	sessionReady       bool
 	sessionDone        chan struct{}
 	sessionWrites      chan savedSession
+	restoreCancel      context.CancelFunc
+	restoreDone        chan struct{}
 	lastSession        *savedSession
 	sessionResults     chan error
 	preservedRepos     []savedRepo
@@ -882,6 +885,9 @@ func Run(assets Assets) {
 			a.closed = true
 			if a.scanCancel != nil {
 				a.scanCancel()
+			}
+			if a.restoreCancel != nil {
+				a.restoreCancel()
 			}
 			if a.recentWrites != nil {
 				close(a.recentWrites)

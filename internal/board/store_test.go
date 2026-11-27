@@ -675,9 +675,10 @@ func TestFormatBoardAgentContext(t *testing.T) {
 	}
 
 	out := FormatBoardAgentContext(task)
+	wantRepo := filepath.Clean("/tmp/xylring")
 	for _, want := range []string{
 		"[T-42] Refactor Context Wall",
-		"/tmp/xylring",
+		wantRepo,
 		"- [ ] Build masonry canvas",
 		"- [ ] Write UI tests",
 		"3333333 latest commit",

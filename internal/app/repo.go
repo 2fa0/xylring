@@ -119,11 +119,23 @@ func (a *app) setRecent(out []string) {
 		return
 	}
 	if a.recentWrites == nil {
+		p, err := configFile("recent.json")
+		if err != nil {
+			a.post(func() {
+				if !a.closed {
+					a.setBanner("保存最近仓库失败："+err.Error(), "")
+				}
+			})
+			return
+		}
 		a.recentWrites = make(chan []string, 1)
+		done := make(chan struct{})
+		a.recentDone = done
 		writes := a.recentWrites
 		go func() {
+			defer close(done)
 			for paths := range writes {
-				if err := saveRecent(paths); err != nil {
+				if err := writeJSON(p, paths); err != nil {
 					a.post(func() {
 						if !a.closed {
 							a.setBanner("保存最近仓库失败："+err.Error(), "")

@@ -325,17 +325,29 @@ func (a *app) restoreSessionWithRepos(openRepos bool) {
 		a.sessionReady = true
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	done := make(chan struct{})
+	a.restoreCancel = cancel
+	a.restoreDone = done
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+		defer func() {
+			cancel()
+			close(done)
+		}()
 		var valid []savedRepo
 		var found []string
 		for _, path := range s.Found {
+			if ctx.Err() != nil {
+				return
+			}
 			if isGitWorkTree(path) {
 				found = append(found, path)
 			}
 		}
 		for _, r := range s.Repos {
+			if ctx.Err() != nil {
+				return
+			}
 			if isDockerRepoPath(r.Path) {
 				// 容器可能尚未启动；不要在恢复会话时把它当成失效记录丢掉。
 				if r.DockerName != "" {
@@ -350,6 +362,9 @@ func (a *app) restoreSessionWithRepos(openRepos bool) {
 			if restoredRepoUsable(root, r.Path, e) {
 				valid = append(valid, r)
 			}
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		a.post(func() {
 			if len(a.tabs) == 0 {
