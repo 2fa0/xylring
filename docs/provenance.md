@@ -77,7 +77,7 @@ xylring ring strict uninstall
 使用与 Hook 同一份脚本，不检查既有历史。也可本地运行：
 
 ```sh
-sh cmd/xylring-main/ring_check.sh --range BASE..HEAD
+sh internal/app/ring_check.sh --range BASE..HEAD
 ```
 
 本地 Hook 可被绕过。仓库管理员还需将 `Check commit provenance` 设为目标分支的

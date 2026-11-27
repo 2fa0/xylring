@@ -1,1 +1,1 @@
-cmd/xylring-main/ring_check.sh text eol=lf
+internal/app/ring_check.sh text eol=lf

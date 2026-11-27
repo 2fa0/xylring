@@ -1,0 +1,375 @@
+package app
+
+import (
+	"context"
+	_ "embed"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+func applyProvenanceTrailers(ctx context.Context, dir, msg string, p provenance) (string, error) {
+	for _, s := range []string{p.Agent, p.Model, p.Attribution} {
+		if strings.ContainsAny(s, "\r\n\x00") {
+			return "", errors.New("年轮字段不能包含换行")
+		}
+	}
+	if err := validateProvenanceModel(p); err != nil {
+		return "", err
+	}
+	if p.Attribution == "native" {
+		p.Attribution = ""
+	}
+	if p.Agent == "" {
+		p = provenance{}
+	}
+	// Git determines trailer boundaries; strip duplicate AI keys in separate
+	// passes because replace only replaces the last occurrence of each key.
+	parsed, err := runGitInput(ctx, dir, msg, "interpret-trailers", "--parse")
+	if err != nil {
+		return "", err
+	}
+	counts := map[string]int{}
+	for _, line := range strings.Split(string(parsed), "\n") {
+		key, _, _ := strings.Cut(line, ":")
+		counts[strings.ToLower(key)]++
+	}
+	duplicates := max(counts["ai-agent"], counts["ai-model"], counts["ai-attribution"])
+	for i := 1; i < duplicates; i++ {
+		clean, err := runGitInput(ctx, dir, msg, "interpret-trailers", "--trim-empty", "--if-exists", "replace", "--if-missing", "doNothing", "--trailer", agentTrailer+":", "--trailer", modelTrailer+":", "--trailer", attributionTrailer+":")
+		if err != nil {
+			return "", err
+		}
+		msg = string(clean)
+	}
+
+	args := []string{"interpret-trailers", "--if-exists", "replace", "--if-missing", "add", "--trim-empty"}
+	for _, pair := range [][2]string{{agentTrailer, p.Agent}, {modelTrailer, p.Model}, {attributionTrailer, p.Attribution}} {
+		args = append(args, "--trailer", pair[0]+": "+pair[1])
+	}
+	out, err := runGitInput(ctx, dir, msg, args...)
+	if err != nil {
+		return "", fmt.Errorf("合成年轮信息失败：%w", err)
+	}
+	return string(out), nil
+}
+
+type ringStamp struct {
+	p       provenance
+	expires int64
+	once    bool
+}
+
+func gitFile(ctx context.Context, dir, name string) (string, error) {
+	out, err := runGit(ctx, dir, "rev-parse", "--git-path", name)
+	if err != nil {
+		return "", err
+	}
+	return resolveRepoGitPath(dir, string(out)), nil
+}
+func readStamp(ctx context.Context, dir string) (ringStamp, error) {
+	var s ringStamp
+	b, err := readRepoGitFile(ctx, dir, "xylring-stamp")
+	if err != nil {
+		return s, err
+	}
+	if b == nil {
+		return s, nil
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, _ := strings.Cut(line, "=")
+		switch k {
+		case "agent":
+			s.p.Agent = v
+		case "model":
+			s.p.Model = v
+		case "expires":
+			s.expires, _ = strconv.ParseInt(v, 10, 64)
+		case "once":
+			s.once = v == "1"
+		}
+	}
+	if s.expires <= time.Now().Unix() {
+		return ringStamp{}, nil
+	}
+	s.p.Attribution = "stamp"
+	return s, nil
+}
+
+// readRepoGitFile 读取由 Git 解析出的仓库内文件。容器仓库只能通过容器读，
+// 缺失返回 nil, nil，真实错误（容器离线等）必须原样上报。
+func readRepoGitFile(ctx context.Context, dir, name string) ([]byte, error) {
+	if isDockerRepoPath(dir) {
+		data, ok, err := dockerReadGitPathFile(ctx, dir, name)
+		if err != nil || !ok {
+			return nil, err
+		}
+		return data, nil
+	}
+	path, err := gitFile(ctx, dir, name)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func dockerProvenanceWriteBlocked(dir string) error {
+	if isDockerRepoPath(dir) {
+		return errors.New("容器仓库暂不支持修改年轮设置")
+	}
+	return nil
+}
+
+func writeStamp(ctx context.Context, dir string, s ringStamp) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
+	if err := validateProvenanceModel(s.p); err != nil {
+		return err
+	}
+	if strings.TrimSpace(s.p.Agent) == "" || strings.ContainsAny(s.p.Agent+s.p.Model, "\r\n\x00") {
+		return errors.New("请填写有效 Agent，字段不能包含换行")
+	}
+	s.p.Agent = strings.TrimSpace(s.p.Agent)
+	path, err := gitFile(ctx, dir, "xylring-stamp")
+	if err != nil {
+		return err
+	}
+	once := 0
+	if s.once {
+		once = 1
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".xylring-stamp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = fmt.Fprintf(f, "agent=%s\nmodel=%s\nexpires=%d\nonce=%d\n", s.p.Agent, s.p.Model, s.expires, once)
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), path)
+}
+func clearStamp(ctx context.Context, dir string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
+	path, err := gitFile(ctx, dir, "xylring-stamp")
+	if err != nil {
+		return err
+	}
+	err = os.Remove(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+const ringHookMarker = "# xylring-ring-hook v1"
+
+const strictHookMarker = "# xylring-strict-hook v1"
+
+//go:embed ring_check.sh
+var strictRingScript string
+
+// Custom hooksPath directories always require manual integration. This also
+// avoids silently changing a shared or externally managed hook directory.
+func ringHookPath(ctx context.Context, dir string) (string, error) {
+	return provenanceHookPath(ctx, dir, "prepare-commit-msg")
+}
+func provenanceHookPath(ctx context.Context, dir, name string) (string, error) {
+	out, _ := runGit(ctx, dir, "config", "--get", "core.hooksPath")
+	if strings.TrimSpace(string(out)) != "" {
+		return "", errors.New("需手动集成：已设置 core.hooksPath，请在现有 Hook 中调用年轮脚本")
+	}
+	return gitFile(ctx, dir, "hooks/"+name)
+}
+func ringHookStatus(ctx context.Context, dir string) string {
+	path, err := ringHookPath(ctx, dir)
+	if err != nil {
+		return err.Error()
+	}
+	var b []byte
+	if isDockerRepoPath(dir) {
+		// 容器读不到时要给出真实原因，不能伪装成「未安装」。
+		b, err = readRepoGitFile(ctx, dir, "hooks/prepare-commit-msg")
+		if err != nil {
+			return "无法读取：" + err.Error()
+		}
+		if b == nil {
+			return "未开启"
+		}
+	} else {
+		b, err = os.ReadFile(path)
+		if err != nil {
+			return "未开启"
+		}
+	}
+	if strings.Contains(string(b), ringHookMarker) {
+		return "已开启（v1）"
+	}
+	if strings.Contains(string(b), "# xylring-ring-hook") {
+		return "版本过旧"
+	}
+	return "未开启"
+}
+func installRingHook(ctx context.Context, dir string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
+	return installProvenanceHook(ctx, dir, "prepare-commit-msg", ringHookMarker, ringHookScript())
+}
+func installProvenanceHook(ctx context.Context, dir, name, marker, script string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
+	path, err := provenanceHookPath(ctx, dir, name)
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	existed := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(b), marker) {
+		if string(b) == script {
+			return nil
+		}
+		return os.WriteFile(path, []byte(script), 0755)
+	}
+	if _, err := os.Lstat(path + ".xylring-orig"); err == nil {
+		return fmt.Errorf("备份 Hook 已存在，请先检查 %s.xylring-orig", name)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if existed {
+		if err := os.Rename(path, path+".xylring-orig"); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		if existed {
+			_ = os.Rename(path+".xylring-orig", path)
+		}
+		return err
+	}
+	return nil
+}
+func uninstallRingHook(ctx context.Context, dir string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
+	return uninstallProvenanceHook(ctx, dir, "prepare-commit-msg", "# xylring-ring-hook")
+}
+func uninstallProvenanceHook(ctx context.Context, dir, name, marker string) error {
+	if err := dockerProvenanceWriteBlocked(dir); err != nil {
+		return err
+	}
+	path, err := provenanceHookPath(ctx, dir, name)
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(b), marker) {
+		return errors.New("现有 Hook 不属于 Xylring，未修改")
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path + ".xylring-orig"); err == nil {
+		return os.Rename(path+".xylring-orig", path)
+	}
+	return nil
+}
+func ringHookScript() string {
+	return `#!/bin/sh
+# xylring-ring-hook v1
+orig="$0.xylring-orig"
+if [ -x "$orig" ]; then
+    "$orig" "$@" || exit $?
+fi
+# Attribution failures must never prevent a commit.
+(
+    [ "${XYLRING_GUI:-}" != 1 ] || exit 0
+    [ "${XYLRING_RING:-}" != 0 ] || exit 0
+    case "${2:-}" in ''|message|template) ;; *) exit 0 ;; esac
+    trailers=$(git interpret-trailers --parse "$1") || exit 0
+    if printf '%s\n' "$trailers" | grep -Eiq '^(AI-Agent:|Assisted-by: Cindy \(https://cindy.app\))'; then exit 0; fi
+    stamp=$(git rev-parse --git-path xylring-stamp) || exit 0
+    [ -f "$stamp" ] || exit 0
+    agent= model= expires= once=0
+    while IFS= read -r line; do
+        case "$line" in agent=*) agent=${line#agent=} ;; model=*) model=${line#model=} ;; expires=*) expires=${line#expires=} ;; once=*) once=${line#once=} ;; esac
+    done < "$stamp"
+    case "$expires" in ''|*[!0-9]*) exit 0 ;; esac
+    now=$(date +%s) || exit 0
+    [ "$expires" -gt "$now" ] && [ -n "$agent" ] || exit 0
+    case "$agent" in
+        [hH][uU][mM][aA][nN])
+            [ -z "$model" ] || exit 0
+            git interpret-trailers --in-place --if-exists replace --trim-empty --trailer 'AI-Agent: human' --trailer 'AI-Model:' --trailer 'AI-Attribution:' "$1" || exit 0
+            ;;
+        *)
+            [ -n "$model" ] || exit 0
+            git interpret-trailers --in-place --if-exists replace --trailer "AI-Agent: $agent" --trailer "AI-Model: $model" --trailer 'AI-Attribution: stamp' "$1" || exit 0
+            ;;
+    esac
+    [ "$once" != 1 ] || rm -f "$stamp"
+) 2>/dev/null
+exit 0
+`
+}
+
+func runGitInput(ctx context.Context, dir, input string, args ...string) ([]byte, error) {
+	if err := acquireGit(ctx); err != nil {
+		return nil, err
+	}
+	defer func() { <-gitSlots }()
+	cmd, bin, err := prepareGitCommand(ctx, dir, nil, gitArgs(args...)...)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdin = strings.NewReader(input)
+	stderr := limitedBuffer{limit: 64 << 10}
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		// 这是除 runGit/streamLog 之外的第三个命令行入口，必须同样区分
+		// 「Docker 没跑起来」和「容器里的 Git 报错」。
+		if target, ok := parseDockerRepoKey(dir); ok {
+			return out, dockerRunError(target, bin, err, stderr.Bytes())
+		}
+		return out, gitExecError(bin, err)
+	}
+	return out, nil
+}
+func messageProvenance(ctx context.Context, dir, msg string) (provenance, error) {
+	out, err := runGitInput(ctx, dir, msg, "interpret-trailers", "--parse")
+	if err != nil {
+		return provenance{}, err
+	}
+	return parseProvenance(string(out)), nil
+}
