@@ -201,7 +201,7 @@ func boardMasonryColumnCount(availW float32) int {
 }
 
 func estimateBoardCardHeight(task boardTask, checklistItems int) int {
-	h := 96
+	h := 88
 	if len([]rune(task.Title)) > 24 {
 		h += 22
 	}
@@ -231,13 +231,15 @@ func estimateBoardCardHeight(task boardTask, checklistItems int) int {
 // data decides kept: the parsed checklist, the repositories, and the height
 // the card took when it was last built.
 type boardWallCard struct {
-	task      boardTask
-	repos     []string
-	items     []boardChecklistItem
-	signature uint64
-	height    float32
-	measured  bool
-	y         float32
+	task             boardTask
+	repos            []string
+	items            []boardChecklistItem
+	signature        uint64
+	width            float32
+	height           float32
+	measured         bool
+	measureRequested bool
+	y                float32
 }
 
 // boardWallHeight remembers the height a card's content took at a width.
@@ -267,7 +269,8 @@ type boardWallKey struct {
 type boardWallLayout struct {
 	byID     map[string]*boardWallCard
 	pinned   []boardWallCard
-	columns  [][]boardWallCard
+	regular  []boardWallCard
+	columns  [][]int
 	done     []boardTask
 	heights  []float32
 	key      boardWallKey
@@ -302,9 +305,14 @@ func boardHeroWidth(availW float32, pinnedCount int) float32 {
 func boardCardSignature(task boardTask, checklistItems int) uint64 {
 	h := fnv.New64a()
 	// Done and archived tasks hide their due chip, so the status counts too.
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%t\x00%t\x00%d\x00%d",
-		task.Title, task.Status, task.DueDate, checklistItems, task.Pinned, task.Archived,
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%d\x00%t\x00%t\x00%d\x00%d",
+		task.Title, task.Status, task.Priority, task.DueDate, checklistItems, task.Pinned, task.Archived,
 		len(task.Commits), len(task.Notes))
+	if checklistItems == 0 {
+		if desc := strings.TrimSpace(task.Description); desc != "" {
+			fmt.Fprintf(h, "\x00%s", desc)
+		}
+	}
 	if note, ok := latestBoardNote(task.Notes); ok {
 		fmt.Fprintf(h, "\x00%d\x00%d", len([]rune(note.Text)), len(note.Author))
 	}
@@ -348,6 +356,7 @@ func (a *app) boardWallMakeCard(task boardTask, width float32) boardWallCard {
 		repos:     boardTaskAllRepos(task),
 		items:     items,
 		signature: boardCardSignature(task, len(items)),
+		width:     width,
 	}
 	if h, ok := a.boardWallCachedHeight(task.ID, card.signature, width); ok {
 		card.height, card.measured = h, true
@@ -397,7 +406,6 @@ func (a *app) boardWallLayoutFrom(c *ui.Context) *boardWallLayout {
 		}
 	}
 	heroW := boardHeroWidth(availW, pinnedCount)
-	var regular []boardWallCard
 	for _, task := range unfinished {
 		isPinned := task.Pinned && task.Status != boardDone
 		width := l.colWidth
@@ -408,24 +416,10 @@ func (a *app) boardWallLayoutFrom(c *ui.Context) *boardWallLayout {
 		if isPinned {
 			l.pinned = append(l.pinned, card)
 		} else {
-			regular = append(regular, card)
+			l.regular = append(l.regular, card)
 		}
 	}
-	// Masonry keeps the sorted order and drops each card into the shortest
-	// column, which keeps the top of every column level.
-	l.columns = make([][]boardWallCard, l.numCols)
-	columnHeights := make([]float32, l.numCols)
-	for _, card := range regular {
-		best := 0
-		for i := 1; i < l.numCols; i++ {
-			if columnHeights[i] < columnHeights[best] {
-				best = i
-			}
-		}
-		l.columns[best] = append(l.columns[best], card)
-		columnHeights[best] += card.height + boardWallGap
-	}
-	l.total = len(regular) + len(l.pinned)
+	l.total = len(l.regular) + len(l.pinned)
 	l.done = cols[boardStatusIndex(boardDone)]
 	// Relative note times go stale as time passes; only such notes need a
 	// frame a minute, and none do while the board is hidden.
@@ -440,45 +434,64 @@ func (a *app) boardWallLayoutFrom(c *ui.Context) *boardWallLayout {
 	for i := range l.pinned {
 		seen(l.pinned[i].task)
 	}
-	for ci := range l.columns {
-		for i := range l.columns[ci] {
-			seen(l.columns[ci][i].task)
-		}
+	for i := range l.regular {
+		seen(l.regular[i].task)
 	}
 	for i := range l.pinned {
 		l.byID[l.pinned[i].task.ID] = &l.pinned[i]
 	}
-	for ci := range l.columns {
-		for i := range l.columns[ci] {
-			l.byID[l.columns[ci][i].task.ID] = &l.columns[ci][i]
-		}
-	}
-	for id := range a.board.wallHeights {
-		if _, ok := l.byID[id]; !ok {
-			delete(a.board.wallHeights, id)
-		}
+	for i := range l.regular {
+		l.byID[l.regular[i].task.ID] = &l.regular[i]
 	}
 	a.boardWallRelayout(l, availW)
 	return l
 }
 
-// boardWallRelayout puts every card at the offset its column gives it, so the
-// window can find the cards near the scroll place.
+// boardWallRelayout distributes regular cards across columns and puts every
+// card at the offset its column gives it, so the window can find the cards
+// near the scroll place.
 func (a *app) boardWallRelayout(l *boardWallLayout, availW float32) {
-	l.heights = l.heights[:0]
+	if l.numCols <= 0 {
+		l.numCols = 1
+	}
+	if cap(l.columns) < l.numCols {
+		l.columns = make([][]int, l.numCols)
+	} else {
+		l.columns = l.columns[:l.numCols]
+		for ci := range l.columns {
+			l.columns[ci] = l.columns[ci][:0]
+		}
+	}
+	if cap(l.heights) < l.numCols {
+		l.heights = make([]float32, l.numCols)
+	} else {
+		l.heights = l.heights[:l.numCols]
+		clear(l.heights)
+	}
+	// Masonry keeps the sorted order and drops each card into the shortest
+	// column, which keeps the top of every column level. A small tolerance keeps
+	// visually equal-height rows filling left to right despite minor font or
+	// subpixel differences.
+	const boardWallBalanceTol = float32(4)
+	for i := range l.regular {
+		best := 0
+		for ci := 1; ci < l.numCols; ci++ {
+			if l.heights[ci]+boardWallBalanceTol < l.heights[best] {
+				best = ci
+			}
+		}
+		card := &l.regular[i]
+		y := l.heights[best]
+		if len(l.columns[best]) > 0 {
+			y += boardWallGap
+		}
+		card.y = y
+		l.columns[best] = append(l.columns[best], i)
+		l.heights[best] = y + card.height
+	}
 	l.masonryH = 0
-	for ci := range l.columns {
-		y := float32(0)
-		for i := range l.columns[ci] {
-			card := &l.columns[ci][i]
-			card.y = y
-			y += card.height + boardWallGap
-		}
-		if len(l.columns[ci]) > 0 {
-			y -= boardWallGap
-		}
-		l.heights = append(l.heights, y)
-		l.masonryH = max(l.masonryH, y)
+	for _, h := range l.heights {
+		l.masonryH = max(l.masonryH, h)
 	}
 	const heroGap = float32(12)
 	var pinnedH float32
@@ -508,17 +521,29 @@ func (a *app) boardWallRelayout(l *boardWallLayout, availW float32) {
 
 // boardWallNoteBuilt remembers a card the frame built, to read its real height
 // once the frame is laid out. Cards keep the estimate until then.
-func (a *app) boardWallNoteBuilt(id string) {
+func (a *app) boardWallNoteBuilt(c *ui.Context, id string) {
 	card, ok := a.board.wall.byID[id]
 	if !ok || card.measured {
 		return
 	}
+	alreadyPending := false
 	for _, pending := range a.board.wallPending {
 		if pending.id == id {
-			return
+			alreadyPending = true
+			break
 		}
 	}
-	a.board.wallPending = append(a.board.wallPending, boardWallPending{id: id, signature: card.signature})
+	if !alreadyPending {
+		a.board.wallPending = append(a.board.wallPending, boardWallPending{id: id, signature: card.signature})
+	}
+	if !card.measureRequested {
+		card.measureRequested = true
+		if !c.WindowHidden() {
+			if w, h := c.Size(); w > 0 && h > 0 {
+				c.Invalidate()
+			}
+		}
+	}
 }
 
 // boardWallSyncMeasured reads the heights of the cards the last frame built and
@@ -540,11 +565,13 @@ func (a *app) boardWallSyncMeasured(c *ui.Context, l *boardWallLayout) {
 			continue
 		}
 		b := h.Bounds(c)
-		if b.W <= 0 || b.H <= 0 {
+		if b.W <= 0 || b.H <= 0 || max(b.W-card.width, card.width-b.W) > 2 {
 			continue
 		}
+		if max(b.H-card.height, card.height-b.H) > 0.5 {
+			changed = true
+		}
 		card.height, card.measured = b.H, true
-		changed = true
 		if a.board.wallHeights == nil {
 			a.board.wallHeights = make(map[string]boardWallHeight)
 		}
@@ -709,8 +736,8 @@ func (a *app) boardContextWall(c *ui.Context) {
 				ui.Box(c.Key("board-masonry")).FillWidth().Height(layout.masonryH).Children(func() {
 					for colIdx := range layout.columns {
 						x := float32(colIdx) * (layout.colWidth + boardWallGap)
-						for i := range layout.columns[colIdx] {
-							card := &layout.columns[colIdx][i]
+						for _, cardIdx := range layout.columns[colIdx] {
+							card := &layout.regular[cardIdx]
 							if !a.boardWallCardInWindow(c, card, top, bottom) {
 								// Offscreen cards are not built: their column keeps
 								// the place the measured height gives them.
@@ -1016,11 +1043,19 @@ func (a *app) boardCard(c *ui.Context, wallCard boardWallCard, hero bool) {
 	// The card keeps its identity for focus and assistive technology, and the
 	// wall reads the height it took once the frame is laid out.
 	card.Bind(a.boardWallCardHandle(task.ID))
-	a.boardWallNoteBuilt(task.ID)
+	a.boardWallNoteBuilt(c, task.ID)
 	if hero {
-		card.Padding(18, 20)
+		if selected {
+			card.Padding(17, 19)
+		} else {
+			card.Padding(18, 20)
+		}
 	} else {
-		card.Padding(15, 16)
+		if selected {
+			card.Padding(14, 15)
+		} else {
+			card.Padding(15, 16)
+		}
 	}
 
 	switch {

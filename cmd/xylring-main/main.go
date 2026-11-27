@@ -790,7 +790,7 @@ func (a *app) inspectBottomPane(c *ui.Context, tab *repoTab) {
 	if tab == nil {
 		return
 	}
-	ui.Column(c.Key("inspect-bottom")).Grow(1).MinWidth(0).MinHeight(0).Padding(6, 0, 0, 0).Transition(fadeEnter()).Children(func() {
+	ui.Column(c.Key("inspect-bottom")).Grow(1).MinWidth(0).MinHeight(0).Transition(fadeEnter()).Children(func() {
 		if tab.fileSplit <= 100 {
 			tab.fileSplit = a.defaultFileSplit()
 		}

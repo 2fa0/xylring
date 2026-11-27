@@ -242,6 +242,17 @@ func (a *app) applyBoardFile(bf boardFile, c *ui.Context) {
 	a.board.file = bf
 	a.board.loadErr = ""
 	a.board.filtered = nil
+	if len(a.board.wallHeights) > 0 {
+		live := make(map[string]struct{}, len(bf.Tasks))
+		for _, task := range bf.Tasks {
+			live[task.ID] = struct{}{}
+		}
+		for id := range a.board.wallHeights {
+			if _, ok := live[id]; !ok {
+				delete(a.board.wallHeights, id)
+			}
+		}
+	}
 	if a.board.selectedID == "" {
 		return
 	}

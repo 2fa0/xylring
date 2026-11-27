@@ -310,7 +310,7 @@ func (a *app) commitSummaryCard(c *ui.Context, t *repoTab) {
 
 func (a *app) fileListHeader(c *ui.Context, t *repoTab) {
 	theme := c.Theme()
-	ui.Row(c).FillWidth().Padding(4, 8).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
+	ui.Row(c).FillWidth().Padding(6, 8, 4, 8).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
 		a.fileListTitle(c, t)
 		// 已读计数只在真读过东西时出现，且整屏只有这一处。
 		if viewed, total := t.reviewedCount(); viewed > 0 {
@@ -399,7 +399,7 @@ func (a *app) fileDiffHeader(c *ui.Context, t *repoTab) {
 		maxLabel = tr("还原布局")
 		maxIcon = iconMinimize
 	}
-	ui.Row(c).FillWidth().Padding(5, 12).Gap(8).AlignItems(ui.Center).Shrink(0).
+	ui.Row(c).FillWidth().Padding(6, 12).Gap(8).AlignItems(ui.Center).Shrink(0).
 		Background(theme.Surface.Alpha(0.35)).
 		BorderWidth(0, 0, 1, 0).BorderColor(theme.Border.Alpha(0.55)).Children(func() {
 		if t.comparison != nil {

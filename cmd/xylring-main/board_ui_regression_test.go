@@ -563,3 +563,146 @@ func TestBoardQuickCaptureKeepsTheDraftWhenTheWriteFails(t *testing.T) {
 		t.Fatal("a failed create should not stay busy")
 	}
 }
+
+func TestBoardWallStatusFilterSwitchKeepsBalancedColumns(t *testing.T) {
+	tasks := []boardTask{
+		{ID: "T-1", Title: "Review task alpha", Status: boardReview},
+		{ID: "T-2", Title: "Review task beta", Status: boardReview},
+		{ID: "T-3", Title: "Doing task gamma", Status: boardDoing},
+		{ID: "T-4", Title: "Todo task delta", Status: boardTodo},
+		{ID: "T-5", Title: "Todo task epsilon", Status: boardTodo},
+		{ID: "T-6", Title: "Todo task zeta", Status: boardTodo},
+	}
+	a := &app{showBoard: true, board: boardState{loaded: true, file: boardFile{Tasks: tasks}}}
+	tt := ui.NewTester(a.view, 1400, 820)
+	defer retireTester(tt)
+	for i := 0; i < 3; i++ {
+		tt.Frame()
+	}
+	for _, tab := range []string{"待审阅", "进行中", "待办", "全部未完成"} {
+		if err := tt.Click(tab); err != nil {
+			t.Fatalf("click %q failed: %v", tab, err)
+		}
+		for i := 0; i < 3; i++ {
+			tt.Frame()
+		}
+	}
+	for _, task := range tasks {
+		if _, ok := a.board.wallHeights[task.ID]; !ok {
+			t.Fatalf("cached height for %s was evicted across filter switch", task.ID)
+		}
+	}
+	gotLens := make([]int, len(a.board.wall.columns))
+	for i, col := range a.board.wall.columns {
+		gotLens[i] = len(col)
+	}
+	wantLens := []int{2, 2, 1, 1}
+	if !slices.Equal(gotLens, wantLens) {
+		t.Fatalf("columns after switching back = %v, want %v", gotLens, wantLens)
+	}
+}
+
+func TestBoardWallRebalancesColumnsAfterMeasuringNewCards(t *testing.T) {
+	tasks := []boardTask{
+		{ID: "T-1", Title: "Review task alpha", Status: boardReview},
+		{ID: "T-2", Title: "Review task beta", Status: boardReview},
+		{ID: "T-3", Title: "Doing task gamma", Status: boardDoing},
+		{ID: "T-4", Title: "Todo task delta", Status: boardTodo},
+		{ID: "T-5", Title: "Todo task epsilon", Status: boardTodo},
+		{ID: "T-6", Title: "Todo task zeta", Status: boardTodo},
+	}
+	a := &app{showBoard: true, board: boardState{loaded: true, statusFilter: boardTodo, file: boardFile{Tasks: tasks}}}
+	tt := ui.NewTester(a.view, 1400, 820)
+	defer retireTester(tt)
+	for i := 0; i < 3; i++ {
+		tt.Frame()
+	}
+	if err := tt.Click("全部未完成"); err != nil {
+		t.Fatalf("click all failed: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		tt.Frame()
+	}
+	gotLens := make([]int, len(a.board.wall.columns))
+	for i, col := range a.board.wall.columns {
+		gotLens[i] = len(col)
+	}
+	wantLens := []int{2, 2, 1, 1}
+	if !slices.Equal(gotLens, wantLens) {
+		t.Fatalf("columns after measuring new cards = %v, want %v", gotLens, wantLens)
+	}
+}
+
+func TestBoardCardSignatureTracksPriorityAndDescription(t *testing.T) {
+	base := boardTask{ID: "T-1", Title: "Service cleanup", Status: boardTodo}
+	baseSig := boardCardSignature(base, 0)
+
+	withPrio := base
+	withPrio.Priority = boardPriorityUrgent
+	if boardCardSignature(withPrio, 0) == baseSig {
+		t.Fatal("boardCardSignature did not change when priority changed")
+	}
+
+	withDesc := base
+	withDesc.Description = "Detail line for the card"
+	if boardCardSignature(withDesc, 0) == baseSig {
+		t.Fatal("boardCardSignature did not change when description changed")
+	}
+}
+
+func TestBoardWallRestoringSelectedDoneTaskKeepsBalancedColumns(t *testing.T) {
+	tasks := []boardTask{
+		{ID: "T-1", Title: "Review task alpha", Status: boardReview},
+		{ID: "T-2", Title: "Review task beta", Status: boardReview},
+		{ID: "T-3", Title: "Doing task gamma", Status: boardDoing},
+		{ID: "T-4", Title: "Todo task delta", Status: boardTodo},
+		{ID: "T-5", Title: "Todo task epsilon", Status: boardTodo},
+		{ID: "T-6", Title: "Todo task zeta", Status: boardTodo},
+		{ID: "T-7", Title: "Done task eta", Status: boardDone},
+	}
+	a := &app{showBoard: true, board: boardState{loaded: true, doneExpanded: true, file: boardFile{Tasks: tasks}}}
+	tt := ui.NewTester(a.view, 1400, 820)
+	defer retireTester(tt)
+	for i := 0; i < 3; i++ {
+		tt.Frame()
+	}
+	a.selectBoardTask("T-7")
+	tt.Frame()
+	tt.Frame()
+
+	restored := []boardTask{
+		{ID: "T-1", Title: "Review task alpha", Status: boardReview},
+		{ID: "T-7", Title: "Done task eta", Status: boardReview},
+		{ID: "T-2", Title: "Review task beta", Status: boardReview},
+		{ID: "T-3", Title: "Doing task gamma", Status: boardDoing},
+		{ID: "T-4", Title: "Todo task delta", Status: boardTodo},
+		{ID: "T-5", Title: "Todo task epsilon", Status: boardTodo},
+		{ID: "T-6", Title: "Todo task zeta", Status: boardTodo},
+	}
+	a.applyBoardFile(boardFile{Tasks: restored}, nil)
+	for i := 0; i < 4; i++ {
+		tt.Frame()
+	}
+
+	a.closeBoardDrawer()
+	for i := 0; i < 3; i++ {
+		tt.Frame()
+	}
+
+	h1, ok1 := a.board.wallHeights["T-1"]
+	h7, ok7 := a.board.wallHeights["T-7"]
+	if !ok1 || !ok7 {
+		t.Fatalf("expected measured heights for T-1 and T-7, got ok1=%v ok7=%v", ok1, ok7)
+	}
+	if max(h1.height-h7.height, h7.height-h1.height) > 0.5 {
+		t.Fatalf("selected border changed card height: T-1=%.2f T-7=%.2f", h1.height, h7.height)
+	}
+	gotLens := make([]int, len(a.board.wall.columns))
+	for i, col := range a.board.wall.columns {
+		gotLens[i] = len(col)
+	}
+	wantLens := []int{2, 2, 2, 1}
+	if !slices.Equal(gotLens, wantLens) {
+		t.Fatalf("columns after restoring selected done task = %v, want %v", gotLens, wantLens)
+	}
+}
