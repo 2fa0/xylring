@@ -38,6 +38,7 @@ type savedSession struct {
 	RepoOrder        []string `json:"repo_order,omitempty"`
 	Found            []string `json:"found,omitempty"`
 	FoundFrom        string   `json:"found_from,omitempty"`
+	BoardSort        string   `json:"board_sort,omitempty"`
 }
 
 // restoredRepoUsable decides whether a saved repository stays in the session.
@@ -110,6 +111,7 @@ func (a *app) queueSessionWithPending(allowPendingRestore bool) {
 		RepoOrder:       a.repoOrder,
 		Found:           a.found,
 		FoundFrom:       a.foundFrom,
+		BoardSort:       string(a.board.sortMode),
 	}
 	for _, p := range a.recentProvenance {
 		s.RecentProvenance = append(s.RecentProvenance, savedProvenance{Agent: p.agent, Model: p.model})
@@ -164,7 +166,7 @@ func (a *app) queueSessionWithPending(allowPendingRestore bool) {
 	repoOrderEqual := (a.lastSession == nil && len(s.RepoOrder) == 0) ||
 		(a.lastSession != nil && slices.Equal(s.RepoOrder, a.lastSession.RepoOrder))
 	prefsEqual := a.lastSession != nil && a.lastSession.Preferences != nil && *a.lastSession.Preferences == prefs
-	if prefsEqual && maps.Equal(s.RepoAutoFetch, a.lastSession.RepoAutoFetch) && maps.Equal(s.RepoColors, a.lastSession.RepoColors) && s.ThemeMode == a.lastSession.ThemeMode && s.Active == a.lastSession.Active && s.RingSkipNotice == a.lastSession.RingSkipNotice && slices.Equal(s.RecentProvenance, a.lastSession.RecentProvenance) && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) {
+	if prefsEqual && maps.Equal(s.RepoAutoFetch, a.lastSession.RepoAutoFetch) && maps.Equal(s.RepoColors, a.lastSession.RepoColors) && s.ThemeMode == a.lastSession.ThemeMode && s.Active == a.lastSession.Active && s.RingSkipNotice == a.lastSession.RingSkipNotice && slices.Equal(s.RecentProvenance, a.lastSession.RecentProvenance) && slices.Equal(s.Repos, a.lastSession.Repos) && bwEqual && repoOrderEqual && s.FoundFrom == a.lastSession.FoundFrom && slices.Equal(s.Found, a.lastSession.Found) && s.BoardSort == a.lastSession.BoardSort {
 		return
 	}
 	if a.sessionWrites == nil {
@@ -254,6 +256,9 @@ func (a *app) applySharedSessionState(s savedSession) {
 	}
 	if len(a.repoOrder) == 0 && len(s.RepoOrder) > 0 {
 		a.repoOrder = slices.Clone(s.RepoOrder)
+	}
+	if a.board.sortMode == "" && s.BoardSort != "" {
+		a.board.sortMode = parseBoardSortMode(s.BoardSort)
 	}
 }
 

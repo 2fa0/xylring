@@ -68,6 +68,7 @@ var (
 	iconContainer    = lucide.Box()
 	iconStar         = lucide.Star()
 	iconRotateCcw    = lucide.RotateCcw()
+	iconArrowUpDown  = lucide.ArrowUpDown()
 )
 
 var (

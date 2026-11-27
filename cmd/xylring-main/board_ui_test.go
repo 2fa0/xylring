@@ -1623,3 +1623,366 @@ func TestLeaveBoardReleasesFilteredColumns(t *testing.T) {
 		t.Fatalf("reopening should rebuild the columns, got total=%d", total)
 	}
 }
+
+func TestBoardInlineQuickCapture(t *testing.T) {
+	withTempBoardConfig(t)
+	a := &app{
+		showBoard: true,
+		dispatch:  func(fn func()) { fn() },
+	}
+	a.ensureBoardLoaded()
+	a.board.statusFilter = boardDoing
+
+	tt := ui.NewTester(a.view, 1280, 820)
+	defer retireTester(tt)
+	tt.Frame()
+
+	quickInput, ok := tt.AccessByRole(ui.RoleTextField, "快速新建任务")
+	if !ok {
+		t.Fatalf("missing inline quick capture input: %q", tt.Texts())
+	}
+	tt.ClickAt(quickInput.Bounds.X+quickInput.Bounds.W/2, quickInput.Bounds.Y+quickInput.Bounds.H/2)
+	a.board.quickTitle = "极简速记新任务"
+	tt.Frame()
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+
+	if a.board.quickTitle != "" {
+		t.Fatalf("expected quickTitle cleared after submit, got %q", a.board.quickTitle)
+	}
+	if a.board.selectedID != "" {
+		t.Fatalf("quick capture should not open drawer, selectedID=%q", a.board.selectedID)
+	}
+	bf, err := loadBoardFile()
+	if err != nil || len(bf.Tasks) != 1 {
+		t.Fatalf("expected 1 created task, got %+v err=%v", bf.Tasks, err)
+	}
+	if bf.Tasks[0].Title != "极简速记新任务" || bf.Tasks[0].Status != boardDoing {
+		t.Fatalf("unexpected quick captured task: %+v", bf.Tasks[0])
+	}
+	if !tt.HasText("极简速记新任务") {
+		t.Fatalf("quick captured task card missing: %q", tt.Texts())
+	}
+}
+
+func TestBoardHeroSectionAndChecklistProgress(t *testing.T) {
+	withTempBoardConfig(t)
+	_, regularTask, err := boardAddTask("普通瀑布流任务", "", boardReview, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, heroTask, err := boardAddTask(
+		"置顶焦点 Hero 任务",
+		"- [ ] 完成视觉层级调优\n- [x] 建立基准测试",
+		boardDoing,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := true
+	if _, _, err := boardUpdateTask(heroTask.ID, boardTaskPatch{Pinned: &pin}); err != nil {
+		t.Fatal(err)
+	}
+	_ = regularTask
+
+	a := &app{
+		showBoard: true,
+		dispatch:  func(fn func()) { fn() },
+	}
+	a.ensureBoardLoaded()
+
+	tt := ui.NewTester(a.view, 1280, 820)
+	defer retireTester(tt)
+	tt.Frame()
+
+	heroBounds, ok1 := tt.Find("置顶焦点 Hero 任务")
+	regBounds, ok2 := tt.Find("普通瀑布流任务")
+	if !ok1 || !ok2 {
+		t.Fatalf("missing hero or regular card: ok1=%v ok2=%v texts=%q", ok1, ok2, tt.Texts())
+	}
+	if heroBounds.Y >= regBounds.Y {
+		t.Fatalf("expected pinned Hero card above regular masonry cards: hero=%+v regular=%+v", heroBounds, regBounds)
+	}
+	if !tt.HasText("1/2") {
+		t.Fatalf("expected checklist progress 1/2: %q", tt.Texts())
+	}
+
+	if err := tt.Click("完成视觉层级调优"); err != nil {
+		t.Fatalf("click checklist item: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("2/2") {
+		t.Fatalf("expected checklist progress updated to 2/2: %q", tt.Texts())
+	}
+}
+
+func TestBoardExternalUpdateMarksRecentPulse(t *testing.T) {
+	now := time.Now().UTC()
+	prev := []boardTask{
+		{ID: "T-1", Title: "Unchanged", Status: boardTodo, UpdatedAt: now.Add(-time.Minute)},
+		{ID: "T-2", Title: "Updated", Status: boardDoing, UpdatedAt: now.Add(-time.Minute)},
+	}
+	next := []boardTask{
+		{ID: "T-1", Title: "Unchanged", Status: boardTodo, UpdatedAt: now.Add(-time.Minute)},
+		{ID: "T-2", Title: "Updated", Status: boardReview, UpdatedAt: now},
+		{ID: "T-3", Title: "Newly Added", Status: boardTodo, UpdatedAt: now},
+	}
+
+	a := &app{
+		board: boardState{
+			recentUpdated: map[string]time.Time{
+				"T-OLD": time.Now().Add(-30 * time.Second),
+			},
+		},
+	}
+	a.markExternalBoardUpdates(prev, next)
+
+	if _, ok := a.board.recentUpdated["T-OLD"]; ok {
+		t.Fatal("stale recentUpdated entry should be pruned")
+	}
+	if _, ok := a.board.recentUpdated["T-1"]; ok {
+		t.Fatal("unchanged task should not be marked recently updated")
+	}
+	if _, ok := a.board.recentUpdated["T-2"]; !ok {
+		t.Fatal("modified task T-2 should be marked recently updated")
+	}
+	if _, ok := a.board.recentUpdated["T-3"]; !ok {
+		t.Fatal("newly added task T-3 should be marked recently updated")
+	}
+}
+
+func TestBoardCraftWallShowcasePreviews(t *testing.T) {
+	withTempBoardConfig(t)
+	updates := make(chan func(), 64)
+	tab1 := newTab(1, "/tmp/xylring")
+	tab1.loaded, tab1.branch = true, "feat/context-wall-board"
+	tab1.commits = []commit{{hash: hashN(1), author: "Ada", subject: "feat(board): context wall", when: 1700000000}}
+	tab1.graph.add(&tab1.commits[0])
+	defer tab1.cancel()
+
+	tab2 := newTab(2, "/tmp/mygo-engine")
+	tab2.loaded, tab2.branch = true, "main"
+	tab2.commits = []commit{{hash: hashN(2), author: "Bob", subject: "perf(gpu): batch shadows", when: 1700000100}}
+	tab2.graph.add(&tab2.commits[0])
+	defer tab2.cancel()
+
+	_, tHero, err := boardAddTaskWithOptions(boardAddTaskOptions{
+		Title:       "升级并行 Agent 上下文墙视觉质感",
+		Description: "- [x] 顶部滑动聚焦胶囊与速记框\n- [x] Hero 焦点区与双层光影卡片\n- [ ] 拖拽改状态与呼吸感微交互",
+		Status:      boardDoing,
+		Priority:    boardPriorityUrgentImportant,
+		DueDate:     time.Now().Format("2006-01-02"),
+		Repos:       []string{"/tmp/xylring"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := true
+	if _, _, err := boardUpdateTask(tHero.ID, boardTaskPatch{Pinned: &pin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardLinkCommit(tHero.ID, boardCommitLink{
+		Repo:    "/tmp/xylring",
+		Hash:    "762ae643754c80756f7de6346b93e4523d70dd64",
+		Subject: "feat(board): 重构看板为并行 Agent 上下文墙",
+		Agent:   "Antigravity",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddNote(tHero.ID, "Hero 焦点卡与渐变光晕已就绪，正在验证亮暗色对比度。", "Antigravity", "Gemini 4"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, tReview, err := boardAddTaskWithOptions(boardAddTaskOptions{
+		Title:       "审阅阴影批处理与圆角裁剪性能",
+		Description: "- [x] 验证 Metal 阴影合批\n- [ ] 核对回归测试通过率",
+		Status:      boardReview,
+		Priority:    boardPriorityImportant,
+		Repos:       []string{"/tmp/mygo-engine"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardLinkCommit(tReview.ID, boardCommitLink{
+		Repo:    "/tmp/mygo-engine",
+		Hash:    "2222222222222222222222222222222222222222",
+		Subject: "perf(gpu): batch rounded rect shadows",
+		Agent:   "Codex",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddNote(tReview.ID, "已补充基准测试，等待审阅合并。", "Codex", "GPT-5"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, tDoing, err := boardAddTask("接入桌面端自动更新签名校验", "补充 macOS 公证后回执校验与失败降级提示。", boardDoing, []string{"/tmp/xylring"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddNote(tDoing.ID, "已完成证书链解析。", "Claude", "Sonnet"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddTask("整理设置页与快捷键映射文档", "", boardTodo, []string{"/tmp/xylring"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddTask("修复 Windows 锁文件竞争问题", "", boardDone, []string{"/tmp/xylring"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, dark := range []bool{false, true} {
+		a := &app{
+			tabs:            []*repoTab{tab1, tab2},
+			showBoard:       true,
+			bottomFullWidth: true,
+			dispatch:        func(fn func()) { updates <- fn },
+			board: boardState{
+				recentUpdated: map[string]time.Time{
+					tReview.ID: time.Now(),
+				},
+				commitValid: map[string]bool{
+					boardCommitCacheKey("/tmp/xylring", "762ae643754c80756f7de6346b93e4523d70dd64"):    true,
+					boardCommitCacheKey("/tmp/mygo-engine", "2222222222222222222222222222222222222222"): true,
+				},
+			},
+		}
+		a.ensureBoardLoaded()
+
+		tt := ui.NewTester(a.view, 1280, 820)
+		tt.SetTitleBar(ui.TitleBar{Height: 28, Left: 72, Right: 10})
+		tt.SetDark(dark)
+		tt.Frame()
+		drainUpdates(updates)
+		tt.Frame()
+
+		if !tt.HasText(tHero.Title) || !tt.HasText(tReview.Title) || !tt.HasText(tDoing.Title) {
+			retireTester(tt)
+			t.Fatalf("showcase missing expected tasks: %q", tt.Texts())
+		}
+
+		mode := "light"
+		if dark {
+			mode = "dark"
+		}
+		saveLobePreview(t, tt, "board-wall-"+mode)
+
+		a.selectBoardTask(tHero.ID)
+		tt.Frame()
+		drainUpdates(updates)
+		tt.Frame()
+		saveLobePreview(t, tt, "board-drawer-"+mode)
+
+		retireTester(tt)
+	}
+}
+
+func TestBoardWallSortModesAndSessionPersistence(t *testing.T) {
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+	base := now.UTC()
+
+	pinned := boardTask{
+		ID: "T-1", Title: "置顶任务", Status: boardTodo, Pinned: true,
+		Priority: boardPriorityLow, UpdatedAt: base.Add(-3 * time.Hour),
+	}
+	reviewOld := boardTask{
+		ID: "T-2", Title: "旧审阅低优", Status: boardReview,
+		Priority: boardPriorityLow, DueDate: tomorrow, UpdatedAt: base.Add(-2 * time.Hour),
+	}
+	doingUrgent := boardTask{
+		ID: "T-3", Title: "进行中高优今日截止", Status: boardDoing,
+		Priority: boardPriorityUrgentImportant, DueDate: today, UpdatedAt: base.Add(-time.Hour),
+	}
+	todoNewest := boardTask{
+		ID: "T-4", Title: "刚更新待办", Status: boardTodo,
+		Priority: boardPriorityImportant, UpdatedAt: base,
+	}
+
+	taskIDs := func(mode boardSortMode) []string {
+		list := []boardTask{todoNewest, doingUrgent, reviewOld, pinned}
+		sortBoardWallTasksByMode(list, mode)
+		ids := make([]string, len(list))
+		for i, task := range list {
+			ids[i] = task.ID
+		}
+		return ids
+	}
+
+	if got, want := taskIDs(boardSortDefault), []string{"T-1", "T-2", "T-3", "T-4"}; !slices.Equal(got, want) {
+		t.Fatalf("default sort mismatch: got %v want %v", got, want)
+	}
+	if got, want := taskIDs(boardSortRecent), []string{"T-1", "T-4", "T-3", "T-2"}; !slices.Equal(got, want) {
+		t.Fatalf("recent sort mismatch: got %v want %v", got, want)
+	}
+	if got, want := taskIDs(boardSortPriority), []string{"T-1", "T-3", "T-4", "T-2"}; !slices.Equal(got, want) {
+		t.Fatalf("priority sort mismatch: got %v want %v", got, want)
+	}
+	if got, want := taskIDs(boardSortDue), []string{"T-1", "T-3", "T-2", "T-4"}; !slices.Equal(got, want) {
+		t.Fatalf("due sort mismatch: got %v want %v", got, want)
+	}
+
+	// UI sort menu switches mode and reorders cards
+	withTempBoardConfig(t)
+	if _, _, err := boardAddTaskWithOptions(boardAddTaskOptions{
+		Title: "普通审阅任务", Status: boardReview, Priority: boardPriorityLow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := boardAddTaskWithOptions(boardAddTaskOptions{
+		Title: "紧急待办任务", Status: boardTodo, Priority: boardPriorityUrgentImportant,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{
+		showBoard: true,
+		dispatch:  func(fn func()) { fn() },
+	}
+	a.ensureBoardLoaded()
+
+	tt := ui.NewTester(a.view, 1280, 820)
+	defer retireTester(tt)
+	tt.Frame()
+
+	// Default sort places review before todo
+	revBefore, ok1 := tt.Find("普通审阅任务")
+	todoBefore, ok2 := tt.Find("紧急待办任务")
+	if !ok1 || !ok2 || revBefore.X >= todoBefore.X {
+		t.Fatalf("expected review card left of todo in default sort: rev=%+v todo=%+v", revBefore, todoBefore)
+	}
+
+	if err := tt.Click("默认排序"); err != nil {
+		t.Fatalf("open sort menu: %v", err)
+	}
+	if err := tt.ChooseMenuItem("重要紧急"); err != nil {
+		t.Fatalf("choose priority sort: %v", err)
+	}
+	tt.Frame()
+	tt.Advance(350 * time.Millisecond)
+	tt.Frame()
+	if a.board.sortMode != boardSortPriority {
+		t.Fatalf("expected sortMode=priority, got %q", a.board.sortMode)
+	}
+	if !tt.HasText("重要紧急") {
+		t.Fatalf("expected active sort label in button: %q", tt.Texts())
+	}
+
+	revAfter, ok1 := tt.Find("普通审阅任务")
+	todoAfter, ok2 := tt.Find("紧急待办任务")
+	if !ok1 || !ok2 || todoAfter.X >= revAfter.X {
+		t.Fatalf("expected urgent_important card left of low-priority review card: todo=%+v rev=%+v", todoAfter, revAfter)
+	}
+
+	// Session restore & fallback
+	var sApp app
+	sApp.applySharedSessionState(savedSession{BoardSort: "recent"})
+	if sApp.board.sortMode != boardSortRecent {
+		t.Fatalf("expected restored recent sort, got %q", sApp.board.sortMode)
+	}
+	var fallbackApp app
+	fallbackApp.applySharedSessionState(savedSession{BoardSort: "unknown-mode"})
+	if fallbackApp.board.sortMode != boardSortDefault {
+		t.Fatalf("expected unknown sort to fall back to default, got %q", fallbackApp.board.sortMode)
+	}
+}
