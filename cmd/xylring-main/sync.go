@@ -96,11 +96,12 @@ func (a *app) quickPull(tab *repoTab) {
 	if tab == nil || tab.unavailable {
 		return
 	}
-	if a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy {
+	if a.write.busy || tab.commitBusy || tab.remoteBusy() {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
-	tab.syncBusy = true
+	tab.stopAutoFetch()
+	tab.pullBusy = true
 	tab.notice = "正在拉取更新 (git pull)…"
 	w := a.startGitWrite("正在拉取")
 	repoPath := tab.path
@@ -110,7 +111,7 @@ func (a *app) quickPull(tab *repoTab) {
 		out, err := gitPull(ctx, repoPath)
 		a.post(func() {
 			a.finishGitWrite(w)
-			tab.syncBusy = false
+			tab.pullBusy = false
 			tab.notice = ""
 			if err != nil {
 				errMsg := strings.TrimSpace(string(out))
@@ -131,7 +132,7 @@ func (a *app) quickPush(tab *repoTab) {
 	if tab == nil || tab.unavailable {
 		return
 	}
-	if a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy {
+	if a.write.busy || tab.commitBusy || tab.remoteBusy() {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -144,7 +145,8 @@ func (a *app) quickPush(tab *repoTab) {
 		a.openOperation("推送分支", "", "")
 		return
 	}
-	tab.syncBusy = true
+	tab.stopAutoFetch()
+	tab.pushBusy = true
 	tab.notice = "正在推送到远程 (git push)…"
 	w := a.startGitWrite("正在推送")
 	repoPath := tab.path
@@ -154,7 +156,7 @@ func (a *app) quickPush(tab *repoTab) {
 		out, err := gitPush(ctx, repoPath)
 		a.post(func() {
 			a.finishGitWrite(w)
-			tab.syncBusy = false
+			tab.pushBusy = false
 			tab.notice = ""
 			if err != nil {
 				errMsg := strings.TrimSpace(string(out))

@@ -71,50 +71,47 @@ func (a *app) quickFetch(tab *repoTab) {
 	if tab == nil || tab.unavailable {
 		return
 	}
-	tab.stopAutoFetch()
-	if a.write.busy || a.fetch.busy || tab.commitBusy || tab.syncBusy {
+	if tab.remoteBusy() {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
-	if a.fetch.cancel != nil {
-		a.fetch.cancel()
-	}
+	tab.stopAutoFetch()
+	tab.stopManualFetch()
 	repo := tab.path
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	gen := a.fetch.gen + 1
-	a.fetch = fetchDialog{
-		repo:   repo,
-		busy:   true,
-		gen:    gen,
-		cancel: cancel,
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), manualFetchTimeout)
+	tab.manualFetchGen++
+	gen := tab.manualFetchGen
+	tab.manualFetchBusy = true
+	tab.manualFetchCancel = cancel
 	a.showFetch = false
 	tab.lastFetch = time.Now()
 	tab.notice = "正在获取远程更新…"
 	go func() {
 		defer cancel()
 		err := fetchAll(ctx, repo, fetchOpts{})
+		canceled := errors.Is(ctx.Err(), context.Canceled)
 		a.post(func() {
-			if a.fetch.gen != gen {
+			if tab.closed || tab.manualFetchGen != gen {
 				return
 			}
-			a.fetch.busy = false
-			a.fetch.cancel = nil
-			t := a.tabByPath(repo)
+			tab.manualFetchBusy = false
+			tab.manualFetchCancel = nil
 			if err != nil {
-				if t != nil {
-					t.notice = ""
+				if tab.notice == "正在获取远程更新…" {
+					tab.notice = ""
 				}
-				if !errors.Is(ctx.Err(), context.Canceled) {
+				if !canceled {
 					a.setBanner(err.Error(), repo)
 				}
 				return
 			}
-			if t == nil {
-				return
+			tab.fetchFailCount = 0
+			tab.nextAutoFetch = time.Time{}
+			tab.refsChecked = time.Time{}
+			a.notifySuccess(tab, "已获取远程更新")
+			if a.activeTab() == tab {
+				a.checkActiveRepo()
 			}
-			a.reload(t)
-			a.notifySuccess(t, "已获取远程更新")
 		})
 	}()
 }
@@ -126,11 +123,11 @@ func (a *app) openFetch(tab *repoTab) {
 	if tab == nil || tab.unavailable {
 		return
 	}
-	tab.stopAutoFetch()
-	if a.write.busy || a.fetch.busy || tab.commitBusy || tab.syncBusy {
+	if tab.remoteBusy() || a.fetch.busy {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
+	tab.stopAutoFetch()
 	if a.fetch.cancel != nil {
 		a.fetch.cancel()
 	}
@@ -211,20 +208,37 @@ func (a *app) runFetch() {
 	if d.preparing || d.busy || len(d.remotes) == 0 {
 		return
 	}
+	t := a.tabByPath(d.repo)
+	if t != nil && t.remoteBusy() {
+		d.err = "请等待正在执行的操作"
+		return
+	}
 	d.err = ""
 	repo := d.repo
 	opts := fetchOpts{prune: d.prune, pruneTags: d.pruneTags, explicit: true}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), manualFetchTimeout)
 	d.cancel = cancel
 	d.busy = true
-	if t := a.tabByPath(repo); t != nil {
+	manualGen := 0
+	if t != nil {
+		t.stopAutoFetch()
+		t.stopManualFetch()
 		t.lastFetch = time.Now()
+		t.manualFetchGen++
+		manualGen = t.manualFetchGen
+		t.manualFetchBusy = true
+		t.manualFetchCancel = cancel
 	}
 	gen := d.gen
 	go func() {
 		defer cancel()
 		err := fetchAll(ctx, repo, opts)
+		canceled := errors.Is(ctx.Err(), context.Canceled)
 		a.post(func() {
+			if t != nil && !t.closed && t.manualFetchGen == manualGen {
+				t.manualFetchBusy = false
+				t.manualFetchCancel = nil
+			}
 			if a.fetch.gen != gen {
 				return
 			}
@@ -232,19 +246,29 @@ func (a *app) runFetch() {
 			a.fetch.cancel = nil
 			if err != nil {
 				a.showFetch = false
-				if errors.Is(ctx.Err(), context.Canceled) {
+				if canceled {
 					return
 				}
 				a.setBanner(err.Error(), repo)
 				return
 			}
 			a.showFetch = false
-			t := a.tabByPath(repo)
-			if t == nil {
+			cur := a.tabByPath(repo)
+			if cur == nil {
 				return
 			}
-			a.reload(t)
-			a.notifySuccess(t, "已获取远程更新")
+			cur.fetchFailCount = 0
+			cur.nextAutoFetch = time.Time{}
+			cur.refsChecked = time.Time{}
+			if !a.write.busy && !cur.commitBusy && !cur.pullBusy {
+				a.reload(cur)
+				a.notifySuccess(cur, "已获取远程更新")
+			} else {
+				a.notifySuccess(cur, "已获取远程更新")
+				if a.activeTab() == cur {
+					a.checkActiveRepo()
+				}
+			}
 		})
 	}()
 }
@@ -257,12 +281,32 @@ func (a *app) stopFetch() {
 	}
 	a.fetch.busy = false
 	a.showFetch = false
+	for _, t := range a.tabs {
+		t.stopManualFetch()
+	}
 }
 
 const (
-	autoFetchInterval = 2 * time.Minute
-	autoFetchTimeout  = 45 * time.Second
+	autoFetchInterval   = 2 * time.Minute
+	autoFetchTimeout    = 20 * time.Second
+	manualFetchTimeout  = 2 * time.Minute
+	autoFetchMaxBackoff = 15 * time.Minute
 )
+
+func autoFetchBackoff(base time.Duration, failCount int) time.Duration {
+	if failCount <= 0 || base <= 0 {
+		return base
+	}
+	capDelay := max(base, autoFetchMaxBackoff)
+	delay := base
+	for i := 0; i < failCount && delay < capDelay; i++ {
+		if delay > capDelay/2 {
+			return capDelay
+		}
+		delay *= 2
+	}
+	return delay
+}
 
 func (t *repoTab) stopAutoFetch() {
 	t.fetchGen++
@@ -271,6 +315,35 @@ func (t *repoTab) stopAutoFetch() {
 		t.fetchCancel = nil
 	}
 	t.fetching = false
+}
+
+func (t *repoTab) stopManualFetch() {
+	t.manualFetchGen++
+	if t.manualFetchCancel != nil {
+		t.manualFetchCancel()
+		t.manualFetchCancel = nil
+	}
+	t.manualFetchBusy = false
+}
+
+func (a *app) cancelManualFetch(tab *repoTab) {
+	if tab == nil || !tab.manualFetchBusy {
+		return
+	}
+	tab.stopManualFetch()
+	if tab.notice == "正在获取远程更新…" {
+		tab.notice = ""
+	}
+	if a.fetch.busy && a.fetch.repo == tab.path {
+		a.fetch.gen++
+		if a.fetch.cancel != nil {
+			a.fetch.cancel()
+			a.fetch.cancel = nil
+		}
+		a.fetch.busy = false
+		a.showFetch = false
+	}
+	a.pendingToast = "已取消获取远程"
 }
 
 func (a *app) maybeAutoFetch() {
@@ -282,14 +355,18 @@ func (a *app) maybeAutoFetch() {
 	if isDockerRepoPath(t.path) {
 		return
 	}
-	if a.fetch.busy || a.showFetch || a.write.busy || a.settings.open {
+	if t.remoteBusy() || (a.showFetch && a.fetch.repo == t.path) || a.settings.open {
 		return
 	}
 	interval := a.autoFetchDelay(t.path)
 	if interval == 0 {
 		return
 	}
-	if !t.lastFetch.IsZero() && time.Since(t.lastFetch) < interval {
+	now := time.Now()
+	if !t.nextAutoFetch.IsZero() && now.Before(t.nextAutoFetch) {
+		return
+	}
+	if t.fetchFailCount == 0 && !t.lastFetch.IsZero() && time.Since(t.lastFetch) < interval {
 		return
 	}
 	t.fetchGen++
@@ -297,21 +374,31 @@ func (a *app) maybeAutoFetch() {
 	ctx, cancel := context.WithTimeout(context.Background(), autoFetchTimeout)
 	t.fetchCancel = cancel
 	t.fetching = true
-	t.lastFetch = time.Now()
+	t.lastFetch = now
 	go func() {
 		defer cancel()
 		err := fetchAll(ctx, path, fetchOpts{})
+		canceled := errors.Is(ctx.Err(), context.Canceled)
 		a.post(func() {
 			if t.fetchGen != gen {
 				return
 			}
 			t.fetching = false
 			t.fetchCancel = nil
-			if t.closed || t.generation != tabGen || err != nil {
+			if t.closed || t.generation != tabGen {
 				return
 			}
+			if err != nil {
+				if !canceled {
+					t.fetchFailCount++
+					t.nextAutoFetch = time.Now().Add(autoFetchBackoff(interval, t.fetchFailCount))
+				}
+				return
+			}
+			t.fetchFailCount = 0
+			t.nextAutoFetch = time.Time{}
 			t.refsChecked = time.Time{}
-			if a.activeTab() == t && !a.fetch.busy {
+			if a.activeTab() == t && !t.remoteBusy() {
 				a.checkActiveRepo()
 			}
 		})

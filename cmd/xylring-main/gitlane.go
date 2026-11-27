@@ -56,10 +56,15 @@ type gitLane struct {
 	queue   []*gitWaiter
 }
 
-var gitLanes struct {
+type gitLaneTable struct {
 	sync.Mutex
 	byKey map[string]*gitLane
 }
+
+var (
+	gitLanes    gitLaneTable
+	remoteLanes gitLaneTable
+)
 
 // canonicalRepoDir 是命令日志和车道共用的仓库键：绝对路径，软链接已解开，
 // 所以同一个仓库的两种写法（真目录、指向它的符号链接、带末尾斜杠）落到同一条车道。
@@ -85,38 +90,48 @@ func canonicalRepoDir(dir string) string {
 // 立刻能进就直接进；否则排队等放行，ctx 取消时把自己从队列里摘掉。
 // 返回的释放函数可以被重复调用（延迟释放只该调用一次）。
 func acquireGitLane(ctx context.Context, key string, write bool) func() {
+	return gitLanes.acquire(ctx, key, write)
+}
+
+// acquireRemoteLane 拿到 key 上远端网络车道（remoteLanes）的独占位置，
+// 与本地读写车道（gitLanes）完全隔离。
+func acquireRemoteLane(ctx context.Context, key string) func() {
+	return remoteLanes.acquire(ctx, key, true)
+}
+
+func (t *gitLaneTable) acquire(ctx context.Context, key string, write bool) func() {
 	if ctx.Err() != nil {
-		// 让随后的 acquireGit 报出同一个错误，这里不占位置。
+		// 让随后的 acquireGit/acquireRemoteGit 报出同一个错误，这里不占位置。
 		return func() {}
 	}
-	gitLanes.Lock()
-	if gitLanes.byKey == nil {
-		gitLanes.byKey = make(map[string]*gitLane)
+	t.Lock()
+	if t.byKey == nil {
+		t.byKey = make(map[string]*gitLane)
 	}
-	lane := gitLanes.byKey[key]
+	lane := t.byKey[key]
 	if lane == nil {
 		lane = &gitLane{}
-		gitLanes.byKey[key] = lane
+		t.byKey[key] = lane
 	}
 	if len(lane.queue) == 0 && lane.free(write) {
 		lane.take(write)
-		gitLanes.Unlock()
-		return onceRelease(func() { releaseGitLane(key, write) })
+		t.Unlock()
+		return onceRelease(func() { t.release(key, write) })
 	}
 	w := &gitWaiter{write: write, ready: make(chan struct{})}
 	lane.queue = append(lane.queue, w)
-	gitLanes.Unlock()
+	t.Unlock()
 
 	select {
 	case <-w.ready:
-		return onceRelease(func() { releaseGitLane(key, write) })
+		return onceRelease(func() { t.release(key, write) })
 	case <-ctx.Done():
-		if unqueueGitWaiter(key, w) {
+		if t.unqueue(key, w) {
 			return func() {}
 		}
 		// 放行和取消撞在一起：位置已经给出去了，必须按顺序还回去。
 		<-w.ready
-		return onceRelease(func() { releaseGitLane(key, write) })
+		return onceRelease(func() { t.release(key, write) })
 	}
 }
 
@@ -142,9 +157,13 @@ func (l *gitLane) take(write bool) {
 }
 
 func releaseGitLane(key string, write bool) {
-	gitLanes.Lock()
-	defer gitLanes.Unlock()
-	lane := gitLanes.byKey[key]
+	gitLanes.release(key, write)
+}
+
+func (t *gitLaneTable) release(key string, write bool) {
+	t.Lock()
+	defer t.Unlock()
+	lane := t.byKey[key]
 	if lane == nil {
 		return
 	}
@@ -155,7 +174,7 @@ func releaseGitLane(key string, write bool) {
 	}
 	lane.grant()
 	if lane.idle() {
-		delete(gitLanes.byKey, key)
+		delete(t.byKey, key)
 	}
 }
 
@@ -177,10 +196,10 @@ func (l *gitLane) idle() bool {
 	return l.readers == 0 && !l.writing && len(l.queue) == 0
 }
 
-func unqueueGitWaiter(key string, w *gitWaiter) bool {
-	gitLanes.Lock()
-	defer gitLanes.Unlock()
-	lane := gitLanes.byKey[key]
+func (t *gitLaneTable) unqueue(key string, w *gitWaiter) bool {
+	t.Lock()
+	defer t.Unlock()
+	lane := t.byKey[key]
 	if lane == nil {
 		return false
 	}
@@ -192,12 +211,22 @@ func unqueueGitWaiter(key string, w *gitWaiter) bool {
 		// 摘掉的可能正是队首，后面的读跟着放行。
 		lane.grant()
 		if lane.idle() {
-			delete(gitLanes.byKey, key)
+			delete(t.byKey, key)
 		}
 		return true
 	}
 	return false
 }
+
+// gitLaneKind 表示一条 git 命令需要占用的仓库车道类型。
+type gitLaneKind uint8
+
+const (
+	gitLaneLocalRead gitLaneKind = iota
+	gitLaneLocalWrite
+	gitLaneRemote
+	gitLaneBoth
+)
 
 // gitGlobalOptionsWithValue 是 git 的全局选项里「后面还跟一个值」的那些。
 // 分类子命令前要先跳过它们，否则 `-c a.b=c checkout` 会被当成 `a.b=c`。
@@ -213,12 +242,7 @@ var gitGlobalOptionsWithValue = map[string]bool{
 	"--attr-source":  true,
 }
 
-// gitCommandWrites 判断一条 git 命令会不会改仓库。它只看子命令，不看调用它的文件：
-// 同一个文件里读写混排，按文件判断不成立。
-//
-// 这张表由 TestGitCommandWrites 逐条钉住；新增子命令时表里不补，测试就会失败。
-// 未知子命令一律按写处理：判断错方向的代价是多等一会儿，不是数据错乱。
-func gitCommandWrites(args []string) bool {
+func gitSubcommand(args []string) (sub string, rest []string, ok bool) {
 	i := 0
 	for i < len(args) {
 		a := args[i]
@@ -240,25 +264,118 @@ func gitCommandWrites(args []string) bool {
 		}
 	}
 	if i >= len(args) {
-		return true
+		return "", nil, false
 	}
-	sub, rest := args[i], args[i+1:]
+	return args[i], args[i+1:], true
+}
+
+// gitCommandLane 判断一条 git 命令应占用本地读、本地写、远端还是双车道。
+// 这张表由 TestGitCommandLane 与 TestGitCommandWrites 钉住；未知子命令一律按本地写处理。
+func gitCommandLane(args []string) gitLaneKind {
+	sub, rest, ok := gitSubcommand(args)
+	if !ok {
+		return gitLaneLocalWrite
+	}
 	switch sub {
 	case "log", "rev-list", "rev-parse", "for-each-ref", "symbolic-ref", "show",
-		"diff", "ls-tree", "cat-file", "merge-base", "var", "version", "status":
-		return false
+		"diff", "diff-tree", "ls-tree", "cat-file", "merge-base", "var", "version",
+		"status", "check-ref-format":
+		return gitLaneLocalRead
 	case "worktree":
-		return len(rest) == 0 || rest[0] != "list"
+		if len(rest) > 0 && rest[0] == "list" {
+			return gitLaneLocalRead
+		}
+		return gitLaneLocalWrite
 	case "branch", "tag":
 		// 只有列出来是读；`branch --list` 带模式也只读。
-		return !hasAnyArg(rest, "--list", "-l")
+		if hasAnyArg(rest, "--list", "-l") {
+			return gitLaneLocalRead
+		}
+		return gitLaneLocalWrite
 	case "remote":
-		return !hasAnyArg(rest, "-v", "--verbose")
+		if len(rest) == 0 || rest[0] == "-v" || rest[0] == "--verbose" || rest[0] == "get-url" {
+			return gitLaneLocalRead
+		}
+		return gitLaneBoth
 	case "config":
 		// status 之所以能算读，靠的是 GIT_OPTIONAL_LOCKS=0（见 mergeGitEnv）。
-		return !hasAnyArg(rest, "--get", "--get-regexp", "--list")
+		if hasAnyArg(rest, "--get", "--get-regexp", "--list") {
+			return gitLaneLocalRead
+		}
+		return gitLaneLocalWrite
+	case "fetch", "push":
+		return gitLaneRemote
+	case "pull", "gc", "prune":
+		return gitLaneBoth
 	default:
+		return gitLaneLocalWrite
+	}
+}
+
+// gitCommandWrites 判断一条 git 命令是否非只读。
+func gitCommandWrites(args []string) bool {
+	return gitCommandLane(args) != gitLaneLocalRead
+}
+
+// gitCommandUsesRemoteSlot 判断一条 git 命令是否应走独立的远端网络执行槽。
+func gitCommandUsesRemoteSlot(args []string) bool {
+	sub, _, ok := gitSubcommand(args)
+	if !ok {
+		return false
+	}
+	switch sub {
+	case "fetch", "push", "pull":
 		return true
+	default:
+		return false
+	}
+}
+
+// acquireRepoLanes 按固定顺序申请仓库车道（先远端、后本地；释放逆序），避免死锁，
+// 且确保 gitLaneBoth 在等待远端车道期间不会提前占住本地车道。
+func acquireRepoLanes(ctx context.Context, key string, kind gitLaneKind) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return func() {}, err
+	}
+	switch kind {
+	case gitLaneLocalRead, gitLaneLocalWrite:
+		if gitLaneHeld(ctx, key) {
+			return func() {}, nil
+		}
+		release := acquireGitLane(ctx, key, kind == gitLaneLocalWrite)
+		if err := ctx.Err(); err != nil {
+			release()
+			return func() {}, err
+		}
+		return release, nil
+	case gitLaneRemote:
+		release := acquireRemoteLane(ctx, key)
+		if err := ctx.Err(); err != nil {
+			release()
+			return func() {}, err
+		}
+		return release, nil
+	case gitLaneBoth:
+		releaseRemote := acquireRemoteLane(ctx, key)
+		if err := ctx.Err(); err != nil {
+			releaseRemote()
+			return func() {}, err
+		}
+		releaseLocal := func() {}
+		if !gitLaneHeld(ctx, key) {
+			releaseLocal = acquireGitLane(ctx, key, true)
+			if err := ctx.Err(); err != nil {
+				releaseLocal()
+				releaseRemote()
+				return func() {}, err
+			}
+		}
+		return func() {
+			releaseLocal()
+			releaseRemote()
+		}, nil
+	default:
+		return func() {}, nil
 	}
 }
 

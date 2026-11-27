@@ -69,7 +69,7 @@ func (a *app) startAutoRefresh() {
 
 func (a *app) checkActiveRepo() {
 	t := a.activeTab()
-	if a.closed || t == nil || t.closed || t.loading || t.checking || !t.loaded || a.showCompare || a.fetch.busy || a.write.busy || t.commitBusy || t.syncBusy {
+	if a.closed || t == nil || t.closed || t.loading || t.checking || !t.loaded || a.showCompare || a.write.busy || t.commitBusy || t.pullBusy {
 		return
 	}
 	// 缺 Git 时不再每两秒白跑一次 Git，也不必反复改写同一条错误。
@@ -209,6 +209,8 @@ func (a *app) resetRepoHistory(t *repoTab) {
 	t.ring = ringUI{}
 	t.err, t.locateErr, t.notice = "", "", ""
 	t.lastFetch = time.Time{}
+	t.fetchFailCount = 0
+	t.nextAutoFetch = time.Time{}
 	t.unavailable = false
 }
 

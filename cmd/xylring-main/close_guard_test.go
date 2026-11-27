@@ -24,8 +24,13 @@ func TestQuitBusyNamesTheRunningWrite(t *testing.T) {
 		{"board-writes-flush-on-close", func(a *app) { a.board.jobs = 3 }, ""},
 		// 准备对话框只读仓库：查状态、读补丁时 a.op.busy 为真，但还没有写。
 		{"preparing-dialog", func(a *app) { a.op.busy, a.write.busy = true, true }, ""},
-		// 只读的批量操作（Blame、行历史、查看 Stash）同样占着这两个标记。
-		{"read-only-operations", func(a *app) { a.tabs[0].commitBusy, a.tabs[0].syncBusy = true, true }, ""},
+		// 只读的批量操作（Blame、行历史、查看 Stash）同样占着这些标记。
+		{"read-only-operations", func(a *app) {
+			a.tabs[0].commitBusy = true
+			a.tabs[0].pullBusy = true
+			a.tabs[0].pushBusy = true
+			a.tabs[0].manualFetchBusy = true
+		}, ""},
 		{"commit", func(a *app) { a.startGitWrite("正在提交") }, "正在提交"},
 		{"push", func(a *app) { a.startGitWrite("正在推送") }, "正在推送"},
 		{"finished", func(a *app) { a.finishGitWrite(a.startGitWrite("正在提交")) }, ""},

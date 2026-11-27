@@ -174,7 +174,7 @@ func (a *app) probeDockerReplacement(t *repoTab) {
 }
 
 func (a *app) reconnectDockerRepo(t *repoTab) {
-	if t == nil || t.dockerReplacement == "" || t.dockerProbing || t.commitBusy || t.syncBusy || a.write.busy {
+	if t == nil || t.dockerReplacement == "" || t.dockerProbing || t.commitBusy || t.anySyncBusy() || a.write.busy {
 		return
 	}
 	key, oldPath := t.dockerReplacement, t.path
@@ -223,7 +223,7 @@ func (a *app) dockerReconnectButton(c *ui.Context, t *repoTab) {
 	if t.dockerReplacement == "" {
 		return
 	}
-	if ui.PrimaryButton(c.Key("docker-reconnect"), tr("切换到同名新容器并保留草稿")).Disabled(t.dockerProbing || a.write.busy || t.commitBusy || t.syncBusy).Clicked() {
+	if ui.PrimaryButton(c.Key("docker-reconnect"), tr("切换到同名新容器并保留草稿")).Disabled(t.dockerProbing || a.write.busy || t.commitBusy || t.anySyncBusy()).Clicked() {
 		a.reconnectDockerRepo(t)
 	}
 }

@@ -520,7 +520,7 @@ func (a *app) chromeBranchButton(c *ui.Context, tab *repoTab, sidebarOpen, unifi
 	if tab.unavailable {
 		return
 	}
-	disabled := tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
+	disabled := tab.loading || a.write.busy || tab.anySyncBusy() || tab.commitBusy
 	btn.Menu(func(m *ui.Menu) {
 		branches := make([]string, 0, len(tab.refs))
 		for name := range localBranchNames(tab.refs) {
@@ -677,12 +677,10 @@ func (a *app) chrome(c *ui.Context) {
 				ui.Box(c).Grow(1).MinWidth(8)
 			}
 			a.commitScrollTopButton(c, tab)
-			disabled := tab.unavailable || tab.loading || a.write.busy || a.fetch.busy || tab.syncBusy || tab.commitBusy
 			container := isDockerRepoPath(tab.path)
-			if container {
-				// 远程同步在容器仓库里暂不开放，按钮保留位置但不触发操作。
-				disabled = true
-			}
+			remoteBusy := tab.remoteBusy()
+			remoteDisabled := container || tab.unavailable || tab.loading || a.write.busy || tab.commitBusy || remoteBusy
+			pullButtonDisabled := container || tab.unavailable || tab.loading || (!tab.manualFetchBusy && (a.write.busy || tab.commitBusy || remoteBusy))
 			pullTip := tr("拉取或获取远程更新")
 			pushTip := tr("推送当前分支")
 			if container {
@@ -690,9 +688,13 @@ func (a *app) chrome(c *ui.Context) {
 				pushTip = tr("容器仓库暂不支持远程同步")
 			}
 			// 拉取会改本地代码，藏在菜单里点两下不亏；推送最常用，一颗按钮一步到位（再一次确认）。
-			chromeSyncButton(c, "topbar-pull", "拉取或获取远程更新", pullTip, iconDownload, tab.behind, disabled).
+			chromeSyncButton(c, "topbar-pull", "拉取或获取远程更新", pullTip, iconDownload, tab.behind, pullButtonDisabled).
 				Menu(func(m *ui.Menu) {
-					if m.Item(tr("获取远程更新")).Disabled(disabled).
+					if tab.manualFetchBusy {
+						if m.Item(tr("取消获取远程")).Chosen() {
+							a.cancelManualFetch(tab)
+						}
+					} else if m.Item(tr("获取远程更新")).Disabled(remoteDisabled).
 						Tooltip(tr("git fetch --all：更新远程分支信息，不修改本地代码")).Chosen() {
 						a.quickFetch(tab)
 					}
@@ -700,16 +702,16 @@ func (a *app) chrome(c *ui.Context) {
 					if tab.behind > 0 {
 						pullLabel += fmt.Sprintf(tr("（落后 %d 个提交）"), tab.behind)
 					}
-					if m.Item(pullLabel).Disabled(disabled).
+					if m.Item(pullLabel).Disabled(remoteDisabled).
 						Tooltip(tr("git pull：获取并整合远程更新，会修改本地代码")).Chosen() {
 						a.quickPull(tab)
 					}
 					m.Separator()
-					if m.Item(tr("获取选项…")).Disabled(disabled).Chosen() {
+					if m.Item(tr("获取选项…")).Disabled(remoteDisabled).Chosen() {
 						a.openFetch(tab)
 					}
 				})
-			if chromeSyncButton(c, "topbar-push", "推送当前分支", pushTip, iconUpload, tab.ahead, disabled).Clicked() {
+			if chromeSyncButton(c, "topbar-push", "推送当前分支", pushTip, iconUpload, tab.ahead, remoteDisabled).Clicked() {
 				a.requestPush(tab)
 			}
 		})

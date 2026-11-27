@@ -34,19 +34,30 @@ const (
 
 var zeroHash [20]byte
 
-var gitSlots = make(chan struct{}, 4)
+var (
+	gitSlots    = make(chan struct{}, 4)
+	remoteSlots = make(chan struct{}, 2)
+)
 
-func acquireGit(ctx context.Context) error {
+func acquireSlot(ctx context.Context, slots chan struct{}) error {
 	select {
-	case gitSlots <- struct{}{}:
+	case slots <- struct{}{}:
 		if err := ctx.Err(); err != nil {
-			<-gitSlots
+			<-slots
 			return err
 		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func acquireGit(ctx context.Context) error {
+	return acquireSlot(ctx, gitSlots)
+}
+
+func acquireRemoteGit(ctx context.Context) error {
+	return acquireSlot(ctx, remoteSlots)
 }
 
 func gitEnv() []string {
@@ -93,6 +104,7 @@ func gitArgs(args ...string) []string {
 		"-c", "log.showSignature=false",
 		"-c", "i18n.logOutputEncoding=UTF-8",
 		"-c", "core.pager=cat",
+		"-c", "core.packedRefsTimeout=5000",
 	}
 	return append(full, args...)
 }
@@ -156,16 +168,23 @@ func runGitExtra(ctx context.Context, dir string, limit int, extraEnv []string, 
 
 func runGitExtraInput(ctx context.Context, dir string, limit int, extraEnv []string, input string, args ...string) ([]byte, error) {
 	// 车道先于全局槽，defer 逆序释放。
-	releaseLane := func() {}
 	key := canonicalRepoDir(dir)
-	if !gitLaneHeld(ctx, key) {
-		releaseLane = acquireGitLane(ctx, key, gitCommandWrites(args))
-	}
-	defer releaseLane()
-	if err := acquireGit(ctx); err != nil {
+	releaseLane, err := acquireRepoLanes(ctx, key, gitCommandLane(args))
+	if err != nil {
 		return nil, err
 	}
-	defer func() { <-gitSlots }()
+	defer releaseLane()
+	if gitCommandUsesRemoteSlot(args) {
+		if err := acquireRemoteGit(ctx); err != nil {
+			return nil, err
+		}
+		defer func() { <-remoteSlots }()
+	} else {
+		if err := acquireGit(ctx); err != nil {
+			return nil, err
+		}
+		defer func() { <-gitSlots }()
+	}
 	commandCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd, bin, err := prepareGitCommand(commandCtx, dir, extraEnv, gitArgs(args...)...)

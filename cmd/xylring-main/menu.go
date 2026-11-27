@@ -111,7 +111,7 @@ func (a *app) syncMenu() {
 	gitReady := a.gitReady()
 	a.setMenuEnabled("toggle-sidebar", !empty)
 	a.setMenuEnabled("toggle-bottom-full-width", has)
-	a.setMenuEnabled("fetch", gitReady && has && !tab.unavailable && !a.fetch.busy && !a.write.busy)
+	a.setMenuEnabled("fetch", gitReady && has && !tab.unavailable && !isDockerRepoPath(tab.path) && !tab.remoteBusy() && !a.fetch.busy)
 	a.setMenuEnabled("refresh", gitReady && has && !busy)
 	a.setMenuEnabled("compare", gitReady && has && !tab.unavailable && !busy)
 	a.setMenuEnabled("close-tab", has)

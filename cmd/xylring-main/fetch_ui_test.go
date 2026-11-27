@@ -46,8 +46,18 @@ func TestFetchDialogOpensFromToolbar(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.showFetch || !a.fetch.busy || tab.notice != "正在获取远程更新…" {
-		t.Fatalf("quickFetch did not start directly: show=%v busy=%v notice=%q", a.showFetch, a.fetch.busy, tab.notice)
+	if a.showFetch || !tab.manualFetchBusy || tab.notice != "正在获取远程更新…" {
+		t.Fatalf("quickFetch did not start directly: show=%v busy=%v notice=%q", a.showFetch, tab.manualFetchBusy, tab.notice)
+	}
+	if err := tt.Click("拉取或获取远程更新"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("取消获取远程"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tab.manualFetchBusy || tab.notice != "" {
+		t.Fatalf("cancelManualFetch did not clear state: busy=%v notice=%q", tab.manualFetchBusy, tab.notice)
 	}
 	a.stopFetch()
 }
@@ -105,8 +115,8 @@ func TestTopbarPushAsksBeforePushing(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !a.showPush || a.push.upstream != "origin/main" || tab.syncBusy {
-		t.Fatalf("push button should ask first: show=%v dialog=%+v busy=%v", a.showPush, a.push, tab.syncBusy)
+	if !a.showPush || a.push.upstream != "origin/main" || tab.anySyncBusy() {
+		t.Fatalf("push button should ask first: show=%v dialog=%+v busy=%v", a.showPush, a.push, tab.anySyncBusy())
 	}
 	for _, text := range []string{"推送当前分支？", "main → origin/main"} {
 		if !tt.HasText(text) {
@@ -117,7 +127,7 @@ func TestTopbarPushAsksBeforePushing(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.showPush || tab.syncBusy {
-		t.Fatalf("cancel should leave nothing running: show=%v busy=%v", a.showPush, tab.syncBusy)
+	if a.showPush || tab.anySyncBusy() {
+		t.Fatalf("cancel should leave nothing running: show=%v busy=%v", a.showPush, tab.anySyncBusy())
 	}
 }

@@ -9,8 +9,17 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func isRemoteOperationAction(action string) bool {
+	switch action {
+	case "远程", "推送分支", "推送标签", "新增远程", "删除远程", "修改远程地址":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *app) openOperation(action, target, path string) {
-	if a.write.busy || a.fetch.busy || a.op.busy {
+	if a.write.busy || a.op.busy {
 		return
 	}
 	// 容器仓库只开放第一版范围：历史类只读操作。克隆/初始化针对本机目录，照常可用。
@@ -35,7 +44,11 @@ func (a *app) openOperation(action, target, path string) {
 		d.hub = action
 	}
 	if t := a.activeTab(); t != nil {
-		if t.syncBusy || t.commitBusy || t.unavailable && action != "克隆仓库" && action != "初始化仓库" {
+		if t.anySyncBusy() || t.commitBusy || (t.unavailable && action != "克隆仓库" && action != "初始化仓库") {
+			return
+		}
+		if isRemoteOperationAction(action) && t.remoteBusy() {
+			a.setBanner("请等待正在执行的操作", "")
 			return
 		}
 		t.stopAutoFetch()
@@ -354,11 +367,11 @@ func (a *app) operationModal(c *ui.Context) {
 	})
 }
 func (a *app) runOperation() {
-	if a.op.busy || !a.op.ready || a.write.busy || a.fetch.busy {
+	if a.op.busy || !a.op.ready || a.write.busy {
 		return
 	}
 	d := a.op
-	if t := a.tabByPath(d.repo); t != nil && (t.commitBusy || t.syncBusy) {
+	if t := a.tabByPath(d.repo); t != nil && (t.commitBusy || t.anySyncBusy() || (isRemoteOperationAction(d.action) && t.remoteBusy())) {
 		a.op.err = "请等待当前仓库操作完成"
 		return
 	}

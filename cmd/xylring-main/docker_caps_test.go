@@ -79,7 +79,7 @@ func TestDockerBlockedActionsDoNotStartWrites(t *testing.T) {
 	a.quickPull(tab)
 	a.requestPush(tab)
 	a.openFetch(tab)
-	if a.showFetch || a.fetch.busy || a.writeSeq != 0 {
+	if a.showFetch || a.fetch.busy || tab.manualFetchBusy || a.writeSeq != 0 {
 		t.Fatal("network operation started for a container repository")
 	}
 	a.promptDiscardWorktreeFile(tab, fileChange{path: "a.txt"})

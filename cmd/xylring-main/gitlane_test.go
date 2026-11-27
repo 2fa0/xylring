@@ -11,14 +11,31 @@ import (
 func resetGitLanes(t *testing.T) {
 	t.Helper()
 	gitLanes.Lock()
-	saved := gitLanes.byKey
+	savedLocal := gitLanes.byKey
 	gitLanes.byKey = nil
 	gitLanes.Unlock()
+	remoteLanes.Lock()
+	savedRemote := remoteLanes.byKey
+	remoteLanes.byKey = nil
+	remoteLanes.Unlock()
 	t.Cleanup(func() {
 		gitLanes.Lock()
-		gitLanes.byKey = saved
+		gitLanes.byKey = savedLocal
 		gitLanes.Unlock()
+		remoteLanes.Lock()
+		remoteLanes.byKey = savedRemote
+		remoteLanes.Unlock()
 	})
+}
+
+func remoteLaneState(key string) (readers int, writing bool, queued int) {
+	remoteLanes.Lock()
+	defer remoteLanes.Unlock()
+	lane := remoteLanes.byKey[canonicalRepoDir(key)]
+	if lane == nil {
+		return 0, false, 0
+	}
+	return lane.readers, lane.writing, len(lane.queue)
 }
 
 func gitLaneState(key string) (readers int, writing bool, queued int) {
@@ -297,4 +314,194 @@ func TestGitLaneStatusRunsAlongsideReaders(t *testing.T) {
 	if _, _, queued := gitLaneState(canonicalRepoDir(dir)); queued != 0 {
 		t.Fatalf("queue left at %d after both readers released", queued)
 	}
+}
+
+func TestGitCommandLane(t *testing.T) {
+	cases := []struct {
+		args       []string
+		wantLane   gitLaneKind
+		wantRemote bool
+	}{
+		{[]string{"log"}, gitLaneLocalRead, false},
+		{[]string{"diff-tree", "-r", "HEAD"}, gitLaneLocalRead, false},
+		{[]string{"check-ref-format", "--branch", "main"}, gitLaneLocalRead, false},
+		{[]string{"remote"}, gitLaneLocalRead, false},
+		{[]string{"remote", "-v"}, gitLaneLocalRead, false},
+		{[]string{"remote", "--verbose"}, gitLaneLocalRead, false},
+		{[]string{"remote", "get-url", "--", "origin"}, gitLaneLocalRead, false},
+		{[]string{"branch", "--list"}, gitLaneLocalRead, false},
+		{[]string{"tag", "-l"}, gitLaneLocalRead, false},
+		{[]string{"worktree", "list"}, gitLaneLocalRead, false},
+		{[]string{"config", "--list"}, gitLaneLocalRead, false},
+		{[]string{"checkout", "main"}, gitLaneLocalWrite, false},
+		{[]string{"commit", "-m", "x"}, gitLaneLocalWrite, false},
+		{[]string{"branch", "feature"}, gitLaneLocalWrite, false},
+		{[]string{"tag", "v1"}, gitLaneLocalWrite, false},
+		{[]string{"worktree", "add", "../x"}, gitLaneLocalWrite, false},
+		{[]string{"config", "user.email", "x@example.com"}, gitLaneLocalWrite, false},
+		{[]string{"bisect", "start"}, gitLaneLocalWrite, false},
+		{nil, gitLaneLocalWrite, false},
+		{[]string{"fetch", "--all"}, gitLaneRemote, true},
+		{[]string{"push"}, gitLaneRemote, true},
+		{[]string{"push", "origin", "main"}, gitLaneRemote, true},
+		{[]string{"pull"}, gitLaneBoth, true},
+		{[]string{"pull", "--rebase"}, gitLaneBoth, true},
+		{[]string{"gc"}, gitLaneBoth, false},
+		{[]string{"prune"}, gitLaneBoth, false},
+		{[]string{"remote", "add", "origin", "url"}, gitLaneBoth, false},
+		{[]string{"remote", "remove", "origin"}, gitLaneBoth, false},
+		{[]string{"remote", "set-url", "origin", "url"}, gitLaneBoth, false},
+	}
+	for _, tc := range cases {
+		if got := gitCommandLane(gitArgs(tc.args...)); got != tc.wantLane {
+			t.Fatalf("gitCommandLane(%v) = %v, want %v", tc.args, got, tc.wantLane)
+		}
+		if got := gitCommandUsesRemoteSlot(gitArgs(tc.args...)); got != tc.wantRemote {
+			t.Fatalf("gitCommandUsesRemoteSlot(%v) = %v, want %v", tc.args, got, tc.wantRemote)
+		}
+		if len(tc.args) > 0 {
+			prefixed := append([]string{"-C", "/tmp", "--git-dir=/tmp/repo.git"}, tc.args...)
+			if got := gitCommandLane(prefixed); got != tc.wantLane {
+				t.Fatalf("gitCommandLane(prefixed %v) = %v, want %v", tc.args, got, tc.wantLane)
+			}
+			if got := gitCommandUsesRemoteSlot(prefixed); got != tc.wantRemote {
+				t.Fatalf("gitCommandUsesRemoteSlot(prefixed %v) = %v, want %v", tc.args, got, tc.wantRemote)
+			}
+		}
+	}
+}
+
+func TestRemoteLaneDoesNotBlockLocalLane(t *testing.T) {
+	resetGitLanes(t)
+	ctx := context.Background()
+	key := canonicalRepoDir(t.TempDir())
+
+	releaseRemote, err := acquireRepoLanes(ctx, key, gitLaneRemote)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 本地读和本地写都不得被远端车道阻塞。
+	readDone := make(chan func(), 1)
+	go func() {
+		rel, e := acquireRepoLanes(ctx, key, gitLaneLocalRead)
+		if e == nil {
+			readDone <- rel
+		}
+	}()
+	select {
+	case rel := <-readDone:
+		rel()
+	case <-time.After(2 * time.Second):
+		releaseRemote()
+		t.Fatal("local read blocked by remote lane")
+	}
+
+	writeDone := make(chan func(), 1)
+	go func() {
+		rel, e := acquireRepoLanes(ctx, key, gitLaneLocalWrite)
+		if e == nil {
+			writeDone <- rel
+		}
+	}()
+	select {
+	case rel := <-writeDone:
+		rel()
+	case <-time.After(2 * time.Second):
+		releaseRemote()
+		t.Fatal("local write blocked by remote lane")
+	}
+
+	// 同仓库的第二个远端操作以及双车道操作必须排队，且双车道在等远端期间不能先占本地车道。
+	secondRemote := make(chan func(), 1)
+	go func() {
+		rel, e := acquireRepoLanes(ctx, key, gitLaneRemote)
+		if e == nil {
+			secondRemote <- rel
+		}
+	}()
+	waitRemoteQueue(t, key, 1)
+
+	bothDone := make(chan func(), 1)
+	go func() {
+		rel, e := acquireRepoLanes(ctx, key, gitLaneBoth)
+		if e == nil {
+			bothDone <- rel
+		}
+	}()
+	waitRemoteQueue(t, key, 2)
+
+	// both 还在等 remoteLanes 时，本地写依旧畅通无阻。
+	localWriteDuringWait := make(chan func(), 1)
+	go func() {
+		rel, e := acquireRepoLanes(ctx, key, gitLaneLocalWrite)
+		if e == nil {
+			localWriteDuringWait <- rel
+		}
+	}()
+	select {
+	case rel := <-localWriteDuringWait:
+		rel()
+	case <-time.After(2 * time.Second):
+		releaseRemote()
+		t.Fatal("local write blocked while gitLaneBoth waited for remote lane")
+	}
+
+	select {
+	case rel := <-secondRemote:
+		rel()
+		t.Fatal("second remote ran concurrently")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	releaseRemote()
+	select {
+	case rel := <-secondRemote:
+		rel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("second remote did not run")
+	}
+	select {
+	case rel := <-bothDone:
+		rel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("gitLaneBoth did not run")
+	}
+	if r, w, q := gitLaneState(key); r != 0 || w || q != 0 {
+		t.Fatalf("local lane left dirty: r=%d w=%v q=%d", r, w, q)
+	}
+	if r, w, q := remoteLaneState(key); r != 0 || w || q != 0 {
+		t.Fatalf("remote lane left dirty: r=%d w=%v q=%d", r, w, q)
+	}
+}
+
+func waitRemoteQueue(t *testing.T, key string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, _, queued := remoteLaneState(key); queued == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			_, _, queued := remoteLaneState(key)
+			t.Fatalf("remote queue stayed at %d, want %d", queued, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestRemoteSlotsIndependentFromLocalSlots(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	for range cap(remoteSlots) {
+		if err := acquireRemoteGit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { <-remoteSlots }()
+	}
+	if err := acquireGit(ctx); err != nil {
+		t.Fatalf("acquireGit blocked when remoteSlots were full: %v", err)
+	}
+	<-gitSlots
 }

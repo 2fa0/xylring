@@ -311,7 +311,7 @@ func (a *app) refreshWorktree(t *repoTab) {
 }
 
 func (a *app) stageWorktreeFile(t *repoTab, path string) {
-	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+	if a.write.busy || (t != nil && (t.commitBusy || t.pullBusy)) {
 		return
 	}
 	if t == nil || path == "" {
@@ -350,7 +350,7 @@ func (a *app) stageWorktreeFile(t *repoTab, path string) {
 }
 
 func (a *app) unstageWorktreeFile(t *repoTab, f fileChange) {
-	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+	if a.write.busy || (t != nil && (t.commitBusy || t.pullBusy)) {
 		return
 	}
 	if t == nil || f.path == "" {
@@ -393,7 +393,7 @@ func (a *app) unstageWorktreeFile(t *repoTab, f fileChange) {
 }
 
 func (a *app) stageAllWorktree(t *repoTab) {
-	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+	if a.write.busy || (t != nil && (t.commitBusy || t.pullBusy)) {
 		return
 	}
 	if t == nil {
@@ -432,7 +432,7 @@ func (a *app) stageAllWorktree(t *repoTab) {
 }
 
 func (a *app) unstageAllWorktree(t *repoTab) {
-	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+	if a.write.busy || (t != nil && (t.commitBusy || t.pullBusy)) {
 		return
 	}
 	if t == nil {
@@ -486,7 +486,7 @@ func (a *app) runDiscardWorktreeFile(t *repoTab, f fileChange) {
 	if t == nil || t.unavailable {
 		return
 	}
-	if a.write.busy || a.fetch.busy || (t != nil && (t.commitBusy || t.syncBusy)) {
+	if a.write.busy || t.commitBusy || t.pullBusy {
 		return
 	}
 	if t == nil {
@@ -530,7 +530,7 @@ func (a *app) runCommitWorktree(t *repoTab) {
 	if t == nil || t.unavailable {
 		return
 	}
-	if a.write.busy || a.fetch.busy || t.commitBusy || t.syncBusy {
+	if a.write.busy || t.commitBusy || t.pullBusy || (t.commitAmend && t.pushBusy) {
 		return
 	}
 	msg := strings.TrimSpace(t.commitMsg)

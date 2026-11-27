@@ -250,7 +250,7 @@ func (a *app) runCheckoutBranch(tab *repoTab, name string) {
 	if tab == nil || tab.unavailable {
 		return
 	}
-	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
+	if a.write.busy || (tab != nil && (tab.commitBusy || tab.anySyncBusy())) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -294,7 +294,7 @@ func (a *app) runCheckoutCommit(tab *repoTab, hash [20]byte) {
 	if a.dockerActionBlocked(tab) {
 		return
 	}
-	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
+	if a.write.busy || (tab != nil && (tab.commitBusy || tab.anySyncBusy())) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -328,7 +328,7 @@ func (a *app) openRefWrite(tab *repoTab, kind string, item commit, refName strin
 	if a.dockerActionBlocked(tab) {
 		return
 	}
-	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
+	if a.write.busy || (tab != nil && (tab.commitBusy || tab.anySyncBusy())) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -377,7 +377,7 @@ func (a *app) openCommitWrite(tab *repoTab, kind string, item commit) {
 	if a.dockerActionBlocked(tab) {
 		return
 	}
-	if a.write.busy || a.fetch.busy || (tab != nil && (tab.commitBusy || tab.syncBusy)) {
+	if a.write.busy || (tab != nil && (tab.commitBusy || tab.anySyncBusy())) {
 		a.setBanner("请等待正在执行的操作", "")
 		return
 	}
@@ -557,7 +557,7 @@ func (a *app) commitWriteModal(c *ui.Context) {
 
 func (a *app) runCommitWrite() {
 	d := &a.write
-	if t := a.tabByPath(d.repo); t != nil && (t.commitBusy || t.syncBusy) {
+	if t := a.tabByPath(d.repo); t != nil && (t.commitBusy || t.anySyncBusy()) {
 		d.err = "请等待当前仓库操作完成"
 		return
 	}

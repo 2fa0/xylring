@@ -113,11 +113,11 @@ func (a *app) settingsScope(local bool) *gitSettingsScope {
 	return &a.settings.global
 }
 func (a *app) settingsGitWriteBlocked() bool {
-	if a.write.busy || a.fetch.busy || a.op.busy {
+	if a.write.busy || a.op.busy {
 		return true
 	}
 	for _, t := range a.tabs {
-		if t.commitBusy || t.syncBusy || t.fetching {
+		if t.commitBusy || t.pullBusy {
 			return true
 		}
 	}
@@ -161,6 +161,13 @@ func (a *app) loadSettingsGit(local, save bool) {
 	}
 	if d.busy {
 		return
+	}
+	if save {
+		for _, t := range a.tabs {
+			if !local || t.path == a.settings.repo {
+				t.stopAutoFetch()
+			}
+		}
 	}
 	d.busy, d.err, d.notice = true, "", ""
 	gen, repo := a.settings.gen, settingsGitRepoDir(a.settings.repo, local)
@@ -413,6 +420,8 @@ func (a *app) generalSettings(c *ui.Context) {
 			settingsChoiceRow(c, "settings-auto-fetch", "自动获取远程更新", detail, value, autoFetchOptions, func(v string) {
 				a.autoFetch = v
 				for _, t := range a.tabs {
+					t.fetchFailCount = 0
+					t.nextAutoFetch = time.Time{}
 					if a.autoFetchDelay(t.path) == 0 {
 						t.stopAutoFetch()
 					}
@@ -619,8 +628,10 @@ func (a *app) projectSettings(c *ui.Context) {
 				} else {
 					a.repoAutoFetch[d.repo] = v
 				}
-				if v == "off" {
-					if t := a.tabByPath(d.repo); t != nil {
+				if t := a.tabByPath(d.repo); t != nil {
+					t.fetchFailCount = 0
+					t.nextAutoFetch = time.Time{}
+					if v == "off" {
 						t.stopAutoFetch()
 					}
 				}

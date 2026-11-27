@@ -710,7 +710,7 @@ func (a *app) runRemoveWorktree() {
 	if d.busy || d.parentRepo == "" || d.wt.path == "" {
 		return
 	}
-	if t := a.tabByPath(d.wt.path); t != nil && (t.commitBusy || t.syncBusy) {
+	if t := a.tabByPath(d.wt.path); t != nil && (t.commitBusy || t.anySyncBusy()) {
 		a.wtRemove.err = tr("该工作树正在执行 Git 操作，请稍后再试。")
 		return
 	}

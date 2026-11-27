@@ -75,7 +75,7 @@ func TestRepositoryDeletionAndReinitialization(t *testing.T) {
 			a.quickFetch(tab)
 			a.maybeAutoFetch()
 			a.runCommitWorktree(tab)
-			if tab.syncBusy || tab.commitBusy || tab.fetching || a.fetch.busy {
+			if tab.anySyncBusy() || tab.commitBusy || tab.fetching || tab.manualFetchBusy || a.fetch.busy {
 				t.Fatal("unavailable repository started an operation")
 			}
 			git("init", "-b", "main")

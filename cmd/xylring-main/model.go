@@ -85,6 +85,11 @@ type repoTab struct {
 	fetching          bool
 	fetchGen          int
 	fetchCancel       context.CancelFunc
+	manualFetchBusy   bool
+	manualFetchGen    int
+	manualFetchCancel context.CancelFunc
+	fetchFailCount    int
+	nextAutoFetch     time.Time
 
 	historyCancel      context.CancelFunc
 	historyStarted     time.Time
@@ -107,7 +112,8 @@ type repoTab struct {
 	upstream     string
 	hasUpstream  bool
 	worktrees    []repoWorktree // 挂在仓库行下面的子行，主工作树不在里面。
-	syncBusy     bool
+	pullBusy     bool
+	pushBusy     bool
 	commitMsg    string
 	commitAmend  bool
 	amendGen     int
@@ -558,8 +564,17 @@ func (t *repoTab) indexOf(h [20]byte) int {
 	return -1
 }
 
+func (t *repoTab) remoteBusy() bool {
+	return t != nil && (t.manualFetchBusy || t.pullBusy || t.pushBusy)
+}
+
+func (t *repoTab) anySyncBusy() bool {
+	return t != nil && (t.pullBusy || t.pushBusy)
+}
+
 func (t *repoTab) cancel() {
 	t.stopAutoFetch()
+	t.stopManualFetch()
 	t.stopHistory()
 	t.generation++
 	t.compareGen++
