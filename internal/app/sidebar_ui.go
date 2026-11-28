@@ -369,9 +369,10 @@ func (a *app) repoList(c *ui.Context) {
 	}
 	ui.Column(c).Grow(1).MinWidth(0).FillHeight().MinHeight(0).Background(sidebarBg).Padding(6, 8, 8, 8).Children(func() {
 		a.sidebarBoardRow(c)
+		a.sidebarRadarRow(c)
 		ui.Box(c).FillWidth().Height(1).Background(t.Border.Alpha(0.55)).Margin(2, 2, 8, 2).Shrink(0)
 		a.sidebarRepoSection(c)
-		if !a.showBoard {
+		if !a.showBoard && !a.showRadar {
 			if tab := a.activeTab(); tab != nil && !tab.unavailable {
 				a.ringStatusControl(c, tab, "sidebar-ring-settings")
 			}
@@ -381,7 +382,7 @@ func (a *app) repoList(c *ui.Context) {
 
 func (a *app) sidebarRepoSection(c *ui.Context) {
 	active := ""
-	if !a.showBoard {
+	if !a.showBoard && !a.showRadar {
 		if tab := a.activeTab(); tab != nil {
 			active = tab.path
 		}

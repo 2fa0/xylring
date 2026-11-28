@@ -139,6 +139,8 @@ type app struct {
 	push               pushDialog
 	showBoard          bool
 	board              boardState
+	showRadar          bool
+	radar              radarState
 	quitGuard          closeGuardState
 	docker             dockerDialogState
 	dockerWrites       dockerWriteState
@@ -255,6 +257,10 @@ func (a *app) view(c *ui.Context) {
 			ui.Column(c.Key("page-board")).Grow(1).MinWidth(0).MinHeight(0).Transition(boardPageMotion()).Children(func() {
 				a.boardScreen(c)
 			})
+		} else if a.showRadar {
+			ui.Column(c.Key("page-radar")).Grow(1).MinWidth(0).MinHeight(0).Transition(boardPageMotion()).Children(func() {
+				a.radarScreen(c)
+			})
 		} else if a.showHome || (a.activeTab() == nil && len(a.found) <= 1) {
 			ui.Column(c.Key("page-home")).Grow(1).MinWidth(0).MinHeight(0).Transition(fadeEnter()).Children(func() {
 				a.emptyState(c)
@@ -295,6 +301,7 @@ func (a *app) view(c *ui.Context) {
 	a.settingsModal(c)
 	a.gitLogModal(c)
 	a.boardModals(c)
+	a.radarModals(c)
 	a.folderImportModal(c)
 	a.dockerRepoModal(c)
 	a.dockerRecoveryModal(c)
@@ -312,8 +319,24 @@ func (a *app) handleShortcuts(c *ui.Context) {
 		if c.Shortcut(commandModifier(), ui.KeyO) {
 			a.pickRepo()
 		}
-		if (!empty || a.showBoard) && c.Shortcut(commandModifier(), ui.KeyB) {
+		if (!empty || a.showBoard || a.showRadar) && c.Shortcut(commandModifier(), ui.KeyB) {
 			a.toggleSidebar()
+		}
+		if a.showRadar {
+			if !a.radarModalOpen() {
+				if c.Shortcut(commandModifier(), ui.KeyF) || c.Shortcut(commandModifier(), ui.KeyP) || c.Shortcut(commandModifier(), ui.KeyK) {
+					a.radar.searchInput.Focus(c)
+					return
+				}
+				if c.Shortcut(0, ui.KeyEscape) {
+					if a.radar.search != "" {
+						a.radar.search = ""
+					} else if len(a.tabs) > 0 || len(a.found) > 0 {
+						a.leaveRadar()
+					}
+				}
+			}
+			return
 		}
 		if a.showBoard {
 			if !a.boardModalOpen() {
@@ -449,18 +472,18 @@ func (a *app) chromeMetrics(c *ui.Context) (h, padL, padR float32, empty, sideba
 		padR = chromePad
 	}
 	tab := a.activeTab()
-	empty = !a.showBoard && (a.showHome || (tab == nil && len(a.found) <= 1))
+	empty = !a.showBoard && !a.showRadar && (a.showHome || (tab == nil && len(a.found) <= 1))
 	if !empty && a.showRepoSidebar() && a.repoSplit <= 0 {
 		a.repoSplit = defaultSidebarWidth
 	}
-	sidebarOpen = !empty && a.showRepoSidebar() && a.repoSplit > 0 && (a.showBoard || tab == nil || !tab.diffMaximized)
+	sidebarOpen = !empty && a.showRepoSidebar() && a.repoSplit > 0 && (a.showBoard || a.showRadar || tab == nil || !tab.diffMaximized)
 	rightPadL = padL
 	if sidebarOpen {
 		rightPadL = max(padL, a.repoSplit+10)
 	} else if !empty {
-		rightPadL = padL + 94
+		rightPadL = padL + 124
 	} else {
-		rightPadL = padL + 64
+		rightPadL = padL + 94
 	}
 	winW, _ := c.Size()
 	rightW = winW - rightPadL - padR
@@ -624,7 +647,7 @@ func (a *app) chrome(c *ui.Context) {
 			if !empty && (len(a.found) > 0 || len(a.tabs) > 0) {
 				x += 30
 			}
-			if a.showBoard && len(a.found) == 0 && len(a.tabs) == 0 {
+			if (a.showBoard || a.showRadar) && len(a.found) == 0 && len(a.tabs) == 0 {
 				if chromeIconButton(c, "chrome-home-btn", "返回首页", iconHome).Absolute().Left(x).Top(btnY).Clicked() {
 					a.goHome()
 				}
@@ -646,6 +669,30 @@ func (a *app) chrome(c *ui.Context) {
 				}
 			}
 			x += 30
+			radarTip := tr("Agent 雷达")
+			if a.showRadar {
+				radarTip = tr("返回仓库")
+			}
+			ui.Box(c).Size(26, 26).Absolute().Left(x).Top(btnY).Children(func() {
+				radarBtn := chromeIconButton(c, "open-radar", "Agent 雷达", iconRadar).Tooltip(radarTip)
+				if radarBtn.Clicked() {
+					if a.showRadar && (len(a.tabs) > 0 || len(a.found) > 0) {
+						a.leaveRadar()
+					} else if a.showRadar {
+						a.goHome()
+					} else {
+						a.openRadar()
+					}
+				}
+				if !a.showRadar && a.radar.snapshot.AttentionCount > 0 {
+					ui.Row(c.Key("open-radar-badge")).Absolute().Right(-4).Top(-3).
+						Height(14).Padding(0, 4).Radius(7).
+						Background(c.Theme().Warning).AlignItems(ui.Center).IgnoreInput(true).Children(func() {
+						ui.Text(c, fmt.Sprintf("%d", a.radar.snapshot.AttentionCount)).FontSize(9.5).FontWeight(700).FontFeatures("tnum").TextColor(ui.Hex("#111215")).SingleLine()
+					})
+				}
+			})
+			x += 30
 			if chromeIconButton(c, "open-settings", "设置", iconRingSettings).Absolute().Left(x).Top(btnY).Clicked() {
 				a.openSettings()
 			}
@@ -655,6 +702,10 @@ func (a *app) chrome(c *ui.Context) {
 		}
 		if a.showBoard {
 			a.boardChromeToolbar(c, padR, rightPadL, rightW)
+			return
+		}
+		if a.showRadar {
+			a.radarChromeToolbar(c, padR, rightPadL, rightW)
 			return
 		}
 		if tab == nil {

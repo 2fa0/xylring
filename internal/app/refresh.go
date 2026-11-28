@@ -57,6 +57,9 @@ func (a *app) startAutoRefresh() {
 						if a.showBoard || refreshSummaries {
 							a.pollBoardFile()
 						}
+						if a.showRadar || refreshSummaries {
+							a.pollRadar(false)
+						}
 						if refreshSummaries && a.showRepoSidebar() {
 							a.refreshRepoSummaries()
 						}

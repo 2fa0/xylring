@@ -65,6 +65,16 @@ func handleCLIArgs(args []string) bool {
 			os.Exit(1)
 		}
 		return true
+	case "pulse":
+		dir, err := os.Getwd()
+		if err == nil {
+			err = runPulseCLI(context.Background(), dir, args[1:], os.Stdout)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return true
 	case "stamp", "ring":
 		dir, err := os.Getwd()
 		if err == nil {
@@ -114,6 +124,7 @@ func printCLIHelp() {
   xylring ring install|uninstall|status|snippet|script
   xylring ring strict install|uninstall|status|script
   xylring board list|show|add|update|link|unlink|note|delete|path|export|import|backups|restore|snippet
+  xylring pulse [--agent NAME] [--state STATE] [--repo PATH] [--summary TEXT] | list | clear | hook
   旧版启动器用户请重新执行 install-cli。
   xylring [选项] [路径...]
 

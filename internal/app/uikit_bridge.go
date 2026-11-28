@@ -90,6 +90,9 @@ var (
 	iconImage        = uikit.IconImage
 	iconGitCommit    = uikit.IconGitCommit
 	iconKanban       = uikit.IconKanban
+	iconRadar        = uikit.IconRadar
+	iconTerminal     = uikit.IconTerminal
+	iconRefreshCw    = uikit.IconRefreshCw
 	iconMore         = uikit.IconMore
 	iconArchive      = uikit.IconArchive
 	iconLink         = uikit.IconLink

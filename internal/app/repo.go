@@ -526,6 +526,7 @@ func (a *app) openRoot(root string) {
 		return
 	}
 	a.leaveBoard()
+	a.leaveRadar()
 	a.showHome = false
 	for i, t := range a.tabs {
 		if t.path == root {
@@ -624,6 +625,7 @@ func (a *app) goHome() {
 	a.showWrite = false
 	a.stopFetch()
 	a.leaveBoard()
+	a.leaveRadar()
 	a.showHome = true
 }
 

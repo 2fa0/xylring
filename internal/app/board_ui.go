@@ -441,6 +441,7 @@ func (a *app) leaveBoard() {
 }
 
 func (a *app) openBoard() {
+	a.leaveRadar()
 	a.ensureBoardLoaded()
 	a.showHome = false
 	a.showBoard = true
